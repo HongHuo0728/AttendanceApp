@@ -1,0 +1,4 @@
+#include "..\\include\\resource.h"
+
+IDI_APP_ICON ICON "..\\assets\\AttendanceApp.ico"
+IDI_ATTD_ICON ICON "..\\assets\\AttdFile.ico"

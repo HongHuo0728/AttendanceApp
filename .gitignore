@@ -1,0 +1,55 @@
+# Build outputs
+build/
+out/
+bin/
+obj/
+*.obj
+*.res
+*.exe
+*.dll
+*.lib
+*.pdb
+*.ilk
+*.exp
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+
+# Visual Studio
+.vs/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.user
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+
+# Runtime/user data
+*.attd
+*.attddb
+*.csv
+!examples/*.csv
+*.html
+
+# OS/editor files
+Thumbs.db
+Desktop.ini
+.DS_Store
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.log
+*.bak
+*.orig
