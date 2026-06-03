@@ -114,7 +114,7 @@ The roster importer uses the first non-empty cell in each row as the student nam
 ATTD1: + Base64(XOR encrypted custom attendance data)
 ```
 
-Current files use `ATTENDANCE_V2` internally for multi-course data. Older `ATTENDANCE_V1` files are still supported on import.
+Current files use `ATTENDANCE_V3` internally for multi-course data and the last active course/class index. Older `ATTENDANCE_V1` and `ATTENDANCE_V2` files are still supported on import.
 
 This is lightweight protection for a custom project file format, not high-security cryptography.
 

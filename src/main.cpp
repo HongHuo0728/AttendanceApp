@@ -105,8 +105,11 @@ static HBRUSH g_panelBrush = nullptr;
 static std::vector<AttendanceRecord> g_records;
 static std::vector<AttendanceSheet> g_sheets;
 static int g_activeSheet = 0;
+static int g_loadedActiveSheet = 0;
 static std::vector<std::string> g_undoStack;
 static std::vector<std::string> g_redoStack;
+static bool g_allowAutosaveOverwrite = true;
+static bool g_dirty = false;
 static bool g_fullscreen = false;
 static WINDOWPLACEMENT g_previousPlacement{sizeof(g_previousPlacement)};
 static DWORD g_previousStyle = 0;
@@ -152,6 +155,11 @@ bool LoadAttendanceFile(const std::wstring& path, bool showSuccess);
 void PushUndo();
 HWND MakeSettingsControl(HWND parent, const wchar_t* cls, const wchar_t* text, DWORD style, int id);
 std::wstring Tr(const wchar_t* english, const wchar_t* chinese);
+
+void MarkDirty() {
+    g_dirty = true;
+    g_allowAutosaveOverwrite = true;
+}
 
 std::wstring GetText(HWND hwnd) {
     int len = GetWindowTextLengthW(hwnd);
@@ -327,6 +335,14 @@ std::wstring Tr(const wchar_t* english, const wchar_t*) {
         {L"Mark All Present", L"\u5168\u5458\u51fa\u5e2d", L"Kollha pre\u017centi", L"\u5168\u54e1\u51fa\u5e2d", L"Tout pr\u00e9sent", L"Alle anwesend", L"\u0412\u0441\u0435 \u043f\u0440\u0438\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442", L"\u5168\u54e1\u51fa\u5e2d", L"Todos presentes"},
         {L"Create New", L"\u65b0\u5efa\u70b9\u540d", L"\u0120did", L"\u65b0\u898f\u4f5c\u6210", L"Nouveau", L"Neu erstellen", L"\u0421\u043e\u0437\u0434\u0430\u0442\u044c", L"\u65b0\u589e\u9ede\u540d", L"Crear nuevo"},
         {L"Delete Options", L"\u5220\u9664\u9009\u9879", L"G\u0127a\u017cliet ta' t\u0127assir", L"\u524a\u9664\u30aa\u30d7\u30b7\u30e7\u30f3", L"Options de suppression", L"L\u00f6schoptionen", L"\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b \u0443\u0434\u0430\u043b\u0435\u043d\u0438\u044f", L"\u522a\u9664\u9078\u9805", L"Opciones de borrar"},
+        {L"Delete", L"\u5220\u9664", L"\u0126assar", L"\u524a\u9664", L"Supprimer", L"L\u00f6schen", L"\u0423\u0434\u0430\u043b\u0438\u0442\u044c", L"\u522a\u9664", L"Eliminar"},
+        {L"selected record(s)?", L"\u6761\u9009\u4e2d\u8bb0\u5f55\uff1f", L"rekord(s) mag\u0127\u017cula?", L"\u4ef6\u306e\u9078\u629e\u8a18\u9332\uff1f", L"enregistrement(s) s\u00e9lectionn\u00e9(s) ?", L"ausgew\u00e4hlte Eintr\u00e4ge l\u00f6schen?", L"\u0432\u044b\u0431\u0440\u0430\u043d\u043d\u044b\u0445 \u0437\u0430\u043f\u0438\u0441\u0435\u0439?", L"\u7b46\u9078\u53d6\u8a18\u9304\uff1f", L"registro(s) seleccionado(s)?"},
+        {L"Delete Selected", L"\u5220\u9664\u9009\u4e2d", L"\u0126assar mag\u0127\u017cul", L"\u9078\u629e\u3092\u524a\u9664", L"Supprimer la s\u00e9lection", L"Auswahl l\u00f6schen", L"\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u043e\u0435", L"\u522a\u9664\u9078\u53d6", L"Eliminar selecci\u00f3n"},
+        {L"Delete all", L"\u5220\u9664\u6240\u6709", L"\u0126assar kollha", L"\u3059\u3079\u3066\u524a\u9664", L"Supprimer tous les", L"Alle l\u00f6schen", L"\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u0432\u0441\u0435", L"\u522a\u9664\u6240\u6709", L"Eliminar todos"},
+        {L"records?", L"\u8bb0\u5f55\uff1f", L"rekords?", L"\u8a18\u9332\uff1f", L"enregistrements ?", L"Eintr\u00e4ge?", L"\u0437\u0430\u043f\u0438\u0441\u0438?", L"\u8a18\u9304\uff1f", L"registros?"},
+        {L"Batch Delete", L"\u6279\u91cf\u5220\u9664", L"T\u0127assir bil-lott", L"\u4e00\u62ec\u524a\u9664", L"Suppression group\u00e9e", L"Mehrfach l\u00f6schen", L"\u041f\u0430\u043a\u0435\u0442\u043d\u043e\u0435 \u0443\u0434\u0430\u043b\u0435\u043d\u0438\u0435", L"\u6279\u6b21\u522a\u9664", L"Eliminaci\u00f3n por lote"},
+        {L"Clear every attendance record in this sheet?", L"\u6e05\u7a7a\u5f53\u524d\u8868\u5185\u7684\u6240\u6709\u70b9\u540d\u8bb0\u5f55\uff1f", L"Tnaddaf kull rekord f'din il-folja?", L"\u3053\u306e\u30b7\u30fc\u30c8\u306e\u51fa\u5e2d\u8a18\u9332\u3092\u3059\u3079\u3066\u30af\u30ea\u30a2\u3057\u307e\u3059\u304b\uff1f", L"Effacer tous les enregistrements de cette feuille ?", L"Alle Eintr\u00e4ge in diesem Blatt l\u00f6schen?", L"\u041e\u0447\u0438\u0441\u0442\u0438\u0442\u044c \u0432\u0441\u0435 \u0437\u0430\u043f\u0438\u0441\u0438 \u044d\u0442\u043e\u0433\u043e \u043b\u0438\u0441\u0442\u0430?", L"\u6e05\u7a7a\u6b64\u8868\u5167\u6240\u6709\u9ede\u540d\u8a18\u9304\uff1f", L"\u00bfBorrar todos los registros de esta hoja?"},
+        {L"Clear All", L"\u5168\u90e8\u6e05\u7a7a", L"Naddaf kollox", L"\u3059\u3079\u3066\u30af\u30ea\u30a2", L"Tout effacer", L"Alles l\u00f6schen", L"\u041e\u0447\u0438\u0441\u0442\u0438\u0442\u044c \u0432\u0441\u0435", L"\u5168\u90e8\u6e05\u7a7a", L"Borrar todo"},
         {L"Save .attd", L"\u4fdd\u5b58 .attd", L"Issejvja .attd", L".attd \u4fdd\u5b58", L"Enregistrer .attd", L".attd speichern", L"\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c .attd", L"\u5132\u5b58 .attd", L"Guardar .attd"},
         {L"Import .attd", L"\u5bfc\u5165 .attd", L"Importa .attd", L".attd \u8aad\u307f\u8fbc\u307f", L"Importer .attd", L".attd importieren", L"\u0418\u043c\u043f\u043e\u0440\u0442 .attd", L"\u532f\u5165 .attd", L"Importar .attd"},
         {L"Export CSV", L"\u5bfc\u51fa CSV", L"Esporta CSV", L"CSV \u30a8\u30af\u30b9\u30dd\u30fc\u30c8", L"Exporter CSV", L"CSV exportieren", L"\u042d\u043a\u0441\u043f\u043e\u0440\u0442 CSV", L"\u532f\u51fa CSV", L"Exportar CSV"},
@@ -360,13 +376,31 @@ std::wstring Tr(const wchar_t* english, const wchar_t*) {
         {L"Imported", L"\u5df2\u5bfc\u5165", L"Importati", L"\u8aad\u307f\u8fbc\u307f\u6e08\u307f", L"Import\u00e9", L"Importiert", L"\u0418\u043c\u043f\u043e\u0440\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043e", L"\u5df2\u532f\u5165", L"Importado"},
         {L"students into the current course.", L"\u540d\u5b66\u751f\u5230\u5f53\u524d\u8bfe\u7a0b\u3002", L"studenti fil-kors attwali.", L"\u4eba\u306e\u5b66\u751f\u3092\u73fe\u5728\u306e\u30b3\u30fc\u30b9\u306b\u8ffd\u52a0\u3002", L"\u00e9tudiants dans le cours actuel.", L"Sch\u00fcler in den aktuellen Kurs.", L"\u0441\u0442\u0443\u0434\u0435\u043d\u0442\u043e\u0432 \u0432 \u0442\u0435\u043a\u0443\u0449\u0438\u0439 \u043a\u0443\u0440\u0441.", L"\u540d\u5b78\u751f\u5230\u76ee\u524d\u8ab2\u7a0b\u3002", L"estudiantes al curso actual."},
         {L"Could not write the database file.", L"\u65e0\u6cd5\u5199\u5165\u6570\u636e\u5e93\u6587\u4ef6\u3002", L"Ma setax jinkiteb id-database.", L"\u30c7\u30fc\u30bf\u30d9\u30fc\u30b9\u30d5\u30a1\u30a4\u30eb\u3092\u66f8\u304d\u8fbc\u3081\u307e\u305b\u3093\u3002", L"Impossible d'\u00e9crire la base.", L"Datenbankdatei konnte nicht geschrieben werden.", L"\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u043f\u0438\u0441\u0430\u0442\u044c \u0411\u0414.", L"\u7121\u6cd5\u5beb\u5165\u8cc7\u6599\u5eab\u6a94\u6848\u3002", L"No se pudo escribir la base."},
-        {L"Database mirror exported to:", L"\u6570\u636e\u5e93\u955c\u50cf\u5df2\u5bfc\u51fa\u5230\uff1a", L"Kopja tad-database esportata lejn:", L"\u30c7\u30fc\uタ\u30d9\u30fc\u30b9\u30df\u30e9\u30fc\u306e\u51fa\u529b\u5148:", L"Miroir de base export\u00e9 vers :", L"Datenbankspiegel exportiert nach:", L"\u0417\u0435\u0440\u043a\u0430\u043b\u043e \u0411\u0414 \u044d\u043a\u0441\u043f\u043e\u0440\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043e:", L"\u8cc7\u6599\u5eab\u93e1\u50cf\u5df2\u532f\u51fa\u5230\uff1a", L"Espejo exportado a:"},
+        {L"Database mirror exported to:", L"\u6570\u636e\u5e93\u955c\u50cf\u5df2\u5bfc\u51fa\u5230\uff1a", L"Kopja tad-database esportata lejn:", L"\u30c7\u30fc\u30bf\u30d9\u30fc\u30b9\u30df\u30e9\u30fc\u306e\u51fa\u529b\u5148:", L"Miroir de base export\u00e9 vers :", L"Datenbankspiegel exportiert nach:", L"\u0417\u0435\u0440\u043a\u0430\u043b\u043e \u0411\u0414 \u044d\u043a\u0441\u043f\u043e\u0440\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043e:", L"\u8cc7\u6599\u5eab\u93e1\u50cf\u5df2\u532f\u51fa\u5230\uff1a", L"Espejo exportado a:"},
         {L"No autosave file was found.", L"\u672a\u627e\u5230\u81ea\u52a8\u4fdd\u5b58\u6587\u4ef6\u3002", L"Ma nstabx autosave.", L"\u81ea\u52d5\u4fdd\u5b58\u30d5\u30a1\u30a4\u30eb\u306f\u3042\u308a\u307e\u305b\u3093\u3002", L"Aucune autosauvegarde trouv\u00e9e.", L"Keine Autosave-Datei gefunden.", L"\u0410\u0432\u0442\u043e\u0441\u043e\u0445\u0440. \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u043e.", L"\u672a\u627e\u5230\u81ea\u52d5\u5132\u5b58\u6a94\u6848\u3002", L"No se encontr\u00f3 autoguardado."},
         {L"An autosaved attendance file was found. Restore it now?", L"\u627e\u5230\u81ea\u52a8\u4fdd\u5b58\u7684\u70b9\u540d\u6587\u4ef6\u3002\u662f\u5426\u73b0\u5728\u6062\u590d\uff1f", L"Instab fajl autosave. Tirrestawrah issa?", L"\u81ea\u52d5\u4fdd\u5b58\u304c\u898b\u3064\u304b\u308a\u307e\u3057\u305f\u3002\u5fa9\u5143\u3057\u307e\u3059\u304b\uff1f", L"Autosauvegarde trouv\u00e9e. Restaurer ?", L"Autosave gefunden. Jetzt wiederherstellen?", L"\u041d\u0430\u0439\u0434\u0435\u043d\u043e \u0430\u0432\u0442\u043e\u0441\u043e\u0445\u0440. \u0412\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u044c?", L"\u627e\u5230\u81ea\u52d5\u5132\u5b58\u6a94\u3002\u662f\u5426\u73fe\u5728\u9084\u539f\uff1f", L"Se encontr\u00f3 autoguardado. \u00bfRestaurar?"},
         {L"Restore Autosave", L"\u6062\u590d\u81ea\u52a8\u4fdd\u5b58", L"Irrestawra autosave", L"\u81ea\u52d5\u4fdd\u5b58\u5fa9\u5143", L"Restaurer autosauvegarde", L"Autosave wiederherstellen", L"\u0412\u043e\u0441\u0441\u0442. \u0430\u0432\u0442\u043e\u0441\u043e\u0445\u0440.", L"\u9084\u539f\u81ea\u52d5\u5132\u5b58", L"Restaurar autoguardado"},
         {L"Keyboard Shortcuts", L"\u5feb\u6377\u952e", L"Shortcuts", L"\u30b7\u30e7\u30fc\u30c8\u30ab\u30c3\u30c8", L"Raccourcis clavier", L"Tastenk\u00fcrzel", L"\u0413\u043e\u0440\u044f\u0447\u0438\u0435 \u043a\u043b\u0430\u0432\u0438\u0448\u0438", L"\u5feb\u6377\u9375", L"Atajos de teclado"},
         {L"Statistics Chart", L"\u7edf\u8ba1\u56fe\u8868", L"\u010aart tal-istatistika", L"\u7d71\u8a08\u30b0\u30e9\u30d5", L"Graphique statistique", L"Statistikdiagramm", L"\u0413\u0440\u0430\u0444\u0438\u043a", L"\u7d71\u8a08\u5716\u8868", L"Gr\u00e1fico estad\u00edstico"},
         {L"Print / Save as PDF", L"\u6253\u5370 / \u53e6\u5b58\u4e3a PDF", L"Stampa / PDF", L"\u5370\u5237 / PDF\u4fdd\u5b58", L"Imprimer / PDF", L"Drucken / PDF speichern", L"\u041f\u0435\u0447\u0430\u0442\u044c / PDF", L"\u5217\u5370 / \u53e6\u5b58 PDF", L"Imprimir / guardar PDF"},
+        {L"Please enter a date and time.", L"\u8bf7\u8f93\u5165\u65e5\u671f\u548c\u65f6\u95f4\u3002", L"Da\u0127\u0127al data u \u0127in.", L"\u65e5\u6642\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002", L"Veuillez saisir la date et l'heure.", L"Bitte Datum und Uhrzeit eingeben.", L"\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u0434\u0430\u0442\u0443 \u0438 \u0432\u0440\u0435\u043c\u044f.", L"\u8acb\u8f38\u5165\u65e5\u671f\u548c\u6642\u9593\u3002", L"Introduce fecha y hora."},
+        {L"Please enter a name.", L"\u8bf7\u8f93\u5165\u59d3\u540d\u3002", L"Da\u0127\u0127al isem.", L"\u540d\u524d\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002", L"Veuillez saisir un nom.", L"Bitte Namen eingeben.", L"\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u0438\u043c\u044f.", L"\u8acb\u8f38\u5165\u59d3\u540d\u3002", L"Introduce un nombre."},
+        {L"Please fill the Other field.", L"\u8bf7\u586b\u5199 Other \u5b57\u6bb5\u3002", L"Imla l-qasam Other.", L"Other \u6b04\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002", L"Veuillez remplir le champ Autre.", L"Bitte das Feld Andere ausf\u00fcllen.", L"\u0417\u0430\u043f\u043e\u043b\u043d\u0438\u0442\u0435 \u043f\u043e\u043b\u0435 Other.", L"\u8acb\u586b\u5beb Other \u6b04\u4f4d\u3002", L"Rellena el campo Otro."},
+        {L"Please select a record to edit.", L"\u8bf7\u9009\u62e9\u8981\u7f16\u8f91\u7684\u8bb0\u5f55\u3002", L"Ag\u0127\u017cel rekord biex teditja.", L"\u7de8\u96c6\u3059\u308b\u8a18\u9332\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002", L"S\u00e9lectionnez un enregistrement.", L"Bitte einen Eintrag ausw\u00e4hlen.", L"\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u0437\u0430\u043f\u0438\u0441\u044c.", L"\u8acb\u9078\u64c7\u8981\u7de8\u8f2f\u7684\u8a18\u9304\u3002", L"Selecciona un registro."},
+        {L"There are no records to mark.", L"\u6ca1\u6709\u53ef\u6807\u8bb0\u7684\u8bb0\u5f55\u3002", L"M'hemmx rekords.", L"\u30de\u30fc\u30af\u3059\u308b\u8a18\u9332\u304c\u3042\u308a\u307e\u305b\u3093\u3002", L"Aucun enregistrement.", L"Keine Eintr\u00e4ge vorhanden.", L"\u041d\u0435\u0442 \u0437\u0430\u043f\u0438\u0441\u0435\u0439.", L"\u6c92\u6709\u53ef\u6a19\u8a18\u7684\u8a18\u9304\u3002", L"No hay registros."},
+        {L"Mark every record as Present?", L"\u5c06\u6240\u6709\u8bb0\u5f55\u6807\u8bb0\u4e3a Present\uff1f", L"Immarka kollha Present?", L"\u3059\u3079\u3066 Present \u306b\u3057\u307e\u3059\u304b\uff1f", L"Tout marquer pr\u00e9sent ?", L"Alle als anwesend markieren?", L"\u0412\u0441\u0435\u0445 \u043e\u0442\u043c\u0435\u0442\u0438\u0442\u044c Present?", L"\u5c07\u6240\u6709\u8a18\u9304\u6a19\u8a18\u70ba Present\uff1f", L"\u00bfMarcar todo como Present?"},
+        {L"All Present", L"\u5168\u5458\u51fa\u5e2d", L"Kollha pre\u017centi", L"\u5168\u54e1\u51fa\u5e2d", L"Tout pr\u00e9sent", L"Alle anwesend", L"\u0412\u0441\u0435 Present", L"\u5168\u54e1\u51fa\u5e2d", L"Todos presentes"},
+        {L"Please select one or more records to delete.", L"\u8bf7\u9009\u62e9\u8981\u5220\u9664\u7684\u4e00\u6761\u6216\u591a\u6761\u8bb0\u5f55\u3002", L"Ag\u0127\u017cel rekord/i biex t\u0127assar.", L"\u524a\u9664\u3059\u308b\u8a18\u9332\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002", L"S\u00e9lectionnez des enregistrements.", L"Bitte Eintr\u00e4ge zum L\u00f6schen ausw\u00e4hlen.", L"\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u0437\u0430\u043f\u0438\u0441\u0438.", L"\u8acb\u9078\u64c7\u8981\u522a\u9664\u7684\u8a18\u9304\u3002", L"Selecciona registros."},
+        {L"No matching records found.", L"\u672a\u627e\u5230\u5339\u914d\u8bb0\u5f55\u3002", L"Ma nstabux rekords.", L"\u8a72\u5f53\u8a18\u9332\u306f\u3042\u308a\u307e\u305b\u3093\u3002", L"Aucun enregistrement.", L"Keine passenden Eintr\u00e4ge.", L"\u041d\u0435\u0442 \u0441\u043e\u0432\u043f\u0430\u0434\u0435\u043d\u0438\u0439.", L"\u672a\u627e\u5230\u7b26\u5408\u8a18\u9304\u3002", L"No hay coincidencias."},
+        {L"There are no records to clear.", L"\u6ca1\u6709\u53ef\u6e05\u7a7a\u7684\u8bb0\u5f55\u3002", L"M'hemmx rekords x't\u0127assar.", L"\u30af\u30ea\u30a2\u3059\u308b\u8a18\u9332\u304c\u3042\u308a\u307e\u305b\u3093\u3002", L"Aucun enregistrement \u00e0 effacer.", L"Keine Eintr\u00e4ge zum Leeren.", L"\u041d\u0435\u0442 \u0437\u0430\u043f\u0438\u0441\u0435\u0439.", L"\u6c92\u6709\u53ef\u6e05\u7a7a\u7684\u8a18\u9304\u3002", L"No hay registros."},
+        {L"There are no records to export.", L"\u6ca1\u6709\u53ef\u5bfc\u51fa\u7684\u8bb0\u5f55\u3002", L"M'hemmx rekords x'tesporta.", L"\u51fa\u529b\u3059\u308b\u8a18\u9332\u304c\u3042\u308a\u307e\u305b\u3093\u3002", L"Aucun enregistrement \u00e0 exporter.", L"Keine Eintr\u00e4ge zum Exportieren.", L"\u041d\u0435\u0442 \u0437\u0430\u043f\u0438\u0441\u0435\u0439 \u0434\u043b\u044f \u044d\u043a\u0441\u043f\u043e\u0440\u0442\u0430.", L"\u6c92\u6709\u53ef\u532f\u51fa\u7684\u8a18\u9304\u3002", L"No hay registros para exportar."},
+        {L"Could not export the CSV file.", L"\u65e0\u6cd5\u5bfc\u51fa CSV \u6587\u4ef6\u3002", L"Ma setax ji\u0121i esportat CSV.", L"CSV \u3092\u51fa\u529b\u3067\u304d\u307e\u305b\u3093\u3002", L"Impossible d'exporter le CSV.", L"CSV konnte nicht exportiert werden.", L"\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c CSV.", L"\u7121\u6cd5\u532f\u51fa CSV\u3002", L"No se pudo exportar CSV."},
+        {L"CSV exported successfully.", L"CSV \u5bfc\u51fa\u6210\u529f\u3002", L"CSV esportat.", L"CSV \u3092\u51fa\u529b\u3057\u307e\u3057\u305f\u3002", L"CSV export\u00e9.", L"CSV exportiert.", L"CSV \u044d\u043a\u0441\u043f\u043e\u0440\u0442\u0438\u0440\u043e\u0432\u0430\u043d.", L"CSV \u532f\u51fa\u6210\u529f\u3002", L"CSV exportado."},
+        {L"Could not save the file.", L"\u65e0\u6cd5\u4fdd\u5b58\u6587\u4ef6\u3002", L"Ma setax ji\u0121i ssejvjat.", L"\u30d5\u30a1\u30a4\u30eb\u3092\u4fdd\u5b58\u3067\u304d\u307e\u305b\u3093\u3002", L"Impossible d'enregistrer.", L"Datei konnte nicht gespeichert werden.", L"\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0441\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c.", L"\u7121\u6cd5\u5132\u5b58\u6a94\u6848\u3002", L"No se pudo guardar."},
+        {L"Saved successfully.", L"\u4fdd\u5b58\u6210\u529f\u3002", L"Issejvjat.", L"\u4fdd\u5b58\u3057\u307e\u3057\u305f\u3002", L"Enregistr\u00e9.", L"Gespeichert.", L"\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043e.", L"\u5132\u5b58\u6210\u529f\u3002", L"Guardado."},
+        {L"Could not open the file.", L"\u65e0\u6cd5\u6253\u5f00\u6587\u4ef6\u3002", L"Ma setax jinfeta\u0127.", L"\u30d5\u30a1\u30a4\u30eb\u3092\u958b\u3051\u307e\u305b\u3093\u3002", L"Impossible d'ouvrir.", L"Datei konnte nicht ge\u00f6ffnet werden.", L"\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0442\u043a\u0440\u044b\u0442\u044c.", L"\u7121\u6cd5\u958b\u555f\u6a94\u6848\u3002", L"No se pudo abrir."},
+        {L"This .attd file could not be decoded.", L"\u65e0\u6cd5\u89e3\u7801\u8be5 .attd \u6587\u4ef6\u3002", L"Dan il-fajl .attd ma setax jinqara.", L".attd \u3092\u30c7\u30b3\u30fc\u30c9\u3067\u304d\u307e\u305b\u3093\u3002", L"Impossible de d\u00e9coder ce .attd.", L".attd konnte nicht dekodiert werden.", L"\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0434\u0435\u043a\u043e\u0434\u0438\u0440\u043e\u0432\u0430\u0442\u044c .attd.", L"\u7121\u6cd5\u89e3\u78bc\u6b64 .attd \u6a94\u3002", L"No se pudo decodificar .attd."},
+        {L"Imported successfully.", L"\u5bfc\u5165\u6210\u529f\u3002", L"Importat.", L"\u8aad\u307f\u8fbc\u307f\u6210\u529f\u3002", L"Import\u00e9.", L"Importiert.", L"\u0418\u043c\u043f\u043e\u0440\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043e.", L"\u532f\u5165\u6210\u529f\u3002", L"Importado."},
         {L"Fullscreen", L"\u5168\u5c4f", L"Skrin s\u0127i\u0127", L"\u5168\u753b\u9762", L"Plein \u00e9cran", L"Vollbild", L"\u041f\u043e\u043b\u043d\u044b\u0439 \u044d\u043a\u0440\u0430\u043d", L"\u5168\u87a2\u5e55", L"Pantalla completa"},
         {L"Double-click row: Edit selected record", L"\u53cc\u51fb\u884c\uff1a\u7f16\u8f91\u9009\u4e2d\u8bb0\u5f55", L"Ikklikkja darbtejn: editja", L"\u884c\u3092\u30c0\u30d6\u30eb\u30af\u30ea\u30c3\u30af\uff1a\u7de8\u96c6", L"Double-clic : modifier", L"Doppelklick: bearbeiten", L"\u0414\u0432\u043e\u0439\u043d\u043e\u0439 \u0449\u0435\u043b\u0447\u043e\u043a: \u043f\u0440\u0430\u0432\u043a\u0430", L"\u96d9\u64ca\u884c\uff1a\u7de8\u8f2f\u9078\u53d6\u8a18\u9304", L"Doble clic: editar"},
         {L"Ctrl/Shift click: Multi-select rows", L"Ctrl/Shift \u70b9\u51fb\uff1a\u591a\u9009\u884c", L"Ctrl/Shift: ag\u0127\u017cel aktar", L"Ctrl/Shift\uff1a\u8907\u6570\u9078\u629e", L"Ctrl/Shift : multi-s\u00e9lection", L"Strg/Umschalt: Mehrfachauswahl", L"Ctrl/Shift: \u043c\u0443\u043b\u044c\u0442\u0438\u0432\u044b\u0431\u043e\u0440", L"Ctrl/Shift \u9ede\u64ca\uff1a\u591a\u9078\u884c", L"Ctrl/Shift: selecci\u00f3n m\u00faltiple"},
@@ -605,6 +639,8 @@ void EnsureSheets() {
 
 void SyncActiveSheet() {
     EnsureSheets();
+    if (g_activeSheet < 0) g_activeSheet = 0;
+    if (g_activeSheet >= (int)g_sheets.size()) g_activeSheet = (int)g_sheets.size() - 1;
     if (g_activeSheet >= 0 && g_activeSheet < (int)g_sheets.size()) {
         g_sheets[g_activeSheet].records = g_records;
     }
@@ -613,7 +649,8 @@ void SyncActiveSheet() {
 std::string SerializeWorkbook() {
     SyncActiveSheet();
     std::ostringstream ss;
-    ss << "ATTENDANCE_V2\n";
+    ss << "ATTENDANCE_V3\n";
+    ss << g_activeSheet << "\n";
     ss << g_sheets.size() << "\n";
     for (const auto& sheet : g_sheets) {
         ss << Escape(WideToUtf8(sheet.name)) << "\n";
@@ -632,15 +669,25 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
     std::istringstream ss(plainText);
     std::string header;
     std::getline(ss, header);
+    g_loadedActiveSheet = 0;
     if (header == "ATTENDANCE_V1") {
         std::vector<AttendanceRecord> records;
         if (!DeserializeRecords(plainText, records)) return false;
         output = {{L"Default Course", std::move(records)}};
         return true;
     }
-    if (header != "ATTENDANCE_V2") return false;
+    if (header != "ATTENDANCE_V2" && header != "ATTENDANCE_V3") return false;
 
     std::string countLine;
+    if (header == "ATTENDANCE_V3") {
+        std::string activeLine;
+        std::getline(ss, activeLine);
+        try {
+            g_loadedActiveSheet = std::stoi(activeLine);
+        } catch (...) {
+            g_loadedActiveSheet = 0;
+        }
+    }
     std::getline(ss, countLine);
     size_t sheetCount = 0;
     try {
@@ -798,6 +845,7 @@ void UpdateStats() {
 }
 
 void RefreshList() {
+    SyncActiveSheet();
     ListView_DeleteAllItems(g_list);
     for (int i = 0; i < (int)g_records.size(); ++i) {
         LVITEMW item{};
@@ -838,6 +886,7 @@ void AddCourse() {
     if (!PromptText(Tr(L"Add Course/Class", L"\u65b0\u589e\u8bfe\u7a0b/\u73ed\u7ea7"), Tr(L"Course or class name:", L"\u8bfe\u7a0b\u6216\u73ed\u7ea7\u540d\u79f0\uff1a"), name)) return;
     if (name.empty()) return;
     PushUndo();
+    MarkDirty();
     g_sheets.push_back({name, {}});
     g_activeSheet = (int)g_sheets.size() - 1;
     g_records.clear();
@@ -851,6 +900,7 @@ void RenameCurrentCourse() {
     if (!PromptText(Tr(L"Rename Course/Class", L"\u91cd\u547d\u540d\u8bfe\u7a0b/\u73ed\u7ea7"), Tr(L"New course or class name:", L"\u65b0\u8bfe\u7a0b\u6216\u73ed\u7ea7\u540d\u79f0\uff1a"), name)) return;
     if (name.empty()) return;
     PushUndo();
+    MarkDirty();
     g_sheets[g_activeSheet].name = name;
     RefreshCourseCombo();
 }
@@ -867,6 +917,7 @@ void DeleteCurrentCourse() {
         return;
     }
     PushUndo();
+    MarkDirty();
     g_sheets.erase(g_sheets.begin() + g_activeSheet);
     g_activeSheet = std::max(0, g_activeSheet - 1);
     g_records = g_sheets[g_activeSheet].records;
@@ -955,36 +1006,36 @@ void ApplyMainLanguage() {
     if (!g_hwnd) return;
     std::wstring mainTitle = Tr(L"AttendanceApp - .attd Roll Call Manager", L"AttendanceApp - .attd \u70b9\u540d\u7ba1\u7406\u5668");
     SetWindowTextW(g_hwnd, mainTitle.c_str());
-    SetText(GetDlgItem(g_hwnd, IDC_TITLE), Tr(L"Attendance Manager", L"点名管理器"));
+    SetText(GetDlgItem(g_hwnd, IDC_TITLE), Tr(L"Attendance Manager", L"\u70b9\u540d\u7ba1\u7406\u5668"));
     SetText(GetDlgItem(g_hwnd, IDC_SUBTITLE),
         Tr(L"Create, edit, export, save, import, and batch clean .attd roll calls.",
-           L"创建、编辑、导出、保存、导入，并批量整理 .attd 点名记录。"));
+           L"\u521b\u5efa\u3001\u7f16\u8f91\u3001\u5bfc\u51fa\u3001\u4fdd\u5b58\u3001\u5bfc\u5165\u5e76\u6279\u91cf\u6574\u7406 .attd \u70b9\u540d\u8bb0\u5f55\u3002"));
     SetText(GetDlgItem(g_hwnd, IDC_HINT),
         Tr(L"Tip: double-click a row to edit. Ctrl/Shift supports multi-select.",
-           L"提示：双击记录可编辑，Ctrl/Shift 可多选。"));
-    SetText(GetDlgItem(g_hwnd, 2001), Tr(L"Date/Time", L"日期时间"));
-    SetText(GetDlgItem(g_hwnd, 2002), Tr(L"Name", L"姓名"));
-    SetText(GetDlgItem(g_hwnd, 2003), Tr(L"Other", L"其他"));
-    SetText(GetDlgItem(g_hwnd, IDC_PRESENT), Tr(L"Present", L"出席"));
-    SetText(GetDlgItem(g_hwnd, IDC_ABSENT), Tr(L"Absent", L"缺席"));
-    SetText(GetDlgItem(g_hwnd, IDC_LATE), Tr(L"Late", L"迟到"));
-    SetText(GetDlgItem(g_hwnd, IDC_OTHER_STATUS), Tr(L"Other", L"其他"));
-    SetText(GetDlgItem(g_hwnd, IDC_ADD_UPDATE), Tr(L"Update Selected", L"更新选中"));
-    SetText(GetDlgItem(g_hwnd, IDC_EDIT_SELECTED), Tr(L"Edit Selected", L"编辑选中"));
-    SetText(GetDlgItem(g_hwnd, IDC_ALL_PRESENT), Tr(L"Mark All Present", L"全员出席"));
-    SetText(GetDlgItem(g_hwnd, IDC_NEW), Tr(L"Create New", L"新建点名"));
-    SetText(GetDlgItem(g_hwnd, IDC_DELETE), Tr(L"Delete Options", L"删除选项"));
-    SetText(GetDlgItem(g_hwnd, IDC_SAVE), Tr(L"Save .attd", L"保存 .attd"));
-    SetText(GetDlgItem(g_hwnd, IDC_IMPORT), Tr(L"Import .attd", L"导入 .attd"));
-    SetText(GetDlgItem(g_hwnd, IDC_EXPORT_CSV), Tr(L"Export CSV", L"导出 CSV"));
-    SetText(GetDlgItem(g_hwnd, IDC_SETTINGS), Tr(L"Settings", L"设置"));
+           L"\u63d0\u793a\uff1a\u53cc\u51fb\u8bb0\u5f55\u53ef\u7f16\u8f91\uff0cCtrl/Shift \u53ef\u591a\u9009\u3002"));
+    SetText(GetDlgItem(g_hwnd, 2001), Tr(L"Date/Time", L"\u65e5\u671f\u65f6\u95f4"));
+    SetText(GetDlgItem(g_hwnd, 2002), Tr(L"Name", L"\u59d3\u540d"));
+    SetText(GetDlgItem(g_hwnd, 2003), Tr(L"Other", L"\u5176\u4ed6"));
+    SetText(GetDlgItem(g_hwnd, IDC_PRESENT), Tr(L"Present", L"\u51fa\u5e2d"));
+    SetText(GetDlgItem(g_hwnd, IDC_ABSENT), Tr(L"Absent", L"\u7f3a\u5e2d"));
+    SetText(GetDlgItem(g_hwnd, IDC_LATE), Tr(L"Late", L"\u8fdf\u5230"));
+    SetText(GetDlgItem(g_hwnd, IDC_OTHER_STATUS), Tr(L"Other", L"\u5176\u4ed6"));
+    SetText(GetDlgItem(g_hwnd, IDC_ADD_UPDATE), Tr(L"Update Selected", L"\u66f4\u65b0\u9009\u4e2d"));
+    SetText(GetDlgItem(g_hwnd, IDC_EDIT_SELECTED), Tr(L"Edit Selected", L"\u7f16\u8f91\u9009\u4e2d"));
+    SetText(GetDlgItem(g_hwnd, IDC_ALL_PRESENT), Tr(L"Mark All Present", L"\u5168\u5458\u51fa\u5e2d"));
+    SetText(GetDlgItem(g_hwnd, IDC_NEW), Tr(L"Create New", L"\u65b0\u5efa\u70b9\u540d"));
+    SetText(GetDlgItem(g_hwnd, IDC_DELETE), Tr(L"Delete Options", L"\u5220\u9664\u9009\u9879"));
+    SetText(GetDlgItem(g_hwnd, IDC_SAVE), Tr(L"Save .attd", L"\u4fdd\u5b58 .attd"));
+    SetText(GetDlgItem(g_hwnd, IDC_IMPORT), Tr(L"Import .attd", L"\u5bfc\u5165 .attd"));
+    SetText(GetDlgItem(g_hwnd, IDC_EXPORT_CSV), Tr(L"Export CSV", L"\u5bfc\u51fa CSV"));
+    SetText(GetDlgItem(g_hwnd, IDC_SETTINGS), Tr(L"Settings", L"\u8bbe\u7f6e"));
     SetText(GetDlgItem(g_hwnd, IDC_COURSE_OPTIONS), Tr(L"Courses", L"\u8bfe\u7a0b"));
     SetText(GetDlgItem(g_hwnd, IDC_TOOLS), Tr(L"Tools", L"\u5de5\u5177"));
 
-    SetListColumnText(0, Tr(L"Date / Time", L"日期 / 时间"));
-    SetListColumnText(1, Tr(L"Name", L"姓名"));
-    SetListColumnText(2, Tr(L"Status", L"状态"));
-    SetListColumnText(3, Tr(L"Other", L"其他"));
+    SetListColumnText(0, Tr(L"Date / Time", L"\u65e5\u671f / \u65f6\u95f4"));
+    SetListColumnText(1, Tr(L"Name", L"\u59d3\u540d"));
+    SetListColumnText(2, Tr(L"Status", L"\u72b6\u6001"));
+    SetListColumnText(3, Tr(L"Other", L"\u5176\u4ed6"));
     UpdateStats();
 }
 
@@ -1010,21 +1061,22 @@ void AddOrUpdateRecord(const std::wstring& status) {
     std::wstring other = status == L"Other" ? GetText(g_otherEdit) : L"";
 
     if (dateTime.empty()) {
-        ShowMessage(L"Please enter a date and time.");
+        ShowMessage(Tr(L"Please enter a date and time.", L"\u8bf7\u8f93\u5165\u65e5\u671f\u548c\u65f6\u95f4\u3002"));
         return;
     }
     if (name.empty()) {
-        ShowMessage(L"Please enter a name.");
+        ShowMessage(Tr(L"Please enter a name.", L"\u8bf7\u8f93\u5165\u59d3\u540d\u3002"));
         return;
     }
     if (status == L"Other" && other.empty()) {
-        ShowMessage(L"Please fill the Other field.");
+        ShowMessage(Tr(L"Please fill the Other field.", L"\u8bf7\u586b\u5199 Other \u5b57\u6bb5\u3002"));
         return;
     }
 
     int selected = ListView_GetNextItem(g_list, -1, LVNI_SELECTED);
     AttendanceRecord record{dateTime, name, status, other};
     PushUndo();
+    MarkDirty();
     if (selected >= 0 && selected < (int)g_records.size()) {
         g_records[selected] = record;
     } else {
@@ -1035,7 +1087,7 @@ void AddOrUpdateRecord(const std::wstring& status) {
 
 void LoadRecordIntoEditor(int index) {
     if (index < 0 || index >= (int)g_records.size()) {
-        ShowMessage(L"Please select a record to edit.");
+        ShowMessage(Tr(L"Please select a record to edit.", L"\u8bf7\u9009\u62e9\u8981\u7f16\u8f91\u7684\u8bb0\u5f55\u3002"));
         return;
     }
 
@@ -1058,15 +1110,16 @@ void UpdateSelectedRecord() {
     std::wstring name = GetText(g_nameEdit);
     std::wstring other = GetText(g_otherEdit);
     if (dateTime.empty()) {
-        ShowMessage(L"Please enter a date and time.");
+        ShowMessage(Tr(L"Please enter a date and time.", L"\u8bf7\u8f93\u5165\u65e5\u671f\u548c\u65f6\u95f4\u3002"));
         return;
     }
     if (name.empty()) {
-        ShowMessage(L"Please enter a name.");
+        ShowMessage(Tr(L"Please enter a name.", L"\u8bf7\u8f93\u5165\u59d3\u540d\u3002"));
         return;
     }
 
     PushUndo();
+    MarkDirty();
     g_records[selected].dateTime = dateTime;
     g_records[selected].name = name;
     g_records[selected].other = g_records[selected].status == L"Other" ? other : L"";
@@ -1076,11 +1129,14 @@ void UpdateSelectedRecord() {
 
 void MarkAllPresent() {
     if (g_records.empty()) {
-        ShowMessage(L"There are no records to mark.");
+        ShowMessage(Tr(L"There are no records to mark.", L"\u6ca1\u6709\u53ef\u6807\u8bb0\u7684\u8bb0\u5f55\u3002"));
         return;
     }
-    if (MessageBoxW(g_hwnd, L"Mark every record as Present?", L"All Present", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+    std::wstring allPresentMsg = Tr(L"Mark every record as Present?", L"\u5c06\u6240\u6709\u8bb0\u5f55\u6807\u8bb0\u4e3a Present\uff1f");
+    std::wstring allPresentTitle = Tr(L"All Present", L"\u5168\u5458\u51fa\u5e2d");
+    if (MessageBoxW(g_hwnd, allPresentMsg.c_str(), allPresentTitle.c_str(), MB_YESNO | MB_ICONQUESTION) == IDYES) {
         PushUndo();
+        MarkDirty();
         for (auto& record : g_records) {
             record.status = L"Present";
             record.other.clear();
@@ -1100,6 +1156,7 @@ std::vector<int> SelectedRows() {
 
 void EraseRows(std::vector<int> rows) {
     PushUndo();
+    MarkDirty();
     std::sort(rows.begin(), rows.end());
     rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
     for (auto it = rows.rbegin(); it != rows.rend(); ++it) {
@@ -1111,13 +1168,15 @@ void EraseRows(std::vector<int> rows) {
 void DeleteSelectedRecords() {
     auto rows = SelectedRows();
     if (rows.empty()) {
-        ShowMessage(L"Please select one or more records to delete.");
+        ShowMessage(Tr(L"Please select one or more records to delete.", L"\u8bf7\u9009\u62e9\u8981\u5220\u9664\u7684\u4e00\u6761\u6216\u591a\u6761\u8bb0\u5f55\u3002"));
         return;
     }
 
     std::wstringstream ss;
-    ss << L"Delete " << rows.size() << L" selected record(s)?";
-    if (MessageBoxW(g_hwnd, ss.str().c_str(), L"Delete Selected", MB_YESNO | MB_ICONWARNING) == IDYES) {
+    ss << Tr(L"Delete", L"\u5220\u9664") << L" " << rows.size() << L" "
+       << Tr(L"selected record(s)?", L"\u6761\u9009\u4e2d\u8bb0\u5f55\uff1f");
+    std::wstring deleteTitle = Tr(L"Delete Selected", L"\u5220\u9664\u9009\u4e2d");
+    if (MessageBoxW(g_hwnd, ss.str().c_str(), deleteTitle.c_str(), MB_YESNO | MB_ICONWARNING) == IDYES) {
         EraseRows(rows);
     }
 }
@@ -1129,24 +1188,29 @@ void DeleteRecordsByStatus(const std::wstring& status) {
     }
 
     if (rows.empty()) {
-        ShowMessage(L"No matching records found.");
+        ShowMessage(Tr(L"No matching records found.", L"\u672a\u627e\u5230\u5339\u914d\u8bb0\u5f55\u3002"));
         return;
     }
 
     std::wstringstream ss;
-    ss << L"Delete all " << status << L" records? (" << rows.size() << L")";
-    if (MessageBoxW(g_hwnd, ss.str().c_str(), L"Batch Delete", MB_YESNO | MB_ICONWARNING) == IDYES) {
+    ss << Tr(L"Delete all", L"\u5220\u9664\u6240\u6709") << L" " << status << L" "
+       << Tr(L"records?", L"\u8bb0\u5f55\uff1f") << L" (" << rows.size() << L")";
+    std::wstring batchTitle = Tr(L"Batch Delete", L"\u6279\u91cf\u5220\u9664");
+    if (MessageBoxW(g_hwnd, ss.str().c_str(), batchTitle.c_str(), MB_YESNO | MB_ICONWARNING) == IDYES) {
         EraseRows(rows);
     }
 }
 
 void ClearAllRecords() {
     if (g_records.empty()) {
-        ShowMessage(L"There are no records to clear.");
+        ShowMessage(Tr(L"There are no records to clear.", L"\u6ca1\u6709\u53ef\u6e05\u7a7a\u7684\u8bb0\u5f55\u3002"));
         return;
     }
-    if (MessageBoxW(g_hwnd, L"Clear every attendance record in this sheet?", L"Clear All", MB_YESNO | MB_ICONWARNING) == IDYES) {
+    std::wstring clearMsg = Tr(L"Clear every attendance record in this sheet?", L"\u6e05\u7a7a\u5f53\u524d\u8868\u5185\u7684\u6240\u6709\u70b9\u540d\u8bb0\u5f55\uff1f");
+    std::wstring clearTitle = Tr(L"Clear All", L"\u5168\u90e8\u6e05\u7a7a");
+    if (MessageBoxW(g_hwnd, clearMsg.c_str(), clearTitle.c_str(), MB_YESNO | MB_ICONWARNING) == IDYES) {
         PushUndo();
+        MarkDirty();
         g_records.clear();
         RefreshList();
     }
@@ -1298,7 +1362,7 @@ bool LooksLikeNameHeader(const std::wstring& value) {
 
 void ExportCsv() {
     if (g_records.empty()) {
-        ShowMessage(L"There are no records to export.");
+        ShowMessage(Tr(L"There are no records to export.", L"\u6ca1\u6709\u53ef\u5bfc\u51fa\u7684\u8bb0\u5f55\u3002"));
         return;
     }
 
@@ -1307,7 +1371,7 @@ void ExportCsv() {
 
     std::ofstream file(std::filesystem::path(path), std::ios::binary);
     if (!file) {
-        ShowMessage(L"Could not export the CSV file.");
+        ShowMessage(Tr(L"Could not export the CSV file.", L"\u65e0\u6cd5\u5bfc\u51fa CSV \u6587\u4ef6\u3002"));
         return;
     }
 
@@ -1319,7 +1383,7 @@ void ExportCsv() {
              << CsvCell(record.status) << ','
              << CsvCell(record.other) << '\n';
     }
-    ShowMessage(L"CSV exported successfully.");
+    ShowMessage(Tr(L"CSV exported successfully.", L"CSV \u5bfc\u51fa\u6210\u529f\u3002"));
 }
 
 void PushUndo() {
@@ -1333,9 +1397,9 @@ void RestoreSnapshot(const std::string& snapshot) {
     std::vector<AttendanceSheet> sheets;
     if (!DeserializeWorkbook(snapshot, sheets)) return;
     g_sheets = std::move(sheets);
-    g_activeSheet = std::min(g_activeSheet, (int)g_sheets.size() - 1);
-    if (g_activeSheet < 0) g_activeSheet = 0;
+    g_activeSheet = std::clamp(g_loadedActiveSheet, 0, (int)g_sheets.size() - 1);
     g_records = g_sheets[g_activeSheet].records;
+    MarkDirty();
     RefreshCourseCombo();
     RefreshList();
 }
@@ -1411,6 +1475,7 @@ void ImportRosterCsv() {
         return;
     }
     PushUndo();
+    MarkDirty();
     std::string line;
     int added = 0;
     while (std::getline(file, line)) {
@@ -1456,6 +1521,8 @@ void ExportDatabaseMirror() {
 }
 
 void AutoSaveNow() {
+    if (!g_allowAutosaveOverwrite) return;
+    if (!g_dirty) return;
     SyncActiveSheet();
     auto path = AppDataFilePath(L"autosave.attd");
     if (path.empty()) return;
@@ -1485,6 +1552,8 @@ void PromptRestoreAutosave() {
         MB_YESNO | MB_ICONQUESTION
     ) == IDYES) {
         LoadAttendanceFile(path.wstring(), false);
+    } else {
+        g_allowAutosaveOverwrite = false;
     }
 }
 
@@ -1647,17 +1716,19 @@ void SaveAttendance() {
 
     std::ofstream file(std::filesystem::path(path), std::ios::binary);
     if (!file) {
-        ShowMessage(L"Could not save the file.");
+        ShowMessage(Tr(L"Could not save the file.", L"\u65e0\u6cd5\u4fdd\u5b58\u6587\u4ef6\u3002"));
         return;
     }
     file << EncodeAttd(SerializeWorkbook());
-    ShowMessage(L"Saved successfully.");
+    g_dirty = false;
+    g_allowAutosaveOverwrite = true;
+    ShowMessage(Tr(L"Saved successfully.", L"\u4fdd\u5b58\u6210\u529f\u3002"));
 }
 
 bool LoadAttendanceFile(const std::wstring& path, bool showSuccess) {
     std::ifstream file(std::filesystem::path(path), std::ios::binary);
     if (!file) {
-        ShowMessage(L"Could not open the file.");
+        ShowMessage(Tr(L"Could not open the file.", L"\u65e0\u6cd5\u6253\u5f00\u6587\u4ef6\u3002"));
         return false;
     }
 
@@ -1665,18 +1736,20 @@ bool LoadAttendanceFile(const std::wstring& path, bool showSuccess) {
     std::string plainText;
     std::vector<AttendanceSheet> imported;
     if (!DecodeAttd(fileText, plainText) || !DeserializeWorkbook(plainText, imported)) {
-        ShowMessage(L"This .attd file could not be decoded.");
+        ShowMessage(Tr(L"This .attd file could not be decoded.", L"\u65e0\u6cd5\u89e3\u7801\u8be5 .attd \u6587\u4ef6\u3002"));
         return false;
     }
 
     g_sheets = std::move(imported);
-    g_activeSheet = 0;
+    g_activeSheet = std::clamp(g_loadedActiveSheet, 0, (int)g_sheets.size() - 1);
     g_records = g_sheets[g_activeSheet].records;
     g_undoStack.clear();
     g_redoStack.clear();
+    g_dirty = false;
+    g_allowAutosaveOverwrite = true;
     RefreshCourseCombo();
     RefreshList();
-    if (showSuccess) ShowMessage(L"Imported successfully.");
+    if (showSuccess) ShowMessage(Tr(L"Imported successfully.", L"\u5bfc\u5165\u6210\u529f\u3002"));
     return true;
 }
 
@@ -1833,7 +1906,9 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
         }
         if (LOWORD(wParam) == IDC_SETTINGS_RESET) {
-            if (MessageBoxW(hwnd, L"Reset all settings and delete the AppData configuration file?", L"Reset Settings", MB_YESNO | MB_ICONWARNING) == IDYES) {
+            std::wstring resetMsg = Tr(L"Reset all settings and delete the AppData configuration file?", L"\u91cd\u7f6e\u6240\u6709\u8bbe\u7f6e\u5e76\u5220\u9664 AppData \u914d\u7f6e\u6587\u4ef6\uff1f");
+            std::wstring resetTitle = Tr(L"Reset Settings", L"\u91cd\u7f6e\u8bbe\u7f6e");
+            if (MessageBoxW(hwnd, resetMsg.c_str(), resetTitle.c_str(), MB_YESNO | MB_ICONWARNING) == IDYES) {
                 ResetSettings();
                 ApplyVisualSettings();
                 EnumChildWindows(hwnd, ApplyFontToChild, 0);
@@ -2097,7 +2172,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case IDC_SAVE: SaveAttendance(); return 0;
         case IDC_IMPORT: ImportAttendance(); return 0;
         case IDC_NEW:
-            if (MessageBoxW(hwnd, L"Create a new attendance sheet and clear current records?", L"New Attendance", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+            {
+            std::wstring newMsg = Tr(L"Create a new attendance sheet and clear current records?", L"\u65b0\u5efa\u70b9\u540d\u8868\u5e76\u6e05\u7a7a\u5f53\u524d\u8bb0\u5f55\uff1f");
+            std::wstring newTitle = Tr(L"New Attendance", L"\u65b0\u5efa\u70b9\u540d");
+            if (MessageBoxW(hwnd, newMsg.c_str(), newTitle.c_str(), MB_YESNO | MB_ICONQUESTION) == IDYES) {
                 PushUndo();
                 g_records.clear();
                 SyncActiveSheet();
@@ -2105,6 +2183,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 SetText(g_dateEdit, CurrentDateTimeText());
                 SetText(g_nameEdit, L"");
                 SetText(g_otherEdit, L"");
+            }
             }
             return 0;
         case IDC_DELETE: {
