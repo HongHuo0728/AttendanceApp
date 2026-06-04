@@ -111,8 +111,15 @@ static std::vector<std::string> g_redoStack;
 static bool g_allowAutosaveOverwrite = true;
 static bool g_dirty = false;
 static bool g_fullscreen = false;
+static bool g_liveResizing = false;
 static WINDOWPLACEMENT g_previousPlacement{sizeof(g_previousPlacement)};
 static DWORD g_previousStyle = 0;
+static int g_scrollX = 0;
+static int g_scrollY = 0;
+static int g_contentW = 0;
+static int g_contentH = 0;
+static constexpr int MIN_LAYOUT_W = 1180;
+static constexpr int MIN_LAYOUT_H = 820;
 
 struct InputDialogState {
     std::wstring title;
@@ -147,14 +154,22 @@ static COLORREF COLOR_ACCENT = RGB(64, 156, 255);
 static COLORREF COLOR_DANGER = RGB(238, 91, 91);
 
 void ResizeLayout(HWND hwnd);
+void ScrollMainWindow(HWND hwnd, int bar, int code, int wheelDelta = 0);
 void ApplyVisualSettings();
 void ApplyDarkMode(HWND hwnd);
+void ApplyThemedControls(HWND root);
+bool DrawButtonItem(const DRAWITEMSTRUCT* draw);
+bool DrawComboItem(const DRAWITEMSTRUCT* draw);
+LRESULT HandleHeaderCustomDraw(NMHDR* hdr);
+void EnableHeaderPaint(HWND header);
 std::string WideToUtf8(const std::wstring& input);
 std::wstring Utf8ToWide(const std::string& input);
 bool LoadAttendanceFile(const std::wstring& path, bool showSuccess);
 void PushUndo();
 HWND MakeSettingsControl(HWND parent, const wchar_t* cls, const wchar_t* text, DWORD style, int id);
 std::wstring Tr(const wchar_t* english, const wchar_t* chinese);
+void EnableEditShortcuts(HWND hwnd);
+void EnableMouseWheelForward(HWND hwnd);
 
 void MarkDirty() {
     g_dirty = true;
@@ -171,6 +186,37 @@ std::wstring GetText(HWND hwnd) {
 
 void SetText(HWND hwnd, const std::wstring& text) {
     SetWindowTextW(hwnd, text.c_str());
+}
+
+LRESULT CALLBACK EditShortcutProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
+    if (msg == WM_KEYDOWN && wParam == 'A' && (GetKeyState(VK_CONTROL) & 0x8000)) {
+        SendMessageW(hwnd, EM_SETSEL, 0, -1);
+        return 0;
+    }
+    if (msg == WM_CHAR && wParam == 1) {
+        return 0;
+    }
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+void EnableEditShortcuts(HWND hwnd) {
+    SetWindowSubclass(hwnd, EditShortcutProc, 1, 0);
+}
+
+LRESULT CALLBACK WheelForwardProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
+    if (msg == WM_MOUSEWHEEL && g_hwnd) {
+        ScrollMainWindow(g_hwnd, SB_VERT, 0, GET_WHEEL_DELTA_WPARAM(wParam));
+        return 0;
+    }
+    if (msg == WM_MOUSEHWHEEL && g_hwnd) {
+        ScrollMainWindow(g_hwnd, SB_HORZ, 0, GET_WHEEL_DELTA_WPARAM(wParam));
+        return 0;
+    }
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+void EnableMouseWheelForward(HWND hwnd) {
+    SetWindowSubclass(hwnd, WheelForwardProc, 2, 0);
 }
 
 LRESULT CALLBACK InputDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -329,6 +375,7 @@ std::wstring Tr(const wchar_t* english, const wchar_t*) {
         {L"Late", L"\u8fdf\u5230", L"Tard", L"\u9045\u523b", L"En retard", L"Versp\u00e4tet", L"\u041e\u043f\u043e\u0437\u0434\u0430\u043b", L"\u9072\u5230", L"Tarde"},
         {L"Total", L"\u603b\u6570", L"Total", L"\u5408\u8a08", L"Total", L"Gesamt", L"\u0412\u0441\u0435\u0433\u043e", L"\u7e3d\u6578", L"Total"},
         {L"Attendance", L"\u51fa\u52e4\u7387", L"Attendenza", L"\u51fa\u5e2d\u7387", L"Pr\u00e9sence", L"Anwesenheit", L"\u041f\u043e\u0441\u0435\u0449\u0430\u0435\u043c\u043e\u0441\u0442\u044c", L"\u51fa\u52e4\u7387", L"Asistencia"},
+        {L"Attendance Sheet", L"\u70b9\u540d\u8868", L"Folja tal-attendenza", L"\u51fa\u5e2d\u30b7\u30fc\u30c8", L"Feuille d'appel", L"Anwesenheitsblatt", L"\u041b\u0438\u0441\u0442 \u043f\u043e\u0441\u0435\u0449\u0430\u0435\u043c\u043e\u0441\u0442\u0438", L"\u9ede\u540d\u8868", L"Hoja de asistencia"},
         {L"Absent/Late", L"\u7f3a\u5e2d/\u8fdf\u5230", L"Assenti/Tard", L"\u6b20\u5e2d/\u9045\u523b", L"Absent/retard", L"Abwesend/versp\u00e4tet", L"\u041e\u0442\u0441\u0443\u0442./\u043e\u043f\u043e\u0437\u0434.", L"\u7f3a\u5e2d/\u9072\u5230", L"Ausente/tarde"},
         {L"Update Selected", L"\u66f4\u65b0\u9009\u4e2d", L"A\u0121\u0121orna mag\u0127\u017cul", L"\u9078\u629e\u3092\u66f4\u65b0", L"Mettre \u00e0 jour", L"Auswahl aktualisieren", L"\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c", L"\u66f4\u65b0\u9078\u53d6", L"Actualizar selecci\u00f3n"},
         {L"Edit Selected", L"\u7f16\u8f91\u9009\u4e2d", L"Editja mag\u0127\u017cul", L"\u9078\u629e\u3092\u7de8\u96c6", L"Modifier", L"Auswahl bearbeiten", L"\u0418\u0437\u043c\u0435\u043d\u0438\u0442\u044c", L"\u7de8\u8f2f\u9078\u53d6", L"Editar selecci\u00f3n"},
@@ -338,6 +385,10 @@ std::wstring Tr(const wchar_t* english, const wchar_t*) {
         {L"Delete", L"\u5220\u9664", L"\u0126assar", L"\u524a\u9664", L"Supprimer", L"L\u00f6schen", L"\u0423\u0434\u0430\u043b\u0438\u0442\u044c", L"\u522a\u9664", L"Eliminar"},
         {L"selected record(s)?", L"\u6761\u9009\u4e2d\u8bb0\u5f55\uff1f", L"rekord(s) mag\u0127\u017cula?", L"\u4ef6\u306e\u9078\u629e\u8a18\u9332\uff1f", L"enregistrement(s) s\u00e9lectionn\u00e9(s) ?", L"ausgew\u00e4hlte Eintr\u00e4ge l\u00f6schen?", L"\u0432\u044b\u0431\u0440\u0430\u043d\u043d\u044b\u0445 \u0437\u0430\u043f\u0438\u0441\u0435\u0439?", L"\u7b46\u9078\u53d6\u8a18\u9304\uff1f", L"registro(s) seleccionado(s)?"},
         {L"Delete Selected", L"\u5220\u9664\u9009\u4e2d", L"\u0126assar mag\u0127\u017cul", L"\u9078\u629e\u3092\u524a\u9664", L"Supprimer la s\u00e9lection", L"Auswahl l\u00f6schen", L"\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u043e\u0435", L"\u522a\u9664\u9078\u53d6", L"Eliminar selecci\u00f3n"},
+        {L"Delete selected records", L"\u5220\u9664\u9009\u4e2d\u8bb0\u5f55", L"\u0126assar rekords mag\u0127\u017cula", L"\u9078\u629e\u3057\u305f\u8a18\u9332\u3092\u524a\u9664", L"Supprimer les enregistrements s\u00e9lectionn\u00e9s", L"Ausgew\u00e4hlte Eintr\u00e4ge l\u00f6schen", L"\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u044b\u0435 \u0437\u0430\u043f\u0438\u0441\u0438", L"\u522a\u9664\u9078\u53d6\u8a18\u9304", L"Eliminar registros seleccionados"},
+        {L"Delete all Absent records", L"\u5220\u9664\u6240\u6709\u7f3a\u5e2d\u8bb0\u5f55", L"\u0126assar ir-rekords Assenti kollha", L"\u3059\u3079\u3066\u306e\u6b20\u5e2d\u8a18\u9332\u3092\u524a\u9664", L"Supprimer tous les absents", L"Alle abwesenden Eintr\u00e4ge l\u00f6schen", L"\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u0432\u0441\u0435 \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0438\u044f", L"\u522a\u9664\u6240\u6709\u7f3a\u5e2d\u8a18\u9304", L"Eliminar todos los ausentes"},
+        {L"Delete all Late records", L"\u5220\u9664\u6240\u6709\u8fdf\u5230\u8bb0\u5f55", L"\u0126assar ir-rekords Tard kollha", L"\u3059\u3079\u3066\u306e\u9045\u523b\u8a18\u9332\u3092\u524a\u9664", L"Supprimer tous les retards", L"Alle versp\u00e4teten Eintr\u00e4ge l\u00f6schen", L"\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u0432\u0441\u0435 \u043e\u043f\u043e\u0437\u0434\u0430\u043d\u0438\u044f", L"\u522a\u9664\u6240\u6709\u9072\u5230\u8a18\u9304", L"Eliminar todos los tarde"},
+        {L"Clear all records", L"\u6e05\u7a7a\u6240\u6709\u8bb0\u5f55", L"Naddaf ir-rekords kollha", L"\u3059\u3079\u3066\u306e\u8a18\u9332\u3092\u30af\u30ea\u30a2", L"Effacer tous les enregistrements", L"Alle Eintr\u00e4ge l\u00f6schen", L"\u041e\u0447\u0438\u0441\u0442\u0438\u0442\u044c \u0432\u0441\u0435 \u0437\u0430\u043f\u0438\u0441\u0438", L"\u6e05\u7a7a\u6240\u6709\u8a18\u9304", L"Borrar todos los registros"},
         {L"Delete all", L"\u5220\u9664\u6240\u6709", L"\u0126assar kollha", L"\u3059\u3079\u3066\u524a\u9664", L"Supprimer tous les", L"Alle l\u00f6schen", L"\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u0432\u0441\u0435", L"\u522a\u9664\u6240\u6709", L"Eliminar todos"},
         {L"records?", L"\u8bb0\u5f55\uff1f", L"rekords?", L"\u8a18\u9332\uff1f", L"enregistrements ?", L"Eintr\u00e4ge?", L"\u0437\u0430\u043f\u0438\u0441\u0438?", L"\u8a18\u9304\uff1f", L"registros?"},
         {L"Batch Delete", L"\u6279\u91cf\u5220\u9664", L"T\u0127assir bil-lott", L"\u4e00\u62ec\u524a\u9664", L"Suppression group\u00e9e", L"Mehrfach l\u00f6schen", L"\u041f\u0430\u043a\u0435\u0442\u043d\u043e\u0435 \u0443\u0434\u0430\u043b\u0435\u043d\u0438\u0435", L"\u6279\u6b21\u522a\u9664", L"Eliminaci\u00f3n por lote"},
@@ -383,6 +434,8 @@ std::wstring Tr(const wchar_t* english, const wchar_t*) {
         {L"Keyboard Shortcuts", L"\u5feb\u6377\u952e", L"Shortcuts", L"\u30b7\u30e7\u30fc\u30c8\u30ab\u30c3\u30c8", L"Raccourcis clavier", L"Tastenk\u00fcrzel", L"\u0413\u043e\u0440\u044f\u0447\u0438\u0435 \u043a\u043b\u0430\u0432\u0438\u0448\u0438", L"\u5feb\u6377\u9375", L"Atajos de teclado"},
         {L"Statistics Chart", L"\u7edf\u8ba1\u56fe\u8868", L"\u010aart tal-istatistika", L"\u7d71\u8a08\u30b0\u30e9\u30d5", L"Graphique statistique", L"Statistikdiagramm", L"\u0413\u0440\u0430\u0444\u0438\u043a", L"\u7d71\u8a08\u5716\u8868", L"Gr\u00e1fico estad\u00edstico"},
         {L"Print / Save as PDF", L"\u6253\u5370 / \u53e6\u5b58\u4e3a PDF", L"Stampa / PDF", L"\u5370\u5237 / PDF\u4fdd\u5b58", L"Imprimer / PDF", L"Drucken / PDF speichern", L"\u041f\u0435\u0447\u0430\u0442\u044c / PDF", L"\u5217\u5370 / \u53e6\u5b58 PDF", L"Imprimir / guardar PDF"},
+        {L"New attendance sheet name:", L"\u65b0\u70b9\u540d\u8868\u540d\u79f0\uff1a", L"Isem tal-folja \u0121dida:", L"\u65b0\u3057\u3044\u51fa\u5e2d\u30b7\u30fc\u30c8\u540d:", L"Nom de la nouvelle feuille :", L"Name des neuen Blatts:", L"\u0418\u043c\u044f \u043d\u043e\u0432\u043e\u0433\u043e \u043b\u0438\u0441\u0442\u0430:", L"\u65b0\u9ede\u540d\u8868\u540d\u7a31\uff1a", L"Nombre de la nueva hoja:"},
+        {L"New Attendance", L"\u65b0\u5efa\u70b9\u540d", L"Attendenza \u0121dida", L"\u65b0\u898f\u51fa\u5e2d", L"Nouvel appel", L"Neue Anwesenheit", L"\u041d\u043e\u0432\u0430\u044f \u043f\u043e\u0441\u0435\u0449\u0430\u0435\u043c\u043e\u0441\u0442\u044c", L"\u65b0\u589e\u9ede\u540d", L"Nueva asistencia"},
         {L"Please enter a date and time.", L"\u8bf7\u8f93\u5165\u65e5\u671f\u548c\u65f6\u95f4\u3002", L"Da\u0127\u0127al data u \u0127in.", L"\u65e5\u6642\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002", L"Veuillez saisir la date et l'heure.", L"Bitte Datum und Uhrzeit eingeben.", L"\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u0434\u0430\u0442\u0443 \u0438 \u0432\u0440\u0435\u043c\u044f.", L"\u8acb\u8f38\u5165\u65e5\u671f\u548c\u6642\u9593\u3002", L"Introduce fecha y hora."},
         {L"Please enter a name.", L"\u8bf7\u8f93\u5165\u59d3\u540d\u3002", L"Da\u0127\u0127al isem.", L"\u540d\u524d\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002", L"Veuillez saisir un nom.", L"Bitte Namen eingeben.", L"\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u0438\u043c\u044f.", L"\u8acb\u8f38\u5165\u59d3\u540d\u3002", L"Introduce un nombre."},
         {L"Please fill the Other field.", L"\u8bf7\u586b\u5199 Other \u5b57\u6bb5\u3002", L"Imla l-qasam Other.", L"Other \u6b04\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002", L"Veuillez remplir le champ Autre.", L"Bitte das Feld Andere ausf\u00fcllen.", L"\u0417\u0430\u043f\u043e\u043b\u043d\u0438\u0442\u0435 \u043f\u043e\u043b\u0435 Other.", L"\u8acb\u586b\u5beb Other \u6b04\u4f4d\u3002", L"Rellena el campo Otro."},
@@ -995,6 +1048,18 @@ void RecreateFonts() {
     }
 }
 
+BOOL CALLBACK ApplyThemeToChild(HWND child, LPARAM) {
+    SetWindowTheme(child, g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+    InvalidateRect(child, nullptr, TRUE);
+    return TRUE;
+}
+
+void ApplyThemedControls(HWND root) {
+    if (!root) return;
+    SetWindowTheme(root, g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+    EnumChildWindows(root, ApplyThemeToChild, 0);
+}
+
 void SetListColumnText(int index, const std::wstring& text) {
     LVCOLUMNW col{};
     col.mask = LVCF_TEXT;
@@ -1045,10 +1110,13 @@ void ApplyVisualSettings() {
     ApplyMainLanguage();
     if (g_list) {
         ApplyDarkMode(g_hwnd);
-        ListView_SetBkColor(g_list, COLOR_PANEL);
-        ListView_SetTextBkColor(g_list, COLOR_PANEL);
-        ListView_SetTextColor(g_list, COLOR_TEXT);
     }
+    BOOL dark = g_theme == UiTheme::Dark;
+    if (g_hwnd) DwmSetWindowAttribute(g_hwnd, 20, &dark, sizeof(dark));
+    if (g_settingsWindow) DwmSetWindowAttribute(g_settingsWindow, 20, &dark, sizeof(dark));
+    if (g_chartWindow) DwmSetWindowAttribute(g_chartWindow, 20, &dark, sizeof(dark));
+    ApplyThemedControls(g_hwnd);
+    ApplyThemedControls(g_settingsWindow);
     if (g_hwnd) {
         InvalidateRect(g_hwnd, nullptr, TRUE);
         ResizeLayout(g_hwnd);
@@ -1218,11 +1286,15 @@ void ClearAllRecords() {
 
 void ShowDeleteMenu(HWND button) {
     HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING, IDM_DELETE_SELECTED, L"Delete selected records");
-    AppendMenuW(menu, MF_STRING, IDM_DELETE_ABSENT, L"Delete all Absent records");
-    AppendMenuW(menu, MF_STRING, IDM_DELETE_LATE, L"Delete all Late records");
+    std::wstring selected = Tr(L"Delete selected records", L"\u5220\u9664\u9009\u4e2d\u8bb0\u5f55");
+    std::wstring absent = Tr(L"Delete all Absent records", L"\u5220\u9664\u6240\u6709\u7f3a\u5e2d\u8bb0\u5f55");
+    std::wstring late = Tr(L"Delete all Late records", L"\u5220\u9664\u6240\u6709\u8fdf\u5230\u8bb0\u5f55");
+    std::wstring clear = Tr(L"Clear all records", L"\u6e05\u7a7a\u6240\u6709\u8bb0\u5f55");
+    AppendMenuW(menu, MF_STRING, IDM_DELETE_SELECTED, selected.c_str());
+    AppendMenuW(menu, MF_STRING, IDM_DELETE_ABSENT, absent.c_str());
+    AppendMenuW(menu, MF_STRING, IDM_DELETE_LATE, late.c_str());
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, IDM_CLEAR_ALL, L"Clear all records");
+    AppendMenuW(menu, MF_STRING, IDM_CLEAR_ALL, clear.c_str());
 
     RECT rc{};
     GetWindowRect(button, &rc);
@@ -1322,6 +1394,10 @@ std::string CsvCell(const std::wstring& value) {
     }
     if (quote) out.push_back('"');
     return out;
+}
+
+std::string TsvCell(const std::wstring& value) {
+    return Escape(WideToUtf8(value));
 }
 
 std::vector<std::string> ParseCsvLine(const std::string& line) {
@@ -1451,13 +1527,16 @@ void ExportPrintHtml() {
         return;
     }
     file << "\xEF\xBB\xBF";
-    file << "<!doctype html><meta charset='utf-8'><title>Attendance</title>";
+    file << "<!doctype html><meta charset='utf-8'><title>" << HtmlCell(Tr(L"Attendance", L"\u51fa\u52e4\u7387")) << "</title>";
     file << "<style>body{font-family:Segoe UI,Arial;margin:32px}table{border-collapse:collapse;width:100%}"
             "th,td{border:1px solid #999;padding:8px;text-align:left}th{background:#eee}"
             "@media print{button{display:none}}</style>";
     file << "<button onclick='window.print()'>" << HtmlCell(Tr(L"Print / Save as PDF", L"\u6253\u5370 / \u53e6\u5b58\u4e3a PDF")) << "</button>";
     file << "<h1>" << HtmlCell(g_sheets[g_activeSheet].name) << "</h1>";
-    file << "<table><tr><th>Date/Time</th><th>Name</th><th>Status</th><th>Other</th></tr>";
+    file << "<table><tr><th>" << HtmlCell(Tr(L"Date/Time", L"\u65e5\u671f\u65f6\u95f4")) << "</th><th>"
+         << HtmlCell(Tr(L"Name", L"\u59d3\u540d")) << "</th><th>"
+         << HtmlCell(Tr(L"Status", L"\u72b6\u6001")) << "</th><th>"
+         << HtmlCell(Tr(L"Other", L"\u5176\u4ed6")) << "</th></tr>";
     for (const auto& r : g_records) {
         file << "<tr><td>" << HtmlCell(r.dateTime) << "</td><td>" << HtmlCell(r.name)
              << "</td><td>" << HtmlCell(r.status) << "</td><td>" << HtmlCell(r.other) << "</td></tr>";
@@ -1512,8 +1591,8 @@ void ExportDatabaseMirror() {
     file << "course\tdate_time\tname\tstatus\tother\n";
     for (const auto& sheet : g_sheets) {
         for (const auto& r : sheet.records) {
-            file << CsvCell(sheet.name) << '\t' << CsvCell(r.dateTime) << '\t' << CsvCell(r.name)
-                 << '\t' << CsvCell(r.status) << '\t' << CsvCell(r.other) << '\n';
+            file << TsvCell(sheet.name) << '\t' << TsvCell(r.dateTime) << '\t' << TsvCell(r.name)
+                 << '\t' << TsvCell(r.status) << '\t' << TsvCell(r.other) << '\n';
         }
     }
     std::wstring msg = Tr(L"Database mirror exported to:", L"\u6570\u636e\u5e93\u955c\u50cf\u5df2\u5bfc\u51fa\u5230\uff1a") + L"\n" + path.wstring();
@@ -1767,6 +1846,11 @@ HWND MakeControl(const wchar_t* cls, const wchar_t* text, DWORD style, int id) {
         g_hwnd, (HMENU)(intptr_t)id, GetModuleHandleW(nullptr), nullptr
     );
     SendMessageW(hwnd, WM_SETFONT, (WPARAM)g_font, TRUE);
+    if (lstrcmpiW(cls, L"EDIT") == 0) EnableEditShortcuts(hwnd);
+    if (lstrcmpiW(cls, L"COMBOBOX") == 0 && (style & CBS_OWNERDRAWFIXED)) {
+        SendMessageW(hwnd, CB_SETITEMHEIGHT, (WPARAM)-1, 30);
+        SendMessageW(hwnd, CB_SETITEMHEIGHT, 0, 30);
+    }
     return hwnd;
 }
 
@@ -1782,6 +1866,11 @@ HWND MakeSettingsControl(HWND parent, const wchar_t* cls, const wchar_t* text, D
         parent, (HMENU)(intptr_t)id, GetModuleHandleW(nullptr), nullptr
     );
     SendMessageW(hwnd, WM_SETFONT, (WPARAM)g_font, TRUE);
+    if (lstrcmpiW(cls, L"EDIT") == 0) EnableEditShortcuts(hwnd);
+    if (lstrcmpiW(cls, L"COMBOBOX") == 0 && (style & CBS_OWNERDRAWFIXED)) {
+        SendMessageW(hwnd, CB_SETITEMHEIGHT, (WPARAM)-1, 30);
+        SendMessageW(hwnd, CB_SETITEMHEIGHT, 0, 30);
+    }
     return hwnd;
 }
 
@@ -1882,12 +1971,12 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_LANG_LABEL);
         MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_THEME_LABEL);
         MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_FONT_LABEL);
-        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, IDC_SETTINGS_LANGUAGE);
-        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, IDC_SETTINGS_THEME);
-        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, IDC_SETTINGS_FONT);
-        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | WS_TABSTOP, IDC_SETTINGS_RESET);
-        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | WS_TABSTOP, IDC_SETTINGS_APPLY);
-        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | WS_TABSTOP, IDC_SETTINGS_CLOSE);
+        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP, IDC_SETTINGS_LANGUAGE);
+        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP, IDC_SETTINGS_THEME);
+        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP, IDC_SETTINGS_FONT);
+        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_RESET);
+        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_APPLY);
+        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_CLOSE);
         SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), WM_SETFONT, (WPARAM)g_titleFont, TRUE);
         ApplySettingsLanguage(hwnd);
         ResizeSettingsLayout(hwnd);
@@ -1919,6 +2008,20 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
         }
         break;
+    case WM_MEASUREITEM: {
+        auto* measure = reinterpret_cast<MEASUREITEMSTRUCT*>(lParam);
+        if (measure->CtlType == ODT_COMBOBOX) {
+            measure->itemHeight = 30;
+            return TRUE;
+        }
+        break;
+    }
+    case WM_DRAWITEM: {
+        auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
+        if (DrawComboItem(draw)) return TRUE;
+        if (DrawButtonItem(draw)) return TRUE;
+        break;
+    }
     case WM_CTLCOLORSTATIC: {
         HDC hdc = (HDC)wParam;
         HWND control = (HWND)lParam;
@@ -1979,6 +2082,9 @@ void ShowSettingsWindow() {
         CW_USEDEFAULT, CW_USEDEFAULT, 470, 370,
         g_hwnd, nullptr, instance, nullptr
     );
+    BOOL dark = g_theme == UiTheme::Dark;
+    DwmSetWindowAttribute(g_settingsWindow, 20, &dark, sizeof(dark));
+    ApplyThemedControls(g_settingsWindow);
     ShowWindow(g_settingsWindow, SW_SHOW);
     UpdateWindow(g_settingsWindow);
 }
@@ -2006,67 +2112,87 @@ void ToggleFullscreen(HWND hwnd) {
 }
 
 void ResizeLayout(HWND hwnd) {
+    static bool inLayout = false;
+    if (inLayout) return;
+    inLayout = true;
+
     RECT rc{};
     GetClientRect(hwnd, &rc);
     int w = rc.right - rc.left;
     int h = rc.bottom - rc.top;
+    if (w <= 0 || h <= 0) {
+        inLayout = false;
+        return;
+    }
+
+    SendMessageW(hwnd, WM_SETREDRAW, FALSE, 0);
+
+    int layoutW = std::max(w, MIN_LAYOUT_W);
+    int layoutH = std::max(h, MIN_LAYOUT_H);
+    g_contentW = layoutW;
+    g_contentH = layoutH;
+
+    g_scrollX = std::clamp(g_scrollX, 0, std::max(0, g_contentW - w));
+    g_scrollY = std::clamp(g_scrollY, 0, std::max(0, g_contentH - h));
+
     int pad = 24;
     int top = 22;
     int labelW = 92;
     int editH = 36;
     int buttonH = 42;
-    int leftW = std::min(460, std::max(380, w / 3));
-    int x = pad;
+    int leftW = std::min(460, std::max(380, layoutW / 3));
+    int x = pad - g_scrollX;
+    int yOffset = -g_scrollY;
 
-    MoveWindow(GetDlgItem(hwnd, IDC_TITLE), x, top, leftW, 38, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_TITLE), x, top + yOffset, leftW, 38, FALSE);
     int rightX = pad + leftW + 24;
-    MoveWindow(g_courseCombo, rightX, top, 260, 34, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_COURSE_OPTIONS), rightX + 272, top, 128, 34, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATS), rightX + 416, top + 4, std::max(320, w - (rightX + 440)), 30, TRUE);
+    MoveWindow(g_courseCombo, rightX - g_scrollX, top + yOffset, 260, 260, FALSE);
+    MoveWindow(GetDlgItem(hwnd, IDC_COURSE_OPTIONS), rightX + 272 - g_scrollX, top + yOffset, 128, 34, FALSE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STATS), rightX + 416 - g_scrollX, top + 4 + yOffset, std::max(320, layoutW - (rightX + 440)), 30, FALSE);
     top += 48;
-    MoveWindow(GetDlgItem(hwnd, IDC_SUBTITLE), x, top, leftW, 26, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_SUBTITLE), x, top + yOffset, leftW, 26, FALSE);
     top += 44;
 
-    MoveWindow(GetDlgItem(hwnd, 2001), x, top + 6, labelW, 24, TRUE);
-    MoveWindow(g_dateEdit, x + labelW, top, leftW - labelW, editH, TRUE);
+    MoveWindow(GetDlgItem(hwnd, 2001), x, top + 6 + yOffset, labelW, 24, FALSE);
+    MoveWindow(g_dateEdit, x + labelW, top + yOffset, leftW - labelW, editH, FALSE);
     top += 52;
-    MoveWindow(GetDlgItem(hwnd, 2002), x, top + 6, labelW, 24, TRUE);
-    MoveWindow(g_nameEdit, x + labelW, top, leftW - labelW, editH, TRUE);
+    MoveWindow(GetDlgItem(hwnd, 2002), x, top + 6 + yOffset, labelW, 24, FALSE);
+    MoveWindow(g_nameEdit, x + labelW, top + yOffset, leftW - labelW, editH, FALSE);
     top += 52;
-    MoveWindow(GetDlgItem(hwnd, 2003), x, top + 6, labelW, 24, TRUE);
-    MoveWindow(g_otherEdit, x + labelW, top, leftW - labelW, editH, TRUE);
+    MoveWindow(GetDlgItem(hwnd, 2003), x, top + 6 + yOffset, labelW, 24, FALSE);
+    MoveWindow(g_otherEdit, x + labelW, top + yOffset, leftW - labelW, editH, FALSE);
     top += 64;
 
     int half = (leftW - 12) / 2;
-    MoveWindow(GetDlgItem(hwnd, IDC_PRESENT), x, top, half, buttonH, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_ABSENT), x + half + 12, top, half, buttonH, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_PRESENT), x, top + yOffset, half, buttonH, FALSE);
+    MoveWindow(GetDlgItem(hwnd, IDC_ABSENT), x + half + 12, top + yOffset, half, buttonH, FALSE);
     top += 50;
-    MoveWindow(GetDlgItem(hwnd, IDC_LATE), x, top, half, buttonH, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_OTHER_STATUS), x + half + 12, top, half, buttonH, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_LATE), x, top + yOffset, half, buttonH, FALSE);
+    MoveWindow(GetDlgItem(hwnd, IDC_OTHER_STATUS), x + half + 12, top + yOffset, half, buttonH, FALSE);
     top += 60;
-    MoveWindow(GetDlgItem(hwnd, IDC_ADD_UPDATE), x, top, half, buttonH + 2, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_EDIT_SELECTED), x + half + 12, top, half, buttonH + 2, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_ADD_UPDATE), x, top + yOffset, half, buttonH + 2, FALSE);
+    MoveWindow(GetDlgItem(hwnd, IDC_EDIT_SELECTED), x + half + 12, top + yOffset, half, buttonH + 2, FALSE);
     top += 58;
-    MoveWindow(GetDlgItem(hwnd, IDC_ALL_PRESENT), x, top, leftW, buttonH, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_ALL_PRESENT), x, top + yOffset, leftW, buttonH, FALSE);
     top += 52;
-    MoveWindow(GetDlgItem(hwnd, IDC_NEW), x, top, half, buttonH, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_DELETE), x + half + 12, top, half, buttonH, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_NEW), x, top + yOffset, half, buttonH, FALSE);
+    MoveWindow(GetDlgItem(hwnd, IDC_DELETE), x + half + 12, top + yOffset, half, buttonH, FALSE);
     top += 52;
-    MoveWindow(GetDlgItem(hwnd, IDC_SAVE), x, top, half, buttonH, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_IMPORT), x + half + 12, top, half, buttonH, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_SAVE), x, top + yOffset, half, buttonH, FALSE);
+    MoveWindow(GetDlgItem(hwnd, IDC_IMPORT), x + half + 12, top + yOffset, half, buttonH, FALSE);
     top += 52;
-    MoveWindow(GetDlgItem(hwnd, IDC_EXPORT_CSV), x, top, leftW, buttonH, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_EXPORT_CSV), x, top + yOffset, leftW, buttonH, FALSE);
 
-    int bottomBarY = std::max(top + 56, h - 56);
-    MoveWindow(GetDlgItem(hwnd, IDC_HINT), x, bottomBarY + 10, std::max(260, w - 230), 26, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_TOOLS), std::max(x, w - 326), bottomBarY + 4, 146, 38, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS), std::max(x, w - 170), bottomBarY + 4, 146, 38, TRUE);
+    int bottomBarY = std::max(top + 56, layoutH - 56);
+    MoveWindow(GetDlgItem(hwnd, IDC_HINT), x, bottomBarY + 10 + yOffset, std::max(260, layoutW - 230), 26, FALSE);
+    MoveWindow(GetDlgItem(hwnd, IDC_TOOLS), std::max(pad, layoutW - 326) - g_scrollX, bottomBarY + 4 + yOffset, 146, 38, FALSE);
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS), std::max(pad, layoutW - 170) - g_scrollX, bottomBarY + 4 + yOffset, 146, 38, FALSE);
 
     int listX = pad + leftW + 24;
-    int listW = std::max(300, w - listX - pad);
+    int listW = std::max(300, layoutW - listX - pad);
     int listY = pad + 52;
     int listH = std::max(300, bottomBarY - listY - 14);
-    MoveWindow(g_list, listX, listY, listW, listH, TRUE);
+    MoveWindow(g_list, listX - g_scrollX, listY + yOffset, listW, listH, FALSE);
 
     int widths[4] = {
         std::max(210, listW / 5),
@@ -2075,16 +2201,100 @@ void ResizeLayout(HWND hwnd) {
         std::max(260, listW - (listW / 5) - (listW / 4) - (listW / 7) - 24)
     };
     for (int i = 0; i < 4; ++i) ListView_SetColumnWidth(g_list, i, widths[i]);
+
+    SCROLLINFO si{};
+    si.cbSize = sizeof(si);
+    si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS | SIF_DISABLENOSCROLL;
+    si.nMin = 0;
+    si.nMax = std::max(0, g_contentW - 1);
+    si.nPage = std::max(1, w);
+    si.nPos = g_scrollX;
+    SetScrollInfo(hwnd, SB_HORZ, &si, TRUE);
+
+    si.nMax = std::max(0, g_contentH - 1);
+    si.nPage = std::max(1, h);
+    si.nPos = g_scrollY;
+    SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+
+    SendMessageW(hwnd, WM_SETREDRAW, TRUE, 0);
+    UINT redrawFlags = RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN;
+    if (!g_liveResizing) redrawFlags |= RDW_UPDATENOW;
+    RedrawWindow(hwnd, nullptr, nullptr, redrawFlags);
+    inLayout = false;
+}
+
+void ScrollMainWindow(HWND hwnd, int bar, int code, int wheelDelta) {
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    int viewport = bar == SB_VERT ? rc.bottom - rc.top : rc.right - rc.left;
+    int content = bar == SB_VERT ? g_contentH : g_contentW;
+    int current = bar == SB_VERT ? g_scrollY : g_scrollX;
+    int maxPos = std::max(0, content - viewport);
+    int next = current;
+
+    switch (code) {
+    case SB_LINEUP:
+        next -= 36;
+        break;
+    case SB_LINEDOWN:
+        next += 36;
+        break;
+    case SB_PAGEUP:
+        next -= std::max(120, viewport - 80);
+        break;
+    case SB_PAGEDOWN:
+        next += std::max(120, viewport - 80);
+        break;
+    case SB_THUMBTRACK:
+    case SB_THUMBPOSITION: {
+        SCROLLINFO si{};
+        si.cbSize = sizeof(si);
+        si.fMask = SIF_TRACKPOS;
+        GetScrollInfo(hwnd, bar, &si);
+        next = si.nTrackPos;
+        break;
+    }
+    case SB_TOP:
+        next = 0;
+        break;
+    case SB_BOTTOM:
+        next = maxPos;
+        break;
+    case SB_ENDSCROLL:
+        return;
+    default:
+        if (wheelDelta != 0) {
+            next += -wheelDelta / WHEEL_DELTA * 90;
+            if (std::abs(wheelDelta) < WHEEL_DELTA) next += wheelDelta < 0 ? 90 : -90;
+        }
+        break;
+    }
+
+    next = std::clamp(next, 0, maxPos);
+    if (next == current) return;
+
+    if (bar == SB_VERT) g_scrollY = next;
+    else g_scrollX = next;
+    ResizeLayout(hwnd);
+    InvalidateRect(hwnd, nullptr, TRUE);
 }
 
 void ApplyDarkMode(HWND hwnd) {
     BOOL value = g_theme == UiTheme::Dark;
-    DwmSetWindowAttribute(hwnd, 20, &value, sizeof(value));
-    SetWindowTheme(g_list, g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
-    ListView_SetBkColor(g_list, COLOR_PANEL);
-    ListView_SetTextBkColor(g_list, COLOR_PANEL);
-    ListView_SetTextColor(g_list, COLOR_TEXT);
-    ListView_SetExtendedListViewStyle(g_list, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER | LVS_EX_INFOTIP);
+    if (hwnd) DwmSetWindowAttribute(hwnd, 20, &value, sizeof(value));
+    ApplyThemedControls(hwnd);
+    if (g_list) {
+        SetWindowTheme(g_list, g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+        HWND header = ListView_GetHeader(g_list);
+        if (header) {
+            SetWindowTheme(header, g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+            InvalidateRect(header, nullptr, TRUE);
+        }
+        ListView_SetBkColor(g_list, COLOR_PANEL);
+        ListView_SetTextBkColor(g_list, COLOR_PANEL);
+        ListView_SetTextColor(g_list, COLOR_TEXT);
+        ListView_SetExtendedListViewStyle(g_list, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER | LVS_EX_INFOTIP);
+    }
 }
 
 void InitListColumns() {
@@ -2097,6 +2307,217 @@ void InitListColumns() {
         col.iSubItem = i;
         ListView_InsertColumn(g_list, i, &col);
     }
+}
+
+bool DrawButtonItem(const DRAWITEMSTRUCT* draw) {
+    if (!draw || draw->CtlType != ODT_BUTTON) return false;
+
+    wchar_t text[128]{};
+    GetWindowTextW(draw->hwndItem, text, 128);
+    bool pressed = (draw->itemState & ODS_SELECTED) != 0;
+    bool focused = (draw->itemState & ODS_FOCUS) != 0;
+
+    COLORREF fill = COLOR_INPUT;
+    COLORREF border = focused ? COLOR_ACCENT : (g_theme == UiTheme::Dark ? RGB(76, 82, 96) : RGB(197, 204, 218));
+    COLORREF buttonText = COLOR_TEXT;
+
+    bool isDanger = draw->CtlID == IDC_DELETE || draw->CtlID == IDC_SETTINGS_RESET;
+    bool isGreen = draw->CtlID == IDC_PRESENT || draw->CtlID == IDC_SAVE || draw->CtlID == IDC_ALL_PRESENT || draw->CtlID == IDC_SETTINGS_APPLY;
+    bool isBlue = draw->CtlID == IDC_IMPORT || draw->CtlID == IDC_NEW || draw->CtlID == IDC_EXPORT_CSV;
+
+    if (g_theme == UiTheme::Dark) {
+        if (isDanger) {
+            fill = pressed ? RGB(128, 51, 57) : RGB(88, 48, 55);
+            border = focused ? COLOR_DANGER : RGB(140, 74, 82);
+            buttonText = RGB(255, 245, 245);
+        } else if (isGreen) {
+            fill = pressed ? RGB(36, 103, 86) : RGB(35, 79, 72);
+            border = focused ? RGB(90, 220, 176) : RGB(64, 135, 120);
+            buttonText = RGB(242, 255, 250);
+        } else if (isBlue) {
+            fill = pressed ? RGB(45, 87, 143) : RGB(44, 70, 116);
+            border = focused ? COLOR_ACCENT : RGB(77, 117, 180);
+            buttonText = RGB(245, 249, 255);
+        } else {
+            fill = pressed ? RGB(52, 92, 140) : COLOR_INPUT;
+        }
+    } else {
+        if (isDanger) {
+            fill = pressed ? RGB(255, 208, 214) : RGB(255, 235, 238);
+            border = focused ? COLOR_DANGER : RGB(236, 145, 154);
+            buttonText = RGB(128, 36, 44);
+        } else if (isGreen) {
+            fill = pressed ? RGB(194, 240, 218) : RGB(224, 248, 235);
+            border = focused ? RGB(34, 145, 95) : RGB(117, 198, 157);
+            buttonText = RGB(24, 105, 72);
+        } else if (isBlue) {
+            fill = pressed ? RGB(207, 228, 255) : RGB(232, 242, 255);
+            border = focused ? COLOR_ACCENT : RGB(139, 185, 244);
+            buttonText = RGB(29, 86, 158);
+        } else {
+            fill = pressed ? RGB(226, 235, 249) : RGB(255, 255, 255);
+        }
+    }
+
+    HBRUSH brush = CreateSolidBrush(fill);
+    FillRect(draw->hDC, &draw->rcItem, brush);
+    DeleteObject(brush);
+
+    HPEN pen = CreatePen(PS_SOLID, 1, border);
+    HGDIOBJ oldPen = SelectObject(draw->hDC, pen);
+    HGDIOBJ oldBrush = SelectObject(draw->hDC, GetStockObject(HOLLOW_BRUSH));
+    Rectangle(draw->hDC, draw->rcItem.left, draw->rcItem.top, draw->rcItem.right, draw->rcItem.bottom);
+    SelectObject(draw->hDC, oldBrush);
+    SelectObject(draw->hDC, oldPen);
+    DeleteObject(pen);
+
+    SetBkMode(draw->hDC, TRANSPARENT);
+    SetTextColor(draw->hDC, buttonText);
+    DrawTextW(draw->hDC, text, -1, const_cast<RECT*>(&draw->rcItem), DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    return true;
+}
+
+bool DrawComboItem(const DRAWITEMSTRUCT* draw) {
+    if (!draw || draw->CtlType != ODT_COMBOBOX) return false;
+
+    RECT rc = draw->rcItem;
+    bool selected = (draw->itemState & ODS_SELECTED) != 0;
+    bool focused = (draw->itemState & ODS_FOCUS) != 0;
+    COLORREF fill = selected
+        ? (g_theme == UiTheme::Dark ? RGB(50, 86, 132) : RGB(218, 237, 255))
+        : COLOR_INPUT;
+    COLORREF textColor = COLOR_TEXT;
+    COLORREF border = focused ? COLOR_ACCENT : (g_theme == UiTheme::Dark ? RGB(76, 82, 96) : RGB(197, 204, 218));
+
+    HBRUSH brush = CreateSolidBrush(fill);
+    FillRect(draw->hDC, &rc, brush);
+    DeleteObject(brush);
+
+    if ((draw->itemState & ODS_COMBOBOXEDIT) != 0) {
+        HPEN pen = CreatePen(PS_SOLID, 1, border);
+        HGDIOBJ oldPen = SelectObject(draw->hDC, pen);
+        HGDIOBJ oldBrush = SelectObject(draw->hDC, GetStockObject(HOLLOW_BRUSH));
+        Rectangle(draw->hDC, rc.left, rc.top, rc.right, rc.bottom);
+        SelectObject(draw->hDC, oldBrush);
+        SelectObject(draw->hDC, oldPen);
+        DeleteObject(pen);
+    }
+
+    std::wstring text;
+    if (draw->itemID != (UINT)-1) {
+        int len = (int)SendMessageW(draw->hwndItem, CB_GETLBTEXTLEN, draw->itemID, 0);
+        if (len >= 0) {
+            text.resize(len + 1);
+            SendMessageW(draw->hwndItem, CB_GETLBTEXT, draw->itemID, (LPARAM)text.data());
+            text.resize(len);
+        }
+    } else {
+        text = GetText(draw->hwndItem);
+    }
+
+    rc.left += 10;
+    rc.right -= 8;
+    SetBkMode(draw->hDC, TRANSPARENT);
+    SetTextColor(draw->hDC, textColor);
+    DrawTextW(draw->hDC, text.c_str(), -1, &rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    return true;
+}
+
+LRESULT HandleHeaderCustomDraw(NMHDR* hdr) {
+    if (!g_list || hdr->hwndFrom != ListView_GetHeader(g_list) || hdr->code != NM_CUSTOMDRAW) return 0;
+    auto* draw = reinterpret_cast<NMCUSTOMDRAW*>(hdr);
+    if (draw->dwDrawStage == CDDS_PREPAINT) return CDRF_NOTIFYITEMDRAW;
+    if (draw->dwDrawStage != CDDS_ITEMPREPAINT) return CDRF_DODEFAULT;
+
+    RECT rc = draw->rc;
+    COLORREF fill = g_theme == UiTheme::Dark ? RGB(38, 42, 51) : RGB(236, 242, 250);
+    COLORREF border = g_theme == UiTheme::Dark ? RGB(74, 82, 98) : RGB(196, 207, 222);
+    HBRUSH brush = CreateSolidBrush(fill);
+    FillRect(draw->hdc, &rc, brush);
+    DeleteObject(brush);
+
+    HPEN pen = CreatePen(PS_SOLID, 1, border);
+    HGDIOBJ oldPen = SelectObject(draw->hdc, pen);
+    MoveToEx(draw->hdc, rc.left, rc.bottom - 1, nullptr);
+    LineTo(draw->hdc, rc.right, rc.bottom - 1);
+    MoveToEx(draw->hdc, rc.right - 1, rc.top, nullptr);
+    LineTo(draw->hdc, rc.right - 1, rc.bottom);
+    SelectObject(draw->hdc, oldPen);
+    DeleteObject(pen);
+
+    wchar_t text[128]{};
+    HDITEMW item{};
+    item.mask = HDI_TEXT;
+    item.pszText = text;
+    item.cchTextMax = 128;
+    Header_GetItem(hdr->hwndFrom, (int)draw->dwItemSpec, &item);
+
+    rc.left += 10;
+    rc.right -= 8;
+    SetBkMode(draw->hdc, TRANSPARENT);
+    SetTextColor(draw->hdc, COLOR_TEXT);
+    DrawTextW(draw->hdc, text, -1, &rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    return CDRF_SKIPDEFAULT;
+}
+
+void PaintHeaderControl(HWND hwnd, HDC hdc) {
+    RECT full{};
+    GetClientRect(hwnd, &full);
+    COLORREF fill = g_theme == UiTheme::Dark ? RGB(38, 42, 51) : RGB(236, 242, 250);
+    COLORREF border = g_theme == UiTheme::Dark ? RGB(74, 82, 98) : RGB(196, 207, 222);
+    HBRUSH bg = CreateSolidBrush(fill);
+    FillRect(hdc, &full, bg);
+    DeleteObject(bg);
+
+    HPEN pen = CreatePen(PS_SOLID, 1, border);
+    HGDIOBJ oldPen = SelectObject(hdc, pen);
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, COLOR_TEXT);
+    SelectObject(hdc, g_font);
+
+    int count = Header_GetItemCount(hwnd);
+    for (int i = 0; i < count; ++i) {
+        RECT rc{};
+        Header_GetItemRect(hwnd, i, &rc);
+
+        MoveToEx(hdc, rc.left, rc.bottom - 1, nullptr);
+        LineTo(hdc, rc.right, rc.bottom - 1);
+        MoveToEx(hdc, rc.right - 1, rc.top, nullptr);
+        LineTo(hdc, rc.right - 1, rc.bottom);
+
+        wchar_t text[128]{};
+        HDITEMW item{};
+        item.mask = HDI_TEXT;
+        item.pszText = text;
+        item.cchTextMax = 128;
+        Header_GetItem(hwnd, i, &item);
+
+        rc.left += 10;
+        rc.right -= 8;
+        DrawTextW(hdc, text, -1, &rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
+
+    SelectObject(hdc, oldPen);
+    DeleteObject(pen);
+}
+
+LRESULT CALLBACK HeaderPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
+    switch (msg) {
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(hwnd, &ps);
+        PaintHeaderControl(hwnd, hdc);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_ERASEBKGND:
+        return 1;
+    }
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+void EnableHeaderPaint(HWND header) {
+    if (header) SetWindowSubclass(header, HeaderPaintProc, 3, 0);
 }
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -2114,7 +2535,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         SendMessageW(subtitle, WM_SETFONT, (WPARAM)g_smallFont, TRUE);
         SendMessageW(stats, WM_SETFONT, (WPARAM)g_smallFont, TRUE);
         SendMessageW(hint, WM_SETFONT, (WPARAM)g_smallFont, TRUE);
-        g_courseCombo = MakeControl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, IDC_COURSE_COMBO);
+        g_courseCombo = MakeControl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP, IDC_COURSE_COMBO);
         MakeButton(L"Courses", IDC_COURSE_OPTIONS);
         MakeControl(L"STATIC", L"Date/Time", 0, 2001);
         MakeControl(L"STATIC", L"Name", 0, 2002);
@@ -2139,17 +2560,39 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         MakeButton(L"Settings", IDC_SETTINGS);
 
         g_list = MakeControl(WC_LISTVIEWW, L"", LVS_REPORT | WS_TABSTOP | WS_BORDER, IDC_LIST);
+        EnableMouseWheelForward(g_list);
         InitListColumns();
+        EnableHeaderPaint(ListView_GetHeader(g_list));
         EnsureSheets();
         RefreshCourseCombo();
-        ApplyDarkMode(hwnd);
         ApplyMainLanguage();
         ResizeLayout(hwnd);
+        ApplyDarkMode(hwnd);
+        InvalidateRect(hwnd, nullptr, TRUE);
         SetTimer(hwnd, 1, 30000, nullptr);
         return 0;
     }
     case WM_SIZE:
         ResizeLayout(hwnd);
+        return 0;
+    case WM_ENTERSIZEMOVE:
+        g_liveResizing = true;
+        return 0;
+    case WM_EXITSIZEMOVE:
+        g_liveResizing = false;
+        ResizeLayout(hwnd);
+        return 0;
+    case WM_VSCROLL:
+        ScrollMainWindow(hwnd, SB_VERT, LOWORD(wParam), 0);
+        return 0;
+    case WM_HSCROLL:
+        ScrollMainWindow(hwnd, SB_HORZ, LOWORD(wParam), 0);
+        return 0;
+    case WM_MOUSEWHEEL:
+        ScrollMainWindow(hwnd, SB_VERT, 0, GET_WHEEL_DELTA_WPARAM(wParam));
+        return 0;
+    case WM_MOUSEHWHEEL:
+        ScrollMainWindow(hwnd, SB_HORZ, 0, GET_WHEEL_DELTA_WPARAM(wParam));
         return 0;
     case WM_COMMAND: {
         if (LOWORD(wParam) == IDC_COURSE_COMBO && HIWORD(wParam) == CBN_SELCHANGE) {
@@ -2173,17 +2616,21 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case IDC_IMPORT: ImportAttendance(); return 0;
         case IDC_NEW:
             {
-            std::wstring newMsg = Tr(L"Create a new attendance sheet and clear current records?", L"\u65b0\u5efa\u70b9\u540d\u8868\u5e76\u6e05\u7a7a\u5f53\u524d\u8bb0\u5f55\uff1f");
+            SyncActiveSheet();
+            std::wstring sheetName = Tr(L"Attendance Sheet", L"\u70b9\u540d\u8868") + L" " + std::to_wstring(g_sheets.size() + 1);
             std::wstring newTitle = Tr(L"New Attendance", L"\u65b0\u5efa\u70b9\u540d");
-            if (MessageBoxW(hwnd, newMsg.c_str(), newTitle.c_str(), MB_YESNO | MB_ICONQUESTION) == IDYES) {
-                PushUndo();
-                g_records.clear();
-                SyncActiveSheet();
-                RefreshList();
-                SetText(g_dateEdit, CurrentDateTimeText());
-                SetText(g_nameEdit, L"");
-                SetText(g_otherEdit, L"");
-            }
+            if (!PromptText(newTitle, Tr(L"New attendance sheet name:", L"\u65b0\u70b9\u540d\u8868\u540d\u79f0\uff1a"), sheetName)) return 0;
+            if (sheetName.empty()) return 0;
+            PushUndo();
+            MarkDirty();
+            g_sheets.push_back({sheetName, {}});
+            g_activeSheet = (int)g_sheets.size() - 1;
+            g_records.clear();
+            RefreshCourseCombo();
+            RefreshList();
+            SetText(g_dateEdit, CurrentDateTimeText());
+            SetText(g_nameEdit, L"");
+            SetText(g_otherEdit, L"");
             }
             return 0;
         case IDC_DELETE: {
@@ -2218,51 +2665,25 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_TIMER:
         AutoSaveNow();
         return 0;
-    case WM_DRAWITEM: {
-        auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
-        if (draw->CtlType == ODT_BUTTON) {
-            wchar_t text[128]{};
-            GetWindowTextW(draw->hwndItem, text, 128);
-            bool pressed = (draw->itemState & ODS_SELECTED) != 0;
-            bool focused = (draw->itemState & ODS_FOCUS) != 0;
-            COLORREF fill = pressed ? RGB(52, 92, 140) : COLOR_INPUT;
-            COLORREF border = focused ? COLOR_ACCENT : RGB(76, 82, 96);
-            COLORREF buttonText = COLOR_TEXT;
-            if (draw->CtlID == IDC_DELETE) {
-                fill = pressed ? RGB(128, 51, 57) : RGB(88, 48, 55);
-                border = focused ? COLOR_DANGER : RGB(140, 74, 82);
-                buttonText = RGB(255, 245, 245);
-            } else if (draw->CtlID == IDC_PRESENT || draw->CtlID == IDC_SAVE || draw->CtlID == IDC_ALL_PRESENT) {
-                fill = pressed ? RGB(36, 103, 86) : RGB(35, 79, 72);
-                border = focused ? RGB(90, 220, 176) : RGB(64, 135, 120);
-                buttonText = RGB(242, 255, 250);
-            } else if (draw->CtlID == IDC_IMPORT || draw->CtlID == IDC_NEW || draw->CtlID == IDC_EXPORT_CSV) {
-                fill = pressed ? RGB(45, 87, 143) : RGB(44, 70, 116);
-                border = focused ? COLOR_ACCENT : RGB(77, 117, 180);
-                buttonText = RGB(245, 249, 255);
-            }
-
-            HBRUSH brush = CreateSolidBrush(fill);
-            FillRect(draw->hDC, &draw->rcItem, brush);
-            DeleteObject(brush);
-
-            HPEN pen = CreatePen(PS_SOLID, 1, border);
-            HGDIOBJ oldPen = SelectObject(draw->hDC, pen);
-            HGDIOBJ oldBrush = SelectObject(draw->hDC, GetStockObject(HOLLOW_BRUSH));
-            Rectangle(draw->hDC, draw->rcItem.left, draw->rcItem.top, draw->rcItem.right, draw->rcItem.bottom);
-            SelectObject(draw->hDC, oldBrush);
-            SelectObject(draw->hDC, oldPen);
-            DeleteObject(pen);
-
-            SetBkMode(draw->hDC, TRANSPARENT);
-            SetTextColor(draw->hDC, buttonText);
-            DrawTextW(draw->hDC, text, -1, &draw->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    case WM_MEASUREITEM: {
+        auto* measure = reinterpret_cast<MEASUREITEMSTRUCT*>(lParam);
+        if (measure->CtlType == ODT_COMBOBOX) {
+            measure->itemHeight = 30;
             return TRUE;
         }
         break;
     }
+    case WM_DRAWITEM: {
+        auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
+        if (DrawComboItem(draw)) return TRUE;
+        if (DrawButtonItem(draw)) return TRUE;
+        break;
+    }
     case WM_NOTIFY: {
         auto* hdr = reinterpret_cast<NMHDR*>(lParam);
+        if (g_list && hdr->hwndFrom == ListView_GetHeader(g_list) && hdr->code == NM_CUSTOMDRAW) {
+            return HandleHeaderCustomDraw(hdr);
+        }
         if (hdr->idFrom == IDC_LIST && hdr->code == LVN_ITEMCHANGED) {
             auto* item = reinterpret_cast<NMLISTVIEW*>(lParam);
             if ((item->uNewState & LVIS_SELECTED) && item->iItem >= 0 && item->iItem < (int)g_records.size()) {
@@ -2286,7 +2707,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         SetBkColor(hdc, COLOR_BG);
         return (LRESULT)g_bgBrush;
     }
-    case WM_CTLCOLOREDIT: {
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORLISTBOX: {
         HDC hdc = (HDC)wParam;
         SetTextColor(hdc, COLOR_TEXT);
         SetBkColor(hdc, COLOR_INPUT);
@@ -2335,7 +2757,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCm
         0,
         className,
         L"AttendanceApp - .attd Roll Call Manager",
-        WS_OVERLAPPEDWINDOW,
+        WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_HSCROLL,
         CW_USEDEFAULT, CW_USEDEFAULT, 1600, 900,
         nullptr, nullptr, instance, nullptr
     );
