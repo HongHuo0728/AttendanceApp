@@ -160,7 +160,6 @@ void ApplyDarkMode(HWND hwnd);
 void ApplyThemedControls(HWND root);
 bool DrawButtonItem(const DRAWITEMSTRUCT* draw);
 bool DrawComboItem(const DRAWITEMSTRUCT* draw);
-LRESULT HandleHeaderCustomDraw(NMHDR* hdr);
 void EnableHeaderPaint(HWND header);
 std::string WideToUtf8(const std::wstring& input);
 std::wstring Utf8ToWide(const std::string& input);
@@ -217,6 +216,14 @@ LRESULT CALLBACK WheelForwardProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 
 void EnableMouseWheelForward(HWND hwnd) {
     SetWindowSubclass(hwnd, WheelForwardProc, 2, 0);
+}
+
+bool ConfirmDiscardUnsaved(const std::wstring& actionText) {
+    if (!g_dirty) return true;
+    std::wstring msg = Tr(L"You have unsaved changes. Continue and discard them?", L"\u5f53\u524d\u6709\u672a\u4fdd\u5b58\u7684\u4fee\u6539\u3002\u662f\u5426\u7ee7\u7eed\u5e76\u653e\u5f03\u8fd9\u4e9b\u4fee\u6539\uff1f");
+    if (!actionText.empty()) msg += L"\n\n" + actionText;
+    std::wstring title = Tr(L"Unsaved Changes", L"\u672a\u4fdd\u5b58\u7684\u4fee\u6539");
+    return MessageBoxW(g_hwnd, msg.c_str(), title.c_str(), MB_YESNO | MB_ICONWARNING) == IDYES;
 }
 
 LRESULT CALLBACK InputDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -1553,10 +1560,8 @@ void ImportRosterCsv() {
         ShowMessage(Tr(L"Could not open the roster file.", L"\u65e0\u6cd5\u6253\u5f00\u540d\u5355\u6587\u4ef6\u3002"));
         return;
     }
-    PushUndo();
-    MarkDirty();
     std::string line;
-    int added = 0;
+    std::vector<AttendanceRecord> imported;
     while (std::getline(file, line)) {
         if (line.rfind("\xEF\xBB\xBF", 0) == 0) line = line.substr(3);
         if (line.empty()) continue;
@@ -1570,12 +1575,16 @@ void ImportRosterCsv() {
             }
         }
         if (name.empty() || LooksLikeNameHeader(name)) continue;
-        g_records.push_back({CurrentDateTimeText(), name, L"Absent", L""});
-        ++added;
+        imported.push_back({CurrentDateTimeText(), name, L"Absent", L""});
     }
-    RefreshList();
+    if (!imported.empty()) {
+        PushUndo();
+        MarkDirty();
+        g_records.insert(g_records.end(), imported.begin(), imported.end());
+        RefreshList();
+    }
     std::wstringstream ss;
-    ss << Tr(L"Imported", L"\u5df2\u5bfc\u5165") << L" " << added << L" " << Tr(L"students into the current course.", L"\u540d\u5b66\u751f\u5230\u5f53\u524d\u8bfe\u7a0b\u3002");
+    ss << Tr(L"Imported", L"\u5df2\u5bfc\u5165") << L" " << imported.size() << L" " << Tr(L"students into the current course.", L"\u540d\u5b66\u751f\u5230\u5f53\u524d\u8bfe\u7a0b\u3002");
     ShowMessage(ss.str());
 }
 
@@ -1616,6 +1625,7 @@ void OpenAutosave() {
         ShowMessage(Tr(L"No autosave file was found.", L"\u672a\u627e\u5230\u81ea\u52a8\u4fdd\u5b58\u6587\u4ef6\u3002"));
         return;
     }
+    if (!ConfirmDiscardUnsaved(Tr(L"Open autosave", L"\u6253\u5f00\u81ea\u52a8\u4fdd\u5b58"))) return;
     LoadAttendanceFile(path.wstring(), true);
 }
 
@@ -1835,6 +1845,7 @@ bool LoadAttendanceFile(const std::wstring& path, bool showSuccess) {
 void ImportAttendance() {
     std::wstring path = OpenFileDialog();
     if (path.empty()) return;
+    if (!ConfirmDiscardUnsaved(Tr(L"Import .attd", L"\u5bfc\u5165 .attd"))) return;
     LoadAttendanceFile(path, true);
 }
 
@@ -1850,6 +1861,7 @@ HWND MakeControl(const wchar_t* cls, const wchar_t* text, DWORD style, int id) {
     if (lstrcmpiW(cls, L"COMBOBOX") == 0 && (style & CBS_OWNERDRAWFIXED)) {
         SendMessageW(hwnd, CB_SETITEMHEIGHT, (WPARAM)-1, 30);
         SendMessageW(hwnd, CB_SETITEMHEIGHT, 0, 30);
+        SendMessageW(hwnd, CB_SETMINVISIBLE, 12, 0);
     }
     return hwnd;
 }
@@ -1870,6 +1882,7 @@ HWND MakeSettingsControl(HWND parent, const wchar_t* cls, const wchar_t* text, D
     if (lstrcmpiW(cls, L"COMBOBOX") == 0 && (style & CBS_OWNERDRAWFIXED)) {
         SendMessageW(hwnd, CB_SETITEMHEIGHT, (WPARAM)-1, 30);
         SendMessageW(hwnd, CB_SETITEMHEIGHT, 0, 30);
+        SendMessageW(hwnd, CB_SETMINVISIBLE, 12, 0);
     }
     return hwnd;
 }
@@ -1950,13 +1963,13 @@ void ResizeSettingsLayout(HWND hwnd) {
     MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), x, y, 360, 34, TRUE);
     y += 56;
     MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_LANG_LABEL), x, y + 6, labelW, rowH, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE), comboX, y, comboW, 220, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE), comboX, y, comboW, 430, TRUE);
     y += 48;
     MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_THEME_LABEL), x, y + 6, labelW, rowH, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_THEME), comboX, y, comboW, 220, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_THEME), comboX, y, comboW, 260, TRUE);
     y += 48;
     MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_FONT_LABEL), x, y + 6, labelW, rowH, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_FONT), comboX, y, comboW, 220, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_FONT), comboX, y, comboW, 300, TRUE);
     y += 56;
     MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_RESET), x, y, labelW + comboW, 36, TRUE);
     y += 48;
@@ -1971,9 +1984,9 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_LANG_LABEL);
         MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_THEME_LABEL);
         MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_FONT_LABEL);
-        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP, IDC_SETTINGS_LANGUAGE);
-        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP, IDC_SETTINGS_THEME);
-        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP, IDC_SETTINGS_FONT);
+        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_LANGUAGE);
+        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_THEME);
+        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_FONT);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_RESET);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_APPLY);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_CLOSE);
@@ -2146,9 +2159,9 @@ void ResizeLayout(HWND hwnd) {
 
     MoveWindow(GetDlgItem(hwnd, IDC_TITLE), x, top + yOffset, leftW, 38, FALSE);
     int rightX = pad + leftW + 24;
-    MoveWindow(g_courseCombo, rightX - g_scrollX, top + yOffset, 260, 260, FALSE);
+    MoveWindow(g_courseCombo, rightX - g_scrollX, top + yOffset, 260, 430, FALSE);
     MoveWindow(GetDlgItem(hwnd, IDC_COURSE_OPTIONS), rightX + 272 - g_scrollX, top + yOffset, 128, 34, FALSE);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATS), rightX + 416 - g_scrollX, top + 4 + yOffset, std::max(320, layoutW - (rightX + 440)), 30, FALSE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STATS), rightX + 416 - g_scrollX, top + 2 + yOffset, std::max(360, layoutW - (rightX + 440)), 34, FALSE);
     top += 48;
     MoveWindow(GetDlgItem(hwnd, IDC_SUBTITLE), x, top + yOffset, leftW, 26, FALSE);
     top += 44;
@@ -2423,43 +2436,6 @@ bool DrawComboItem(const DRAWITEMSTRUCT* draw) {
     return true;
 }
 
-LRESULT HandleHeaderCustomDraw(NMHDR* hdr) {
-    if (!g_list || hdr->hwndFrom != ListView_GetHeader(g_list) || hdr->code != NM_CUSTOMDRAW) return 0;
-    auto* draw = reinterpret_cast<NMCUSTOMDRAW*>(hdr);
-    if (draw->dwDrawStage == CDDS_PREPAINT) return CDRF_NOTIFYITEMDRAW;
-    if (draw->dwDrawStage != CDDS_ITEMPREPAINT) return CDRF_DODEFAULT;
-
-    RECT rc = draw->rc;
-    COLORREF fill = g_theme == UiTheme::Dark ? RGB(38, 42, 51) : RGB(236, 242, 250);
-    COLORREF border = g_theme == UiTheme::Dark ? RGB(74, 82, 98) : RGB(196, 207, 222);
-    HBRUSH brush = CreateSolidBrush(fill);
-    FillRect(draw->hdc, &rc, brush);
-    DeleteObject(brush);
-
-    HPEN pen = CreatePen(PS_SOLID, 1, border);
-    HGDIOBJ oldPen = SelectObject(draw->hdc, pen);
-    MoveToEx(draw->hdc, rc.left, rc.bottom - 1, nullptr);
-    LineTo(draw->hdc, rc.right, rc.bottom - 1);
-    MoveToEx(draw->hdc, rc.right - 1, rc.top, nullptr);
-    LineTo(draw->hdc, rc.right - 1, rc.bottom);
-    SelectObject(draw->hdc, oldPen);
-    DeleteObject(pen);
-
-    wchar_t text[128]{};
-    HDITEMW item{};
-    item.mask = HDI_TEXT;
-    item.pszText = text;
-    item.cchTextMax = 128;
-    Header_GetItem(hdr->hwndFrom, (int)draw->dwItemSpec, &item);
-
-    rc.left += 10;
-    rc.right -= 8;
-    SetBkMode(draw->hdc, TRANSPARENT);
-    SetTextColor(draw->hdc, COLOR_TEXT);
-    DrawTextW(draw->hdc, text, -1, &rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-    return CDRF_SKIPDEFAULT;
-}
-
 void PaintHeaderControl(HWND hwnd, HDC hdc) {
     RECT full{};
     GetClientRect(hwnd, &full);
@@ -2529,13 +2505,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
         HWND title = MakeControl(L"STATIC", L"Attendance Manager", 0, IDC_TITLE);
         HWND subtitle = MakeControl(L"STATIC", L"Create, edit, export, save, import, and batch clean .attd roll calls.", 0, IDC_SUBTITLE);
-        HWND stats = MakeControl(L"STATIC", L"Total 0    Present 0    Absent 0    Late 0    Other 0", 0, IDC_STATS);
+        HWND stats = MakeControl(L"STATIC", L"Total 0    Present 0    Absent 0    Late 0    Other 0", SS_LEFTNOWORDWRAP | SS_ENDELLIPSIS, IDC_STATS);
         HWND hint = MakeControl(L"STATIC", L"Tip: double-click a row to edit. Ctrl/Shift supports multi-select.", 0, IDC_HINT);
         SendMessageW(title, WM_SETFONT, (WPARAM)g_titleFont, TRUE);
         SendMessageW(subtitle, WM_SETFONT, (WPARAM)g_smallFont, TRUE);
         SendMessageW(stats, WM_SETFONT, (WPARAM)g_smallFont, TRUE);
         SendMessageW(hint, WM_SETFONT, (WPARAM)g_smallFont, TRUE);
-        g_courseCombo = MakeControl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP, IDC_COURSE_COMBO);
+        g_courseCombo = MakeControl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_COURSE_COMBO);
         MakeButton(L"Courses", IDC_COURSE_OPTIONS);
         MakeControl(L"STATIC", L"Date/Time", 0, 2001);
         MakeControl(L"STATIC", L"Name", 0, 2002);
@@ -2681,9 +2657,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
     case WM_NOTIFY: {
         auto* hdr = reinterpret_cast<NMHDR*>(lParam);
-        if (g_list && hdr->hwndFrom == ListView_GetHeader(g_list) && hdr->code == NM_CUSTOMDRAW) {
-            return HandleHeaderCustomDraw(hdr);
-        }
         if (hdr->idFrom == IDC_LIST && hdr->code == LVN_ITEMCHANGED) {
             auto* item = reinterpret_cast<NMLISTVIEW*>(lParam);
             if ((item->uNewState & LVIS_SELECTED) && item->iItem >= 0 && item->iItem < (int)g_records.size()) {
