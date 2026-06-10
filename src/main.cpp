@@ -7,6 +7,7 @@
 #include <uxtheme.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cwctype>
 #include <filesystem>
@@ -20,6 +21,7 @@
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "uxtheme.lib")
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "msimg32.lib")
 
 struct AttendanceRecord {
     std::wstring dateTime;
@@ -53,10 +55,13 @@ static constexpr int IDC_SETTINGS = 1017;
 static constexpr int IDC_COURSE_COMBO = 1018;
 static constexpr int IDC_COURSE_OPTIONS = 1019;
 static constexpr int IDC_TOOLS = 1020;
+static constexpr int IDC_FILTER = 1021;
+static constexpr int IDC_CLEAR_FILTER = 1022;
 static constexpr int IDC_TITLE = 2004;
 static constexpr int IDC_SUBTITLE = 2005;
 static constexpr int IDC_STATS = 2006;
 static constexpr int IDC_HINT = 2007;
+static constexpr int IDC_FILTER_LABEL = 2008;
 
 static constexpr int IDM_DELETE_SELECTED = 3001;
 static constexpr int IDM_DELETE_ABSENT = 3002;
@@ -73,6 +78,7 @@ static constexpr int IDM_REDO = 3024;
 static constexpr int IDM_SHORTCUTS = 3025;
 static constexpr int IDM_EXPORT_DB = 3026;
 static constexpr int IDM_OPEN_AUTOSAVE = 3027;
+static constexpr int IDM_EXPORT_PPTX = 3028;
 
 static constexpr int IDC_SETTINGS_LANGUAGE = 4001;
 static constexpr int IDC_SETTINGS_THEME = 4002;
@@ -94,6 +100,7 @@ static HWND g_nameEdit = nullptr;
 static HWND g_otherEdit = nullptr;
 static HWND g_list = nullptr;
 static HWND g_courseCombo = nullptr;
+static HWND g_filterEdit = nullptr;
 static HWND g_settingsWindow = nullptr;
 static HWND g_chartWindow = nullptr;
 static HFONT g_font = nullptr;
@@ -104,6 +111,7 @@ static HBRUSH g_inputBrush = nullptr;
 static HBRUSH g_panelBrush = nullptr;
 static std::vector<AttendanceRecord> g_records;
 static std::vector<AttendanceSheet> g_sheets;
+static std::vector<int> g_visibleRows;
 static int g_activeSheet = 0;
 static int g_loadedActiveSheet = 0;
 static std::vector<std::string> g_undoStack;
@@ -118,6 +126,7 @@ static int g_scrollX = 0;
 static int g_scrollY = 0;
 static int g_contentW = 0;
 static int g_contentH = 0;
+static std::wstring g_filterText;
 static constexpr int MIN_LAYOUT_W = 1180;
 static constexpr int MIN_LAYOUT_H = 820;
 
@@ -137,7 +146,15 @@ enum class UiLanguage {
     German,
     Russian,
     ChineseTraditional,
-    Spanish
+    Spanish,
+    Italian,
+    Mongolian,
+    Esperanto,
+    ClassicalChinese,
+    Thai,
+    Filipino,
+    Turkish,
+    Lithuanian
 };
 enum class UiTheme { Dark, Light };
 
@@ -158,6 +175,7 @@ void ScrollMainWindow(HWND hwnd, int bar, int code, int wheelDelta = 0);
 void ApplyVisualSettings();
 void ApplyDarkMode(HWND hwnd);
 void ApplyThemedControls(HWND root);
+void PaintGradientBackground(HWND hwnd, HDC hdc);
 bool DrawButtonItem(const DRAWITEMSTRUCT* draw);
 bool DrawComboItem(const DRAWITEMSTRUCT* draw);
 void EnableHeaderPaint(HWND header);
@@ -185,6 +203,38 @@ std::wstring GetText(HWND hwnd) {
 
 void SetText(HWND hwnd, const std::wstring& text) {
     SetWindowTextW(hwnd, text.c_str());
+}
+
+std::wstring LowerText(std::wstring value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](wchar_t ch) {
+        return (wchar_t)towlower(ch);
+    });
+    return value;
+}
+
+bool ContainsText(const std::wstring& haystack, const std::wstring& needle) {
+    return LowerText(haystack).find(needle) != std::wstring::npos;
+}
+
+bool RecordMatchesFilter(const AttendanceRecord& record) {
+    if (g_filterText.empty()) return true;
+    return ContainsText(record.dateTime, g_filterText)
+        || ContainsText(record.name, g_filterText)
+        || ContainsText(record.status, g_filterText)
+        || ContainsText(record.other, g_filterText);
+}
+
+int VisibleToRecordIndex(int visibleIndex) {
+    if (visibleIndex < 0 || visibleIndex >= (int)g_visibleRows.size()) return -1;
+    int recordIndex = g_visibleRows[visibleIndex];
+    return recordIndex >= 0 && recordIndex < (int)g_records.size() ? recordIndex : -1;
+}
+
+int RecordToVisibleIndex(int recordIndex) {
+    for (int i = 0; i < (int)g_visibleRows.size(); ++i) {
+        if (g_visibleRows[i] == recordIndex) return i;
+    }
+    return -1;
 }
 
 LRESULT CALLBACK EditShortcutProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
@@ -340,13 +390,224 @@ const wchar_t* LanguageName(UiLanguage language) {
     case UiLanguage::Russian: return L"\u0420\u0443\u0441\u0441\u043a\u0438\u0439";
     case UiLanguage::ChineseTraditional: return L"\u7e41\u9ad4\u4e2d\u6587\uff08\u53f0\u7063\uff09";
     case UiLanguage::Spanish: return L"Espa\u00f1ol";
+    case UiLanguage::Italian: return L"Italiano";
+    case UiLanguage::Mongolian: return L"\u041c\u043e\u043d\u0433\u043e\u043b";
+    case UiLanguage::Esperanto: return L"Esperanto";
+    case UiLanguage::ClassicalChinese: return L"\u6587\u8a00\u6587";
+    case UiLanguage::Thai: return L"\u0e44\u0e17\u0e22";
+    case UiLanguage::Filipino: return L"Filipino";
+    case UiLanguage::Turkish: return L"T\u00fcrk\u00e7e";
+    case UiLanguage::Lithuanian: return L"Lietuvi\u0173";
     default: return L"English";
     }
+}
+
+bool TranslateAdditionalLanguage(const std::wstring& key, std::wstring& out) {
+    if (g_language < UiLanguage::Italian) return false;
+
+    if (g_language == UiLanguage::ClassicalChinese) {
+        struct ClassicalEntry {
+            const wchar_t* key;
+            const wchar_t* text;
+        };
+        static const ClassicalEntry classical[] = {
+            {L"AttendanceApp - .attd Roll Call Manager", L"AttendanceApp \u00b7 \u9ede\u540d\u7c3f"},
+            {L"Attendance Manager", L"\u9ede\u540d\u53f8"},
+            {L"Create, edit, export, save, import, and batch clean .attd roll calls.", L"\u9020\u7c3f\u3001\u6821\u9304\u3001\u532f\u51fa\u3001\u85cf\u6a94\u3001\u8f09\u5165\uff0c\u7686\u53ef\u70ba\u4e5f\u3002"},
+            {L"Tip: double-click a row to edit. Ctrl/Shift supports multi-select.", L"\u6309\u884c\u518d\u4e09\uff0c\u5247\u53ef\u4fee\uff1bCtrl/Shift\uff0c\u53ef\u517c\u64c7\u3002"},
+            {L"Date/Time", L"\u65e5\u8fb0"},
+            {L"Date / Time", L"\u65e5 / \u6642"},
+            {L"Name", L"\u59d3\u540d"},
+            {L"Other", L"\u5225\u8a18"},
+            {L"Status", L"\u72c0"},
+            {L"Search", L"\u8993"},
+            {L"Clear Filter", L"\u53bb\u7be9"},
+            {L"Present", L"\u5728"},
+            {L"Absent", L"\u95d5"},
+            {L"Late", L"\u9072"},
+            {L"Total", L"\u51e1"},
+            {L"Showing", L"\u898b"},
+            {L"Attendance", L"\u51fa\u52e4"},
+            {L"Absent/Late", L"\u95d5/\u9072"},
+            {L"Attendance Sheet", L"\u9ede\u540d\u7c3f"},
+            {L"Update Selected", L"\u66f4\u6240\u64c7"},
+            {L"Edit Selected", L"\u4fee\u6240\u64c7"},
+            {L"Mark All Present", L"\u54b8\u8a18\u5176\u5728"},
+            {L"Create New", L"\u65b0\u7acb"},
+            {L"Delete Options", L"\u522a\u6cd5"},
+            {L"Delete", L"\u522a"},
+            {L"selected record(s)?", L"\u689d\u6240\u64c7\u4e4b\u9304\u4e4e\uff1f"},
+            {L"Delete Selected", L"\u522a\u6240\u64c7"},
+            {L"Delete selected records", L"\u522a\u6240\u64c7\u4e4b\u9304"},
+            {L"Delete all Absent records", L"\u522a\u8af8\u95d5\u9304"},
+            {L"Delete all Late records", L"\u522a\u8af8\u9072\u9304"},
+            {L"Clear all records", L"\u6e05\u8af8\u9304"},
+            {L"Delete all", L"\u76e1\u522a"},
+            {L"records?", L"\u9304\u4e4e\uff1f"},
+            {L"Batch Delete", L"\u6279\u522a"},
+            {L"Clear every attendance record in this sheet?", L"\u6b32\u76e1\u6e05\u6b64\u7c3f\u4e4b\u9ede\u540d\u9304\u4e4e\uff1f"},
+            {L"Clear All", L"\u76e1\u6e05"},
+            {L"Save .attd", L"\u85cf .attd"},
+            {L"Import .attd", L"\u8f09 .attd"},
+            {L"Export CSV", L"\u532f\u51fa CSV"},
+            {L"Settings", L"\u8a2d\u5b9a"},
+            {L"Courses", L"\u8ab2\u7a0b"},
+            {L"Tools", L"\u5668\u7528"},
+            {L"OK", L"\u53ef"},
+            {L"Cancel", L"\u7f77"},
+            {L"Add course/class", L"\u589e\u8ab2/\u73ed"},
+            {L"Rename current course/class", L"\u6613\u6b64\u8ab2/\u73ed\u540d"},
+            {L"Delete current course/class", L"\u522a\u6b64\u8ab2/\u73ed"},
+            {L"Add Course/Class", L"\u589e\u8ab2/\u73ed"},
+            {L"Course or class name:", L"\u8ab2\u6216\u73ed\u4e4b\u540d\uff1a"},
+            {L"Rename Course/Class", L"\u6613\u8ab2/\u73ed\u540d"},
+            {L"New course or class name:", L"\u65b0\u8ab2\u6216\u73ed\u4e4b\u540d\uff1a"},
+            {L"Import student roster (CSV)", L"\u8f09\u5f1f\u5b50\u540d\u518a (CSV)"},
+            {L"Print / export PDF", L"\u5370 / \u532f\u51fa PDF"},
+            {L"Export PowerPoint (.pptx) [Experimental]", L"\u532f\u51fa PowerPoint (.pptx)\uff08\u8a66\u9a57\uff09"},
+            {L"Statistics chart", L"\u8a08\u6578\u5716"},
+            {L"Undo", L"\u5fa9\u524d"},
+            {L"Redo", L"\u518d\u884c"},
+            {L"Keyboard shortcuts", L"\u6377\u9375"},
+            {L"Export database mirror", L"\u532f\u51fa\u5eab\u93e1"},
+            {L"Open autosave", L"\u555f\u81ea\u85cf"},
+            {L"At least one course must remain.", L"\u81f3\u5c11\u7576\u7559\u4e00\u8ab2\u3002"},
+            {L"Delete the current course and its records?", L"\u6b32\u522a\u6b64\u8ab2\u53ca\u5176\u9304\u4e4e\uff1f"},
+            {L"Delete Course", L"\u522a\u8ab2"},
+            {L"Nothing to undo.", L"\u7121\u53ef\u5fa9\u8005\u3002"},
+            {L"Nothing to redo.", L"\u7121\u53ef\u518d\u884c\u8005\u3002"},
+            {L"Keyboard Shortcuts", L"\u6377\u9375"},
+            {L"Statistics Chart", L"\u8a08\u6578\u5716"},
+            {L"Print / Save as PDF", L"\u5370 / \u53e6\u85cf PDF"},
+            {L"New attendance sheet name:", L"\u65b0\u9ede\u540d\u7c3f\u4e4b\u540d\uff1a"},
+            {L"New Attendance", L"\u65b0\u9ede\u540d"},
+            {L"Interface Settings", L"\u4ecb\u9762\u8af8\u8a2d"},
+            {L"Language", L"\u8a9e"},
+            {L"Style", L"\u8c8c"},
+            {L"Interface Font", L"\u5b57\u9ad4"},
+            {L"Apply", L"\u884c\u4e4b"},
+            {L"Close", L"\u9589"},
+            {L"Reset All Settings", L"\u76e1\u5fa9\u521d\u8a2d"},
+            {L"Dark", L"\u7384"},
+            {L"Light", L"\u7d20"},
+            {L"Imported successfully.", L"\u5999\u54c9\uff0c\u8f09\u5165\u5df2\u6210\uff01"},
+            {L"Saved successfully.", L"\u5584\u54c9\uff0c\u6a94\u5df2\u85cf\uff01"},
+            {L"CSV exported successfully.", L"\u5999\u54c9\uff0cCSV \u5df2\u532f\u51fa\uff01"},
+            {L"PowerPoint exported successfully.", L"\u5999\u54c9\uff0c\u6f14\u793a\u7a3f\u5df2\u6210\uff01"},
+            {L"Could not export the PowerPoint file.", L"\u566b\uff0c\u6f14\u793a\u7a3f\u672a\u80fd\u532f\u51fa\u3002"},
+            {L"Please enter a date and time.", L"\u8acb\u66f8\u65e5\u8fb0\u3002"},
+            {L"Please enter a name.", L"\u8acb\u66f8\u59d3\u540d\u3002"},
+            {L"Please fill the Other field.", L"\u8acb\u88dc\u5225\u8a18\u4e4b\u6b04\u3002"},
+            {L"Please select a record to edit.", L"\u8acb\u64c7\u4e00\u9304\u800c\u4fee\u4e4b\u3002"},
+            {L"There are no records to mark.", L"\u7121\u9304\u53ef\u8a18\u3002"},
+            {L"Mark every record as Present?", L"\u6b32\u4ee5\u8af8\u9304\u54b8\u8a18\u70ba\u5728\u4e4e\uff1f"},
+            {L"All Present", L"\u54b8\u5728"},
+            {L"Please select one or more records to delete.", L"\u8acb\u64c7\u4e00\u9304\u6216\u6578\u9304\u800c\u522a\u4e4b\u3002"},
+            {L"No matching records found.", L"\u89d3\u4e4b\u4e0d\u5f97\u3002"},
+            {L"There are no records to clear.", L"\u7121\u9304\u53ef\u6e05\u3002"},
+            {L"There are no records to export.", L"\u7121\u9304\u53ef\u532f\u51fa\u3002"},
+            {L"Could not export the CSV file.", L"\u566b\uff0cCSV \u672a\u80fd\u532f\u51fa\u3002"},
+            {L"Could not save the file.", L"\u566b\uff0c\u6a94\u672a\u80fd\u85cf\u3002"},
+            {L"Could not open the file.", L"\u566b\uff0c\u6a94\u672a\u80fd\u555f\u3002"},
+            {L"This .attd file could not be decoded.", L"\u566b\uff0c\u6b64 .attd \u4e0d\u53ef\u89e3\u3002"}
+        };
+
+        for (const auto& entry : classical) {
+            if (key == entry.key) {
+                out = entry.text;
+                return true;
+            }
+        }
+    }
+
+    struct Entry {
+        const wchar_t* key;
+        const wchar_t* it;
+        const wchar_t* mn;
+        const wchar_t* eo;
+        const wchar_t* lzh;
+        const wchar_t* th;
+        const wchar_t* fil;
+        const wchar_t* tr;
+        const wchar_t* lt;
+    };
+
+    static const Entry entries[] = {
+        {L"AttendanceApp - .attd Roll Call Manager", L"AttendanceApp - Gestore appello .attd", L"AttendanceApp - .attd \u0438\u0440\u0446\u0438\u0439\u043d \u043c\u0435\u043d\u0435\u0436\u0435\u0440", L"AttendanceApp - .attd \u0109eestadministrilo", L"AttendanceApp - \u9ede\u540d\u7c3f", L"AttendanceApp - \u0e15\u0e31\u0e27\u0e08\u0e31\u0e14\u0e01\u0e32\u0e23\u0e40\u0e0a\u0e47\u0e01\u0e0a\u0e37\u0e48\u0e2d .attd", L"AttendanceApp - tagapamahala ng roll call .attd", L"AttendanceApp - .attd yoklama y\u00f6neticisi", L"AttendanceApp - .attd lankomumo valdiklis"},
+        {L"Attendance Manager", L"Gestore presenze", L"\u0418\u0440\u0446\u0438\u0439\u043d \u043c\u0435\u043d\u0435\u0436\u0435\u0440", L"\u0108eestadministrilo", L"\u9ede\u540d\u7ba1\u7406", L"\u0e08\u0e31\u0e14\u0e01\u0e32\u0e23\u0e01\u0e32\u0e23\u0e40\u0e0a\u0e47\u0e01\u0e0a\u0e37\u0e48\u0e2d", L"Tagapamahala ng attendance", L"Yoklama y\u00f6neticisi", L"Lankomumo valdiklis"},
+        {L"Create, edit, export, save, import, and batch clean .attd roll calls.", L"Crea, modifica, esporta, salva, importa e pulisci appelli .attd.", L".attd \u0438\u0440\u0446\u0438\u0439\u0433 \u04af\u04af\u0441\u0433\u044d\u0445, \u0437\u0430\u0441\u0430\u0445, \u044d\u043a\u0441\u043f\u043e\u0440\u0442, \u0445\u0430\u0434\u0433\u0430\u043b\u0430\u0445, \u0438\u043c\u043f\u043e\u0440\u0442 \u0445\u0438\u0439\u0445.", L"Kreu, redaktu, eksportu, konservu kaj importu .attd \u0109eestojn.", L"\u5efa\u7c3f\u3001\u7de8\u8f2f\u3001\u532f\u51fa\u3001\u5132\u5b58\u3001\u532f\u5165\u3001\u6279\u6e05 .attd \u9ede\u540d\u3002", L"\u0e2a\u0e23\u0e49\u0e32\u0e07 \u0e41\u0e01\u0e49\u0e44\u0e02 \u0e2a\u0e48\u0e07\u0e2d\u0e2d\u0e01 \u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01 \u0e19\u0e33\u0e40\u0e02\u0e49\u0e32 \u0e41\u0e25\u0e30\u0e25\u0e49\u0e32\u0e07 .attd", L"Gumawa, mag-edit, mag-export, mag-save, mag-import, at maglinis ng .attd.", L".attd yoklamalar\u0131 olu\u015ftur, d\u00fczenle, d\u0131\u015fa aktar, kaydet ve i\u00e7e aktar.", L"Kurkite, taisykite, eksportuokite, saugokite ir importuokite .attd lankomum\u0105."},
+        {L"Tip: double-click a row to edit. Ctrl/Shift supports multi-select.", L"Suggerimento: doppio clic per modificare. Ctrl/Maiusc seleziona pi\u00f9 righe.", L"\u0417\u04e9\u0432\u043b\u04e9\u0433\u04e9\u04e9: \u043c\u04e9\u0440\u0438\u0439\u0433 \u0434\u0430\u0432\u0445\u0430\u0440 \u0434\u0430\u0440\u0436 \u0437\u0430\u0441\u043d\u0430. Ctrl/Shift \u043e\u043b\u043e\u043d \u0441\u043e\u043d\u0433\u043e\u043d\u043e.", L"Konsilo: duoble alklaku vicon por redakti. Ctrl/Shift elektas plurajn.", L"\u63d0\u793a\uff1a\u96d9\u64ca\u884c\u53ef\u7de8\uff0cCtrl/Shift \u53ef\u591a\u9078\u3002", L"\u0e40\u0e04\u0e25\u0e47\u0e14\u0e25\u0e31\u0e1a: \u0e14\u0e31\u0e1a\u0e40\u0e1a\u0e34\u0e25\u0e04\u0e25\u0e34\u0e01\u0e41\u0e16\u0e27\u0e40\u0e1e\u0e37\u0e48\u0e2d\u0e41\u0e01\u0e49\u0e44\u0e02 Ctrl/Shift \u0e40\u0e25\u0e37\u0e2d\u0e01\u0e2b\u0e25\u0e32\u0e22\u0e41\u0e16\u0e27", L"Tip: i-double click ang row para mag-edit. Ctrl/Shift para multi-select.", L"\u0130pucu: d\u00fczenlemek i\u00e7in sat\u0131ra \u00e7ift t\u0131kla. Ctrl/Shift \u00e7oklu se\u00e7er.", L"Patarimas: dukart spustel\u0117kite eilut\u0119 redagavimui. Ctrl/Shift kelioms eilut\u0117ms."},
+        {L"Date/Time", L"Data/Ora", L"\u041e\u0433\u043d\u043e\u043e/\u0446\u0430\u0433", L"Dato/tempo", L"\u65e5\u6642", L"\u0e27\u0e31\u0e19/\u0e40\u0e27\u0e25\u0e32", L"Petsa/Oras", L"Tarih/Saat", L"Data/laikas"},
+        {L"Date / Time", L"Data / Ora", L"\u041e\u0433\u043d\u043e\u043e / \u0446\u0430\u0433", L"Dato / tempo", L"\u65e5 / \u6642", L"\u0e27\u0e31\u0e19 / \u0e40\u0e27\u0e25\u0e32", L"Petsa / Oras", L"Tarih / Saat", L"Data / laikas"},
+        {L"Name", L"Nome", L"\u041d\u044d\u0440", L"Nomo", L"\u59d3\u540d", L"\u0e0a\u0e37\u0e48\u0e2d", L"Pangalan", L"Ad", L"Vardas"},
+        {L"Other", L"Altro", L"\u0411\u0443\u0441\u0430\u0434", L"Alia", L"\u5176\u4ed6", L"\u0e2d\u0e37\u0e48\u0e19\u0e46", L"Iba pa", L"Di\u011fer", L"Kita"},
+        {L"Status", L"Stato", L"\u0422\u04e9\u043b\u04e9\u0432", L"Stato", L"\u72c0\u614b", L"\u0e2a\u0e16\u0e32\u0e19\u0e30", L"Katayuan", L"Durum", L"B\u016bsena"},
+        {L"Search", L"Cerca", L"\u0425\u0430\u0439\u0445", L"Ser\u0109i", L"\u5c0b", L"\u0e04\u0e49\u0e19\u0e2b\u0e32", L"Hanapin", L"Ara", L"Ie\u0161koti"},
+        {L"Clear Filter", L"Cancella filtro", L"\u0428\u04af\u04af\u043b\u0442\u04af\u04af\u0440 \u0446\u044d\u0432\u044d\u0440\u043b\u044d\u0445", L"Malplenigi filtrilon", L"\u6e05\u7be9", L"\u0e25\u0e49\u0e32\u0e07\u0e15\u0e31\u0e27\u0e01\u0e23\u0e2d\u0e07", L"I-clear ang filter", L"Filtreyi temizle", L"I\u0161valyti filtr\u0105"},
+        {L"Present", L"Presente", L"\u0418\u0440\u0441\u044d\u043d", L"\u0108eestas", L"\u51fa\u5e2d", L"\u0e21\u0e32", L"Present", L"Var", L"Dalyvauja"},
+        {L"Absent", L"Assente", L"\u0422\u0430\u0441\u0430\u043b\u0441\u0430\u043d", L"Forestas", L"\u7f3a\u5e2d", L"\u0e02\u0e32\u0e14", L"Absent", L"Yok", L"Nedalyvauja"},
+        {L"Late", L"In ritardo", L"\u0425\u043e\u0446\u043e\u0440\u0441\u043e\u043d", L"Malfrua", L"\u9072\u5230", L"\u0e2a\u0e32\u0e22", L"Late", L"Ge\u00e7", L"V\u0117luoja"},
+        {L"Total", L"Totale", L"\u041d\u0438\u0439\u0442", L"Sumo", L"\u7e3d", L"\u0e23\u0e27\u0e21", L"Kabuuan", L"Toplam", L"I\u0161 viso"},
+        {L"Showing", L"Mostra", L"\u0425\u0430\u0440\u0443\u0443\u043b\u0436 \u0431\u0430\u0439\u043d\u0430", L"Montras", L"\u986f\u793a", L"\u0e41\u0e2a\u0e14\u0e07", L"Ipinapakita", L"G\u00f6steriliyor", L"Rodoma"},
+        {L"Attendance", L"Presenza", L"\u0418\u0440\u0446", L"\u0108eesto", L"\u51fa\u52e4", L"\u0e01\u0e32\u0e23\u0e21\u0e32\u0e40\u0e23\u0e35\u0e22\u0e19", L"Attendance", L"Kat\u0131l\u0131m", L"Lankomumas"},
+        {L"Absent/Late", L"Assente/Ritardo", L"\u0422\u0430\u0441\u0430\u043b\u0441\u0430\u043d/\u0445\u043e\u0446\u043e\u0440\u0441\u043e\u043d", L"Foresta/malfrua", L"\u7f3a/\u9072", L"\u0e02\u0e32\u0e14/\u0e2a\u0e32\u0e22", L"Absent/Late", L"Yok/Ge\u00e7", L"N\u0117ra/v\u0117luoja"},
+        {L"Update Selected", L"Aggiorna selezionato", L"\u0421\u043e\u043d\u0433\u043e\u0441\u043d\u044b\u0433 \u0448\u0438\u043d\u044d\u0447\u043b\u044d\u0445", L"\u011cisdatigi elektitan", L"\u66f4\u65b0\u6240\u9078", L"\u0e2d\u0e31\u0e1b\u0e40\u0e14\u0e15\u0e17\u0e35\u0e48\u0e40\u0e25\u0e37\u0e2d\u0e01", L"I-update ang napili", L"Se\u00e7ileni g\u00fcncelle", L"Atnaujinti pasirinkt\u0105"},
+        {L"Edit Selected", L"Modifica selezionato", L"\u0421\u043e\u043d\u0433\u043e\u0441\u043d\u044b\u0433 \u0437\u0430\u0441\u0430\u0445", L"Redakti elektitan", L"\u7de8\u6240\u9078", L"\u0e41\u0e01\u0e49\u0e44\u0e02\u0e17\u0e35\u0e48\u0e40\u0e25\u0e37\u0e2d\u0e01", L"I-edit ang napili", L"Se\u00e7ileni d\u00fczenle", L"Redaguoti pasirinkt\u0105"},
+        {L"Mark All Present", L"Segna tutti presenti", L"\u0411\u04af\u0433\u0434\u0438\u0439\u0433 \u0438\u0440\u0441\u044d\u043d \u0431\u043e\u043b\u0433\u043e\u0445", L"Marki \u0109iujn \u0109eestaj", L"\u5168\u70ba\u51fa\u5e2d", L"\u0e17\u0e33\u0e40\u0e04\u0e23\u0e37\u0e48\u0e2d\u0e07\u0e2b\u0e21\u0e32\u0e22\u0e27\u0e48\u0e32\u0e21\u0e32\u0e17\u0e31\u0e49\u0e07\u0e2b\u0e21\u0e14", L"Markahan lahat na present", L"T\u00fcm\u00fcn\u00fc var i\u015faretle", L"Pa\u017eym\u0117ti visus dalyvaujan\u010diais"},
+        {L"Create New", L"Nuovo", L"\u0428\u0438\u043d\u044d \u04af\u04af\u0441\u0433\u044d\u0445", L"Krei novan", L"\u65b0\u5efa", L"\u0e2a\u0e23\u0e49\u0e32\u0e07\u0e43\u0e2b\u0e21\u0e48", L"Gumawa ng bago", L"Yeni olu\u015ftur", L"Kurti nauj\u0105"},
+        {L"Delete Options", L"Opzioni elimina", L"\u0423\u0441\u0442\u0433\u0430\u0445 \u0441\u043e\u043d\u0433\u043e\u043b\u0442", L"Forigaj opcioj", L"\u522a\u9664\u9078\u9805", L"\u0e15\u0e31\u0e27\u0e40\u0e25\u0e37\u0e2d\u0e01\u0e25\u0e1a", L"Mga opsyon sa delete", L"Silme se\u00e7enekleri", L"Trinimo parinktys"},
+        {L"Save .attd", L"Salva .attd", L".attd \u0445\u0430\u0434\u0433\u0430\u043b\u0430\u0445", L"Konservi .attd", L"\u5132\u5b58 .attd", L"\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01 .attd", L"I-save .attd", L".attd kaydet", L"I\u0161saugoti .attd"},
+        {L"Import .attd", L"Importa .attd", L".attd \u0438\u043c\u043f\u043e\u0440\u0442", L"Importi .attd", L"\u532f\u5165 .attd", L"\u0e19\u0e33\u0e40\u0e02\u0e49\u0e32 .attd", L"I-import .attd", L".attd i\u00e7e aktar", L"Importuoti .attd"},
+        {L"Export CSV", L"Esporta CSV", L"CSV \u044d\u043a\u0441\u043f\u043e\u0440\u0442", L"Eksporti CSV", L"\u532f\u51fa CSV", L"\u0e2a\u0e48\u0e07\u0e2d\u0e2d\u0e01 CSV", L"I-export CSV", L"CSV d\u0131\u015fa aktar", L"Eksportuoti CSV"},
+        {L"Export PowerPoint (.pptx) [Experimental]", L"Esporta PowerPoint (.pptx) [Sperimentale]", L"PowerPoint \u044d\u043a\u0441\u043f\u043e\u0440\u0442 (.pptx) [\u0442\u0443\u0440\u0448\u0438\u043b\u0442]", L"Eksporti PowerPoint (.pptx) [Eksperimenta]", L"\u532f\u51fa\u6f14\u793a\u7a3f (.pptx)\uff08\u8a66\u9a57\uff09", L"\u0e2a\u0e48\u0e07\u0e2d\u0e2d\u0e01 PowerPoint (.pptx) [\u0e17\u0e14\u0e25\u0e2d\u0e07]", L"I-export PowerPoint (.pptx) [Experimental]", L"PowerPoint d\u0131\u015fa aktar (.pptx) [Deneysel]", L"Eksportuoti PowerPoint (.pptx) [Eksperimentin\u0117]"},
+        {L"Courses", L"Corsi", L"\u041a\u0443\u0440\u0441\u0443\u0443\u0434", L"Kursoj", L"\u8ab2\u7a0b", L"\u0e04\u0e2d\u0e23\u0e4c\u0e2a", L"Mga kurso", L"Kurslar", L"Kursai"},
+        {L"Tools", L"Strumenti", L"\u0425\u044d\u0440\u044d\u0433\u0441\u044d\u043b", L"Iloj", L"\u5de5\u5177", L"\u0e40\u0e04\u0e23\u0e37\u0e48\u0e2d\u0e07\u0e21\u0e37\u0e2d", L"Mga tool", L"Ara\u00e7lar", L"\u012erankiai"},
+        {L"Settings", L"Impostazioni", L"\u0422\u043e\u0445\u0438\u0440\u0433\u043e\u043e", L"Agordoj", L"\u8a2d\u5b9a", L"\u0e15\u0e31\u0e49\u0e07\u0e04\u0e48\u0e32", L"Settings", L"Ayarlar", L"Nustatymai"},
+        {L"Interface Settings", L"Impostazioni interfaccia", L"\u0418\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u0438\u0439\u043d \u0442\u043e\u0445\u0438\u0440\u0433\u043e\u043e", L"Interfacaj agordoj", L"\u4ecb\u9762\u8a2d\u5b9a", L"\u0e15\u0e31\u0e49\u0e07\u0e04\u0e48\u0e32\u0e2d\u0e34\u0e19\u0e40\u0e17\u0e2d\u0e23\u0e4c\u0e40\u0e1f\u0e0b", L"Interface settings", L"Aray\u00fcz ayarlar\u0131", L"S\u0105sajos nustatymai"},
+        {L"Language", L"Lingua", L"\u0425\u044d\u043b", L"Lingvo", L"\u8a9e\u8a00", L"\u0e20\u0e32\u0e29\u0e32", L"Wika", L"Dil", L"Kalba"},
+        {L"Style", L"Stile", L"\u0425\u044d\u0432 \u043c\u0430\u044f\u0433", L"Stilo", L"\u98a8\u683c", L"\u0e2a\u0e44\u0e15\u0e25\u0e4c", L"Estilo", L"Stil", L"Stilius"},
+        {L"Interface Font", L"Carattere interfaccia", L"\u0418\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u0438\u0439\u043d \u0444\u043e\u043d\u0442", L"Interfaca tiparo", L"\u4ecb\u9762\u5b57\u578b", L"\u0e1f\u0e2d\u0e19\u0e15\u0e4c\u0e2d\u0e34\u0e19\u0e40\u0e17\u0e2d\u0e23\u0e4c\u0e40\u0e1f\u0e0b", L"Font ng interface", L"Aray\u00fcz yaz\u0131 tipi", L"S\u0105sajos \u0161riftas"},
+        {L"Apply", L"Applica", L"\u0425\u044d\u0440\u044d\u0433\u0436\u04af\u04af\u043b\u044d\u0445", L"Apliki", L"\u5957\u7528", L"\u0e19\u0e33\u0e44\u0e1b\u0e43\u0e0a\u0e49", L"Ilapat", L"Uygula", L"Taikyti"},
+        {L"Close", L"Chiudi", L"\u0425\u0430\u0430\u0445", L"Fermi", L"\u95dc\u9589", L"\u0e1b\u0e34\u0e14", L"Isara", L"Kapat", L"U\u017edaryti"},
+        {L"Reset All Settings", L"Ripristina tutto", L"\u0411\u04af\u0445 \u0442\u043e\u0445\u0438\u0440\u0433\u043e\u043e\u0433 \u0441\u044d\u0440\u0433\u044d\u044d\u0445", L"Restarigi \u0109iujn agordojn", L"\u91cd\u8a2d\u8af8\u8a2d", L"\u0e23\u0e35\u0e40\u0e0b\u0e47\u0e15\u0e17\u0e31\u0e49\u0e07\u0e2b\u0e21\u0e14", L"I-reset lahat ng settings", L"T\u00fcm ayarlar\u0131 s\u0131f\u0131rla", L"Atkurti visus nustatymus"},
+        {L"Dark", L"Scuro", L"\u0425\u0430\u0440", L"Malhela", L"\u6df1\u8272", L"\u0e21\u0e37\u0e14", L"Madilim", L"Koyu", L"Tamsi"},
+        {L"Light", L"Chiaro", L"\u0413\u044d\u0440\u044d\u043b\u0442\u044d\u0439", L"Hela", L"\u6dfa\u8272", L"\u0e2a\u0e27\u0e48\u0e32\u0e07", L"Maliwanag", L"A\u00e7\u0131k", L"\u0160viesi"},
+        {L"OK", L"OK", L"OK", L"Bone", L"\u53ef", L"OK", L"OK", L"Tamam", L"Gerai"},
+        {L"Cancel", L"Annulla", L"\u0426\u0443\u0446\u043b\u0430\u0445", L"Nuligi", L"\u53d6\u6d88", L"\u0e22\u0e01\u0e40\u0e25\u0e34\u0e01", L"Kanselahin", L"\u0130ptal", L"At\u0161aukti"},
+        {L"Imported successfully.", L"Importazione riuscita.", L"\u0410\u043c\u0436\u0438\u043b\u0442\u0442\u0430\u0439 \u0438\u043c\u043f\u043e\u0440\u0442\u043b\u043e\u043e.", L"Sukcese importita.", L"\u532f\u5165\u5df2\u6210\u3002", L"\u0e19\u0e33\u0e40\u0e02\u0e49\u0e32\u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08", L"Matagumpay na na-import.", L"Ba\u015far\u0131yla i\u00e7e aktar\u0131ld\u0131.", L"S\u0117kmingai importuota."},
+        {L"Saved successfully.", L"Salvato.", L"\u0410\u043c\u0436\u0438\u043b\u0442\u0442\u0430\u0439 \u0445\u0430\u0434\u0433\u0430\u043b\u043b\u0430\u0430.", L"Sukcese konservita.", L"\u5132\u5b58\u5df2\u6210\u3002", L"\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01\u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08", L"Matagumpay na na-save.", L"Ba\u015far\u0131yla kaydedildi.", L"S\u0117kmingai i\u0161saugota."},
+        {L"PowerPoint exported successfully.", L"PowerPoint esportato.", L"PowerPoint \u0430\u043c\u0436\u0438\u043b\u0442\u0442\u0430\u0439 \u044d\u043a\u0441\u043f\u043e\u0440\u0442\u043b\u043e\u043e.", L"PowerPoint sukcese eksportita.", L"\u6f14\u793a\u7a3f\u5df2\u6210\u3002", L"\u0e2a\u0e48\u0e07\u0e2d\u0e2d\u0e01 PowerPoint \u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08", L"Matagumpay na na-export ang PowerPoint.", L"PowerPoint ba\u015far\u0131yla d\u0131\u015fa aktar\u0131ld\u0131.", L"PowerPoint s\u0117kmingai eksportuotas."},
+        {L"Could not export the PowerPoint file.", L"Impossibile esportare il file PowerPoint.", L"PowerPoint \u0444\u0430\u0439\u043b \u044d\u043a\u0441\u043f\u043e\u0440\u0442\u043b\u043e\u0436 \u0447\u0430\u0434\u0441\u0430\u043d\u0433\u04af\u0439.", L"Ne eblis eksporti la PowerPoint-dosieron.", L"\u4e0d\u80fd\u532f\u51fa\u6f14\u793a\u7a3f\u3002", L"\u0e2a\u0e48\u0e07\u0e2d\u0e2d\u0e01\u0e44\u0e1f\u0e25\u0e4c PowerPoint \u0e44\u0e21\u0e48\u0e44\u0e14\u0e49", L"Hindi ma-export ang PowerPoint file.", L"PowerPoint dosyas\u0131 d\u0131\u015fa aktar\u0131lamad\u0131.", L"Nepavyko eksportuoti PowerPoint failo."},
+        {L"Could not save the file.", L"Impossibile salvare il file.", L"\u0424\u0430\u0439\u043b \u0445\u0430\u0434\u0433\u0430\u043b\u0436 \u0447\u0430\u0434\u0441\u0430\u043d\u0433\u04af\u0439.", L"Ne eblis konservi la dosieron.", L"\u4e0d\u80fd\u5132\u6a94\u3002", L"\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01\u0e44\u0e1f\u0e25\u0e4c\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49", L"Hindi ma-save ang file.", L"Dosya kaydedilemedi.", L"Nepavyko i\u0161saugoti failo."},
+        {L"Could not open the file.", L"Impossibile aprire il file.", L"\u0424\u0430\u0439\u043b \u043d\u044d\u044d\u0436 \u0447\u0430\u0434\u0441\u0430\u043d\u0433\u04af\u0439.", L"Ne eblis malfermi la dosieron.", L"\u4e0d\u80fd\u958b\u6a94\u3002", L"\u0e40\u0e1b\u0e34\u0e14\u0e44\u0e1f\u0e25\u0e4c\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49", L"Hindi mabuksan ang file.", L"Dosya a\u00e7\u0131lamad\u0131.", L"Nepavyko atidaryti failo."},
+        {L"Please enter a date and time.", L"Inserisci data e ora.", L"\u041e\u0433\u043d\u043e\u043e, \u0446\u0430\u0433 \u043e\u0440\u0443\u0443\u043b\u043d\u0430 \u0443\u0443.", L"Enigu daton kaj tempon.", L"\u8acb\u8f38\u65e5\u6642\u3002", L"\u0e01\u0e23\u0e38\u0e13\u0e32\u0e43\u0e2a\u0e48\u0e27\u0e31\u0e19\u0e41\u0e25\u0e30\u0e40\u0e27\u0e25\u0e32", L"Ilagay ang petsa at oras.", L"L\u00fctfen tarih ve saat girin.", L"\u012eveskite dat\u0105 ir laik\u0105."},
+        {L"Please enter a name.", L"Inserisci un nome.", L"\u041d\u044d\u0440 \u043e\u0440\u0443\u0443\u043b\u043d\u0430 \u0443\u0443.", L"Enigu nomon.", L"\u8acb\u8f38\u59d3\u540d\u3002", L"\u0e01\u0e23\u0e38\u0e13\u0e32\u0e43\u0e2a\u0e48\u0e0a\u0e37\u0e48\u0e2d", L"Ilagay ang pangalan.", L"L\u00fctfen ad girin.", L"\u012eveskite vard\u0105."},
+        {L"Please fill the Other field.", L"Compila il campo Altro.", L"\u0411\u0443\u0441\u0430\u0434 \u0442\u0430\u043b\u0431\u0430\u0440\u044b\u0433 \u0431\u04e9\u0433\u043b\u04e9\u043d\u04e9 \u04af\u04af.", L"Plenigu la kampon Alia.", L"\u8acb\u586b\u5176\u4ed6\u6b04\u3002", L"\u0e01\u0e23\u0e38\u0e13\u0e32\u0e01\u0e23\u0e2d\u0e01\u0e0a\u0e48\u0e2d\u0e07\u0e2d\u0e37\u0e48\u0e19\u0e46", L"Punan ang field na Iba pa.", L"L\u00fctfen Di\u011fer alan\u0131n\u0131 doldurun.", L"U\u017epildykite lauk\u0105 Kita."}
+    };
+
+    for (const auto& entry : entries) {
+        if (key == entry.key) {
+            switch (g_language) {
+            case UiLanguage::Italian: out = entry.it; return true;
+            case UiLanguage::Mongolian: out = entry.mn; return true;
+            case UiLanguage::Esperanto: out = entry.eo; return true;
+            case UiLanguage::ClassicalChinese: out = entry.lzh; return true;
+            case UiLanguage::Thai: out = entry.th; return true;
+            case UiLanguage::Filipino: out = entry.fil; return true;
+            case UiLanguage::Turkish: out = entry.tr; return true;
+            case UiLanguage::Lithuanian: out = entry.lt; return true;
+            default: return false;
+            }
+        }
+    }
+    return false;
 }
 
 std::wstring Tr(const wchar_t* english, const wchar_t*) {
     std::wstring key = english;
     if (g_language == UiLanguage::English) return key;
+    std::wstring additional;
+    if (TranslateAdditionalLanguage(key, additional)) return additional;
 
     auto zh = [&](const wchar_t* s) -> std::wstring { return s; };
     auto mt = [&](const wchar_t* s) -> std::wstring { return s; };
@@ -377,10 +638,13 @@ std::wstring Tr(const wchar_t* english, const wchar_t*) {
         {L"Date/Time", L"\u65e5\u671f\u65f6\u95f4", L"Data/\u0126in", L"\u65e5\u6642", L"Date/heure", L"Datum/Uhrzeit", L"\u0414\u0430\u0442\u0430/\u0432\u0440\u0435\u043c\u044f", L"\u65e5\u671f\u6642\u9593", L"Fecha/hora"},
         {L"Name", L"\u59d3\u540d", L"Isem", L"\u540d\u524d", L"Nom", L"Name", L"\u0418\u043c\u044f", L"\u59d3\u540d", L"Nombre"},
         {L"Other", L"\u5176\u4ed6", L"Ie\u0127or", L"\u305d\u306e\u4ed6", L"Autre", L"Andere", L"\u0414\u0440\u0443\u0433\u043e\u0435", L"\u5176\u4ed6", L"Otro"},
+        {L"Search", L"\u641c\u7d22", L"Fittex", L"\u691c\u7d22", L"Recherche", L"Suchen", L"\u041f\u043e\u0438\u0441\u043a", L"\u641c\u5c0b", L"Buscar"},
+        {L"Clear Filter", L"\u6e05\u9664\u7b5b\u9009", L"Naddaf filtru", L"\u30d5\u30a3\u30eb\u30bf\u30fc\u89e3\u9664", L"Effacer filtre", L"Filter leeren", L"\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c \u0444\u0438\u043b\u044c\u0442\u0440", L"\u6e05\u9664\u7be9\u9078", L"Limpiar filtro"},
         {L"Present", L"\u51fa\u5e2d", L"Pre\u017centi", L"\u51fa\u5e2d", L"Pr\u00e9sent", L"Anwesend", L"\u041f\u0440\u0438\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u0435\u0442", L"\u51fa\u5e2d", L"Presente"},
         {L"Absent", L"\u7f3a\u5e2d", L"Assenti", L"\u6b20\u5e2d", L"Absent", L"Abwesend", L"\u041e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u0435\u0442", L"\u7f3a\u5e2d", L"Ausente"},
         {L"Late", L"\u8fdf\u5230", L"Tard", L"\u9045\u523b", L"En retard", L"Versp\u00e4tet", L"\u041e\u043f\u043e\u0437\u0434\u0430\u043b", L"\u9072\u5230", L"Tarde"},
         {L"Total", L"\u603b\u6570", L"Total", L"\u5408\u8a08", L"Total", L"Gesamt", L"\u0412\u0441\u0435\u0433\u043e", L"\u7e3d\u6578", L"Total"},
+        {L"Showing", L"\u663e\u793a", L"Qed jintwerew", L"\u8868\u793a", L"Affichage", L"Angezeigt", L"\u041f\u043e\u043a\u0430\u0437\u0430\u043d\u043e", L"\u986f\u793a", L"Mostrando"},
         {L"Attendance", L"\u51fa\u52e4\u7387", L"Attendenza", L"\u51fa\u5e2d\u7387", L"Pr\u00e9sence", L"Anwesenheit", L"\u041f\u043e\u0441\u0435\u0449\u0430\u0435\u043c\u043e\u0441\u0442\u044c", L"\u51fa\u52e4\u7387", L"Asistencia"},
         {L"Attendance Sheet", L"\u70b9\u540d\u8868", L"Folja tal-attendenza", L"\u51fa\u5e2d\u30b7\u30fc\u30c8", L"Feuille d'appel", L"Anwesenheitsblatt", L"\u041b\u0438\u0441\u0442 \u043f\u043e\u0441\u0435\u0449\u0430\u0435\u043c\u043e\u0441\u0442\u0438", L"\u9ede\u540d\u8868", L"Hoja de asistencia"},
         {L"Absent/Late", L"\u7f3a\u5e2d/\u8fdf\u5230", L"Assenti/Tard", L"\u6b20\u5e2d/\u9045\u523b", L"Absent/retard", L"Abwesend/versp\u00e4tet", L"\u041e\u0442\u0441\u0443\u0442./\u043e\u043f\u043e\u0437\u0434.", L"\u7f3a\u5e2d/\u9072\u5230", L"Ausente/tarde"},
@@ -418,6 +682,7 @@ std::wstring Tr(const wchar_t* english, const wchar_t*) {
         {L"New course or class name:", L"\u65b0\u8bfe\u7a0b\u6216\u73ed\u7ea7\u540d\u79f0\uff1a", L"Isem \u0121did tal-kors jew klassi:", L"\u65b0\u3057\u3044\u30b3\u30fc\u30b9/\u30af\u30e9\u30b9\u540d:", L"Nouveau nom :", L"Neuer Kurs-/Klassenname:", L"\u041d\u043e\u0432\u043e\u0435 \u0438\u043c\u044f:", L"\u65b0\u8ab2\u7a0b\u6216\u73ed\u7d1a\u540d\u7a31\uff1a", L"Nuevo nombre:"},
         {L"Import student roster (CSV)", L"\u5bfc\u5165\u5b66\u751f\u540d\u5355 (CSV)", L"Importa lista tal-istudenti (CSV)", L"\u5b66\u751f\u540d\u7c3f\u3092\u8aad\u307f\u8fbc\u3080 (CSV)", L"Importer liste d'\u00e9tudiants (CSV)", L"Sch\u00fclerliste importieren (CSV)", L"\u0418\u043c\u043f\u043e\u0440\u0442 \u0441\u043f\u0438\u0441\u043a\u0430 (CSV)", L"\u532f\u5165\u5b78\u751f\u540d\u55ae (CSV)", L"Importar lista de estudiantes (CSV)"},
         {L"Print / export PDF", L"\u6253\u5370 / \u5bfc\u51fa PDF", L"Stampa / esporta PDF", L"\u5370\u5237 / PDF \u51fa\u529b", L"Imprimer / exporter PDF", L"Drucken / PDF exportieren", L"\u041f\u0435\u0447\u0430\u0442\u044c / PDF", L"\u5217\u5370 / \u532f\u51fa PDF", L"Imprimir / exportar PDF"},
+        {L"Export PowerPoint (.pptx) [Experimental]", L"\u5bfc\u51fa PowerPoint (.pptx)\uff08\u5b9e\u9a8c\u6027\uff09", L"Esporta PowerPoint (.pptx) [Sperimentali]", L"PowerPoint \u51fa\u529b (.pptx) [\u5b9f\u9a13\u7684]", L"Exporter PowerPoint (.pptx) [exp\u00e9rimental]", L"PowerPoint exportieren (.pptx) [experimentell]", L"\u042d\u043a\u0441\u043f\u043e\u0440\u0442 PowerPoint (.pptx) [\u044d\u043a\u0441\u043f.]", L"\u532f\u51fa PowerPoint (.pptx)\uff08\u5be6\u9a57\uff09", L"Exportar PowerPoint (.pptx) [experimental]"},
         {L"Statistics chart", L"\u7edf\u8ba1\u56fe\u8868", L"\u010aart tal-istatistika", L"\u7d71\u8a08\u30b0\u30e9\u30d5", L"Graphique statistique", L"Statistikdiagramm", L"\u0413\u0440\u0430\u0444\u0438\u043a", L"\u7d71\u8a08\u5716\u8868", L"Gr\u00e1fico estad\u00edstico"},
         {L"Undo", L"\u64a4\u9500", L"\u0126oll", L"\u5143\u306b\u623b\u3059", L"Annuler", L"R\u00fcckg\u00e4ngig", L"\u041e\u0442\u043c\u0435\u043d\u0438\u0442\u044c", L"\u5fa9\u539f", L"Deshacer"},
         {L"Redo", L"\u91cd\u505a", L"Er\u0121a'", L"\u3084\u308a\u76f4\u3057", L"R\u00e9tablir", L"Wiederholen", L"\u041f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u044c", L"\u91cd\u505a", L"Rehacer"},
@@ -433,6 +698,7 @@ std::wstring Tr(const wchar_t* english, const wchar_t*) {
         {L"Could not open the roster file.", L"\u65e0\u6cd5\u6253\u5f00\u540d\u5355\u6587\u4ef6\u3002", L"Ma setax jinfeta\u0127 il-fajl.", L"\u540d\u7c3f\u30d5\u30a1\u30a4\u30eb\u3092\u958b\u3051\u307e\u305b\u3093\u3002", L"Impossible d'ouvrir la liste.", L"Listendatei konnte nicht ge\u00f6ffnet werden.", L"\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0442\u043a\u0440\u044b\u0442\u044c \u0441\u043f\u0438\u0441\u043e\u043a.", L"\u7121\u6cd5\u958b\u555f\u540d\u55ae\u6a94\u6848\u3002", L"No se pudo abrir la lista."},
         {L"Imported", L"\u5df2\u5bfc\u5165", L"Importati", L"\u8aad\u307f\u8fbc\u307f\u6e08\u307f", L"Import\u00e9", L"Importiert", L"\u0418\u043c\u043f\u043e\u0440\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043e", L"\u5df2\u532f\u5165", L"Importado"},
         {L"students into the current course.", L"\u540d\u5b66\u751f\u5230\u5f53\u524d\u8bfe\u7a0b\u3002", L"studenti fil-kors attwali.", L"\u4eba\u306e\u5b66\u751f\u3092\u73fe\u5728\u306e\u30b3\u30fc\u30b9\u306b\u8ffd\u52a0\u3002", L"\u00e9tudiants dans le cours actuel.", L"Sch\u00fcler in den aktuellen Kurs.", L"\u0441\u0442\u0443\u0434\u0435\u043d\u0442\u043e\u0432 \u0432 \u0442\u0435\u043a\u0443\u0449\u0438\u0439 \u043a\u0443\u0440\u0441.", L"\u540d\u5b78\u751f\u5230\u76ee\u524d\u8ab2\u7a0b\u3002", L"estudiantes al curso actual."},
+        {L"Imported roster entries start as Absent until marked.", L"\u5bfc\u5165\u7684\u540d\u5355\u8bb0\u5f55\u5728\u70b9\u540d\u524d\u9ed8\u8ba4\u4e3a\u7f3a\u5e2d\u3002", L"Rekords importati jibdew b\u0127ala Assenti.", L"\u8aad\u307f\u8fbc\u3093\u3060\u540d\u7c3f\u306f\u51fa\u5e2d\u78ba\u8a8d\u307e\u3067\u6b20\u5e2d\u3068\u3057\u3066\u6271\u308f\u308c\u307e\u3059\u3002", L"Les entr\u00e9es import\u00e9es commencent comme absentes.", L"Importierte Eintr\u00e4ge starten als abwesend.", L"\u0418\u043c\u043f\u043e\u0440\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u044b\u0435 \u0437\u0430\u043f\u0438\u0441\u0438 \u0441\u043d\u0430\u0447\u0430\u043b\u0430 \u043e\u0442\u043c\u0435\u0447\u0435\u043d\u044b \u043a\u0430\u043a \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0449\u0438\u0435.", L"\u532f\u5165\u7684\u540d\u55ae\u8a18\u9304\u5728\u9ede\u540d\u524d\u9810\u8a2d\u70ba\u7f3a\u5e2d\u3002", L"Las entradas importadas empiezan como ausentes."},
         {L"Could not write the database file.", L"\u65e0\u6cd5\u5199\u5165\u6570\u636e\u5e93\u6587\u4ef6\u3002", L"Ma setax jinkiteb id-database.", L"\u30c7\u30fc\u30bf\u30d9\u30fc\u30b9\u30d5\u30a1\u30a4\u30eb\u3092\u66f8\u304d\u8fbc\u3081\u307e\u305b\u3093\u3002", L"Impossible d'\u00e9crire la base.", L"Datenbankdatei konnte nicht geschrieben werden.", L"\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u043f\u0438\u0441\u0430\u0442\u044c \u0411\u0414.", L"\u7121\u6cd5\u5beb\u5165\u8cc7\u6599\u5eab\u6a94\u6848\u3002", L"No se pudo escribir la base."},
         {L"Database mirror exported to:", L"\u6570\u636e\u5e93\u955c\u50cf\u5df2\u5bfc\u51fa\u5230\uff1a", L"Kopja tad-database esportata lejn:", L"\u30c7\u30fc\u30bf\u30d9\u30fc\u30b9\u30df\u30e9\u30fc\u306e\u51fa\u529b\u5148:", L"Miroir de base export\u00e9 vers :", L"Datenbankspiegel exportiert nach:", L"\u0417\u0435\u0440\u043a\u0430\u043b\u043e \u0411\u0414 \u044d\u043a\u0441\u043f\u043e\u0440\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043e:", L"\u8cc7\u6599\u5eab\u93e1\u50cf\u5df2\u532f\u51fa\u5230\uff1a", L"Espejo exportado a:"},
         {L"No autosave file was found.", L"\u672a\u627e\u5230\u81ea\u52a8\u4fdd\u5b58\u6587\u4ef6\u3002", L"Ma nstabx autosave.", L"\u81ea\u52d5\u4fdd\u5b58\u30d5\u30a1\u30a4\u30eb\u306f\u3042\u308a\u307e\u305b\u3093\u3002", L"Aucune autosauvegarde trouv\u00e9e.", L"Keine Autosave-Datei gefunden.", L"\u0410\u0432\u0442\u043e\u0441\u043e\u0445\u0440. \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u043e.", L"\u672a\u627e\u5230\u81ea\u52d5\u5132\u5b58\u6a94\u6848\u3002", L"No se encontr\u00f3 autoguardado."},
@@ -445,10 +711,10 @@ std::wstring Tr(const wchar_t* english, const wchar_t*) {
         {L"New Attendance", L"\u65b0\u5efa\u70b9\u540d", L"Attendenza \u0121dida", L"\u65b0\u898f\u51fa\u5e2d", L"Nouvel appel", L"Neue Anwesenheit", L"\u041d\u043e\u0432\u0430\u044f \u043f\u043e\u0441\u0435\u0449\u0430\u0435\u043c\u043e\u0441\u0442\u044c", L"\u65b0\u589e\u9ede\u540d", L"Nueva asistencia"},
         {L"Please enter a date and time.", L"\u8bf7\u8f93\u5165\u65e5\u671f\u548c\u65f6\u95f4\u3002", L"Da\u0127\u0127al data u \u0127in.", L"\u65e5\u6642\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002", L"Veuillez saisir la date et l'heure.", L"Bitte Datum und Uhrzeit eingeben.", L"\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u0434\u0430\u0442\u0443 \u0438 \u0432\u0440\u0435\u043c\u044f.", L"\u8acb\u8f38\u5165\u65e5\u671f\u548c\u6642\u9593\u3002", L"Introduce fecha y hora."},
         {L"Please enter a name.", L"\u8bf7\u8f93\u5165\u59d3\u540d\u3002", L"Da\u0127\u0127al isem.", L"\u540d\u524d\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002", L"Veuillez saisir un nom.", L"Bitte Namen eingeben.", L"\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u0438\u043c\u044f.", L"\u8acb\u8f38\u5165\u59d3\u540d\u3002", L"Introduce un nombre."},
-        {L"Please fill the Other field.", L"\u8bf7\u586b\u5199 Other \u5b57\u6bb5\u3002", L"Imla l-qasam Other.", L"Other \u6b04\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002", L"Veuillez remplir le champ Autre.", L"Bitte das Feld Andere ausf\u00fcllen.", L"\u0417\u0430\u043f\u043e\u043b\u043d\u0438\u0442\u0435 \u043f\u043e\u043b\u0435 Other.", L"\u8acb\u586b\u5beb Other \u6b04\u4f4d\u3002", L"Rellena el campo Otro."},
+        {L"Please fill the Other field.", L"\u8bf7\u586b\u5199\u5176\u4ed6\u5b57\u6bb5\u3002", L"Imla l-qasam Other.", L"Other \u6b04\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002", L"Veuillez remplir le champ Autre.", L"Bitte das Feld Andere ausf\u00fcllen.", L"\u0417\u0430\u043f\u043e\u043b\u043d\u0438\u0442\u0435 \u043f\u043e\u043b\u0435 Other.", L"\u8acb\u586b\u5beb\u5176\u4ed6\u6b04\u4f4d\u3002", L"Rellena el campo Otro."},
         {L"Please select a record to edit.", L"\u8bf7\u9009\u62e9\u8981\u7f16\u8f91\u7684\u8bb0\u5f55\u3002", L"Ag\u0127\u017cel rekord biex teditja.", L"\u7de8\u96c6\u3059\u308b\u8a18\u9332\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002", L"S\u00e9lectionnez un enregistrement.", L"Bitte einen Eintrag ausw\u00e4hlen.", L"\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u0437\u0430\u043f\u0438\u0441\u044c.", L"\u8acb\u9078\u64c7\u8981\u7de8\u8f2f\u7684\u8a18\u9304\u3002", L"Selecciona un registro."},
         {L"There are no records to mark.", L"\u6ca1\u6709\u53ef\u6807\u8bb0\u7684\u8bb0\u5f55\u3002", L"M'hemmx rekords.", L"\u30de\u30fc\u30af\u3059\u308b\u8a18\u9332\u304c\u3042\u308a\u307e\u305b\u3093\u3002", L"Aucun enregistrement.", L"Keine Eintr\u00e4ge vorhanden.", L"\u041d\u0435\u0442 \u0437\u0430\u043f\u0438\u0441\u0435\u0439.", L"\u6c92\u6709\u53ef\u6a19\u8a18\u7684\u8a18\u9304\u3002", L"No hay registros."},
-        {L"Mark every record as Present?", L"\u5c06\u6240\u6709\u8bb0\u5f55\u6807\u8bb0\u4e3a Present\uff1f", L"Immarka kollha Present?", L"\u3059\u3079\u3066 Present \u306b\u3057\u307e\u3059\u304b\uff1f", L"Tout marquer pr\u00e9sent ?", L"Alle als anwesend markieren?", L"\u0412\u0441\u0435\u0445 \u043e\u0442\u043c\u0435\u0442\u0438\u0442\u044c Present?", L"\u5c07\u6240\u6709\u8a18\u9304\u6a19\u8a18\u70ba Present\uff1f", L"\u00bfMarcar todo como Present?"},
+        {L"Mark every record as Present?", L"\u5c06\u6240\u6709\u8bb0\u5f55\u6807\u8bb0\u4e3a\u51fa\u5e2d\uff1f", L"Immarka kollha Present?", L"\u3059\u3079\u3066 Present \u306b\u3057\u307e\u3059\u304b\uff1f", L"Tout marquer pr\u00e9sent ?", L"Alle als anwesend markieren?", L"\u0412\u0441\u0435\u0445 \u043e\u0442\u043c\u0435\u0442\u0438\u0442\u044c Present?", L"\u5c07\u6240\u6709\u8a18\u9304\u6a19\u8a18\u70ba\u51fa\u5e2d\uff1f", L"\u00bfMarcar todo como Present?"},
         {L"All Present", L"\u5168\u5458\u51fa\u5e2d", L"Kollha pre\u017centi", L"\u5168\u54e1\u51fa\u5e2d", L"Tout pr\u00e9sent", L"Alle anwesend", L"\u0412\u0441\u0435 Present", L"\u5168\u54e1\u51fa\u5e2d", L"Todos presentes"},
         {L"Please select one or more records to delete.", L"\u8bf7\u9009\u62e9\u8981\u5220\u9664\u7684\u4e00\u6761\u6216\u591a\u6761\u8bb0\u5f55\u3002", L"Ag\u0127\u017cel rekord/i biex t\u0127assar.", L"\u524a\u9664\u3059\u308b\u8a18\u9332\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002", L"S\u00e9lectionnez des enregistrements.", L"Bitte Eintr\u00e4ge zum L\u00f6schen ausw\u00e4hlen.", L"\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u0437\u0430\u043f\u0438\u0441\u0438.", L"\u8acb\u9078\u64c7\u8981\u522a\u9664\u7684\u8a18\u9304\u3002", L"Selecciona registros."},
         {L"No matching records found.", L"\u672a\u627e\u5230\u5339\u914d\u8bb0\u5f55\u3002", L"Ma nstabux rekords.", L"\u8a72\u5f53\u8a18\u9332\u306f\u3042\u308a\u307e\u305b\u3093\u3002", L"Aucun enregistrement.", L"Keine passenden Eintr\u00e4ge.", L"\u041d\u0435\u0442 \u0441\u043e\u0432\u043f\u0430\u0434\u0435\u043d\u0438\u0439.", L"\u672a\u627e\u5230\u7b26\u5408\u8a18\u9304\u3002", L"No hay coincidencias."},
@@ -458,6 +724,8 @@ std::wstring Tr(const wchar_t* english, const wchar_t*) {
         {L"CSV exported successfully.", L"CSV \u5bfc\u51fa\u6210\u529f\u3002", L"CSV esportat.", L"CSV \u3092\u51fa\u529b\u3057\u307e\u3057\u305f\u3002", L"CSV export\u00e9.", L"CSV exportiert.", L"CSV \u044d\u043a\u0441\u043f\u043e\u0440\u0442\u0438\u0440\u043e\u0432\u0430\u043d.", L"CSV \u532f\u51fa\u6210\u529f\u3002", L"CSV exportado."},
         {L"Could not save the file.", L"\u65e0\u6cd5\u4fdd\u5b58\u6587\u4ef6\u3002", L"Ma setax ji\u0121i ssejvjat.", L"\u30d5\u30a1\u30a4\u30eb\u3092\u4fdd\u5b58\u3067\u304d\u307e\u305b\u3093\u3002", L"Impossible d'enregistrer.", L"Datei konnte nicht gespeichert werden.", L"\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0441\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c.", L"\u7121\u6cd5\u5132\u5b58\u6a94\u6848\u3002", L"No se pudo guardar."},
         {L"Saved successfully.", L"\u4fdd\u5b58\u6210\u529f\u3002", L"Issejvjat.", L"\u4fdd\u5b58\u3057\u307e\u3057\u305f\u3002", L"Enregistr\u00e9.", L"Gespeichert.", L"\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043e.", L"\u5132\u5b58\u6210\u529f\u3002", L"Guardado."},
+        {L"PowerPoint exported successfully.", L"PowerPoint \u5bfc\u51fa\u6210\u529f\u3002", L"PowerPoint esportat.", L"PowerPoint \u3092\u51fa\u529b\u3057\u307e\u3057\u305f\u3002", L"PowerPoint export\u00e9.", L"PowerPoint exportiert.", L"PowerPoint \u044d\u043a\u0441\u043f\u043e\u0440\u0442\u0438\u0440\u043e\u0432\u0430\u043d.", L"PowerPoint \u532f\u51fa\u6210\u529f\u3002", L"PowerPoint exportado."},
+        {L"Could not export the PowerPoint file.", L"\u65e0\u6cd5\u5bfc\u51fa PowerPoint \u6587\u4ef6\u3002", L"Ma setax ji\u0121i esportat PowerPoint.", L"PowerPoint \u30d5\u30a1\u30a4\u30eb\u3092\u51fa\u529b\u3067\u304d\u307e\u305b\u3093\u3002", L"Impossible d'exporter PowerPoint.", L"PowerPoint konnte nicht exportiert werden.", L"\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c PowerPoint.", L"\u7121\u6cd5\u532f\u51fa PowerPoint \u6a94\u6848\u3002", L"No se pudo exportar PowerPoint."},
         {L"Could not open the file.", L"\u65e0\u6cd5\u6253\u5f00\u6587\u4ef6\u3002", L"Ma setax jinfeta\u0127.", L"\u30d5\u30a1\u30a4\u30eb\u3092\u958b\u3051\u307e\u305b\u3093\u3002", L"Impossible d'ouvrir.", L"Datei konnte nicht ge\u00f6ffnet werden.", L"\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0442\u043a\u0440\u044b\u0442\u044c.", L"\u7121\u6cd5\u958b\u555f\u6a94\u6848\u3002", L"No se pudo abrir."},
         {L"This .attd file could not be decoded.", L"\u65e0\u6cd5\u89e3\u7801\u8be5 .attd \u6587\u4ef6\u3002", L"Dan il-fajl .attd ma setax jinqara.", L".attd \u3092\u30c7\u30b3\u30fc\u30c9\u3067\u304d\u307e\u305b\u3093\u3002", L"Impossible de d\u00e9coder ce .attd.", L".attd konnte nicht dekodiert werden.", L"\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0434\u0435\u043a\u043e\u0434\u0438\u0440\u043e\u0432\u0430\u0442\u044c .attd.", L"\u7121\u6cd5\u89e3\u78bc\u6b64 .attd \u6a94\u3002", L"No se pudo decodificar .attd."},
         {L"Imported successfully.", L"\u5bfc\u5165\u6210\u529f\u3002", L"Importat.", L"\u8aad\u307f\u8fbc\u307f\u6210\u529f\u3002", L"Import\u00e9.", L"Importiert.", L"\u0418\u043c\u043f\u043e\u0440\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043e.", L"\u532f\u5165\u6210\u529f\u3002", L"Importado."},
@@ -466,17 +734,17 @@ std::wstring Tr(const wchar_t* english, const wchar_t*) {
         {L"Ctrl/Shift click: Multi-select rows", L"Ctrl/Shift \u70b9\u51fb\uff1a\u591a\u9009\u884c", L"Ctrl/Shift: ag\u0127\u017cel aktar", L"Ctrl/Shift\uff1a\u8907\u6570\u9078\u629e", L"Ctrl/Shift : multi-s\u00e9lection", L"Strg/Umschalt: Mehrfachauswahl", L"Ctrl/Shift: \u043c\u0443\u043b\u044c\u0442\u0438\u0432\u044b\u0431\u043e\u0440", L"Ctrl/Shift \u9ede\u64ca\uff1a\u591a\u9078\u884c", L"Ctrl/Shift: selecci\u00f3n m\u00faltiple"},
         {L"Date / Time", L"\u65e5\u671f / \u65f6\u95f4", L"Data / \u0126in", L"\u65e5\u6642", L"Date / heure", L"Datum / Uhrzeit", L"\u0414\u0430\u0442\u0430 / \u0432\u0440\u0435\u043c\u044f", L"\u65e5\u671f / \u6642\u9593", L"Fecha / hora"},
         {L"Status", L"\u72b6\u6001", L"Status", L"\u72b6\u614b", L"Statut", L"Status", L"\u0421\u0442\u0430\u0442\u0443\u0441", L"\u72c0\u614b", L"Estado"},
-        {L"Interface Settings", L"\u754c\u9762\u8bbe\u7f6e", L"Settings tal-interface", L"\u30a4\u30f3\u30bf\u30fc\u30d5\u30a7\u30fc\u30b9\u8a2d\u5b9a", L"Param\u00e8tres de l'interface", L"Oberfl\u00e4cheneinstellungen", L"\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438 \u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u0430", L"\u介面設定", L"Configuraci\u00f3n de interfaz"},
+        {L"Interface Settings", L"\u754c\u9762\u8bbe\u7f6e", L"Settings tal-interface", L"\u30a4\u30f3\u30bf\u30fc\u30d5\u30a7\u30fc\u30b9\u8a2d\u5b9a", L"Param\u00e8tres de l'interface", L"Oberfl\u00e4cheneinstellungen", L"\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438 \u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u0430", L"\u4ecb\u9762\u8a2d\u5b9a", L"Configuraci\u00f3n de interfaz"},
         {L"Language", L"\u8bed\u8a00", L"Lingwa", L"\u8a00\u8a9e", L"Langue", L"Sprache", L"\u042f\u0437\u044b\u043a", L"\u8a9e\u8a00", L"Idioma"},
         {L"Style", L"\u98ce\u683c", L"Stil", L"\u30b9\u30bf\u30a4\u30eb", L"Style", L"Stil", L"\u0421\u0442\u0438\u043b\u044c", L"\u98a8\u683c", L"Estilo"},
-        {L"Interface Font", L"\u754c\u9762\u5b57\u4f53", L"Font tal-interface", L"\u30a4\u30f3\u30bf\u30fc\u30d5\u30a7\u30fc\u30b9\u30d5\u30a9\u30f3\u30c8", L"Police de l'interface", L"Schriftart", L"\u0428\u0440\u0438\u0444\u0442", L"\u介面字型", L"Fuente de interfaz"},
+        {L"Interface Font", L"\u754c\u9762\u5b57\u4f53", L"Font tal-interface", L"\u30a4\u30f3\u30bf\u30fc\u30d5\u30a7\u30fc\u30b9\u30d5\u30a9\u30f3\u30c8", L"Police de l'interface", L"Schriftart", L"\u0428\u0440\u0438\u0444\u0442", L"\u4ecb\u9762\u5b57\u578b", L"Fuente de interfaz"},
         {L"Apply", L"\u5e94\u7528", L"Applika", L"\u9069\u7528", L"Appliquer", L"Anwenden", L"\u041f\u0440\u0438\u043c\u0435\u043d\u0438\u0442\u044c", L"\u5957\u7528", L"Aplicar"},
         {L"Close", L"\u5173\u95ed", L"Ag\u0127laq", L"\u9589\u3058\u308b", L"Fermer", L"Schlie\u00dfen", L"\u0417\u0430\u043a\u0440\u044b\u0442\u044c", L"\u95dc\u9589", L"Cerrar"},
         {L"Reset All Settings", L"\u91cd\u7f6e\u6240\u6709\u8bbe\u7f6e", L"Irrisettja kollox", L"\u3059\u3079\u3066\u30ea\u30bb\u30c3\u30c8", L"Tout r\u00e9initialiser", L"Alles zur\u00fccksetzen", L"\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c \u0432\u0441\u0451", L"\u91cd\u8a2d\u6240\u6709\u8a2d\u5b9a", L"Restablecer todo"},
         {L"Dark", L"\u6df1\u8272", L"Skur", L"\u30c0\u30fc\u30af", L"Sombre", L"Dunkel", L"\u0422\u0451\u043c\u043d\u0430\u044f", L"\u6df1\u8272", L"Oscuro"},
         {L"Light", L"\u6d45\u8272", L"\u010aar", L"\u30e9\u30a4\u30c8", L"Clair", L"Hell", L"\u0421\u0432\u0435\u0442\u043b\u0430\u044f", L"\u6dfa\u8272", L"Claro"},
     };
-
+//why the fuck do I have to write so much code?
     for (const auto& entry : entries) {
         if (key == entry.key) {
             switch (g_language) {
@@ -520,6 +788,14 @@ std::string LanguageToString(UiLanguage language) {
     case UiLanguage::Russian: return "ru";
     case UiLanguage::ChineseTraditional: return "zh-TW";
     case UiLanguage::Spanish: return "es";
+    case UiLanguage::Italian: return "it";
+    case UiLanguage::Mongolian: return "mn";
+    case UiLanguage::Esperanto: return "eo";
+    case UiLanguage::ClassicalChinese: return "lzh";
+    case UiLanguage::Thai: return "th";
+    case UiLanguage::Filipino: return "fil";
+    case UiLanguage::Turkish: return "tr";
+    case UiLanguage::Lithuanian: return "lt";
     default: return "en";
     }
 }
@@ -533,6 +809,14 @@ UiLanguage LanguageFromString(const std::string& value) {
     if (value == "ru") return UiLanguage::Russian;
     if (value == "zh-TW") return UiLanguage::ChineseTraditional;
     if (value == "es") return UiLanguage::Spanish;
+    if (value == "it") return UiLanguage::Italian;
+    if (value == "mn") return UiLanguage::Mongolian;
+    if (value == "eo") return UiLanguage::Esperanto;
+    if (value == "lzh") return UiLanguage::ClassicalChinese;
+    if (value == "th") return UiLanguage::Thai;
+    if (value == "fil") return UiLanguage::Filipino;
+    if (value == "tr") return UiLanguage::Turkish;
+    if (value == "lt") return UiLanguage::Lithuanian;
     return UiLanguage::English;
 }
 
@@ -901,21 +1185,28 @@ void UpdateStats() {
        << L"    " << Tr(L"Late", L"\u8fdf\u5230") << L" " << late
        << L"    " << Tr(L"Other", L"\u5176\u4ed6") << L" " << other
        << rateText;
+    if (!g_filterText.empty()) {
+        ss << L"    " << Tr(L"Showing", L"\u663e\u793a") << L" " << g_visibleRows.size() << L"/" << g_records.size();
+    }
     SetText(GetDlgItem(g_hwnd, IDC_STATS), ss.str());
 }
 
 void RefreshList() {
     SyncActiveSheet();
     ListView_DeleteAllItems(g_list);
+    g_visibleRows.clear();
     for (int i = 0; i < (int)g_records.size(); ++i) {
+        if (!RecordMatchesFilter(g_records[i])) continue;
+        int visibleIndex = (int)g_visibleRows.size();
+        g_visibleRows.push_back(i);
         LVITEMW item{};
         item.mask = LVIF_TEXT;
-        item.iItem = i;
+        item.iItem = visibleIndex;
         item.pszText = const_cast<wchar_t*>(g_records[i].dateTime.c_str());
         ListView_InsertItem(g_list, &item);
-        ListView_SetItemText(g_list, i, 1, const_cast<wchar_t*>(g_records[i].name.c_str()));
-        ListView_SetItemText(g_list, i, 2, const_cast<wchar_t*>(g_records[i].status.c_str()));
-        ListView_SetItemText(g_list, i, 3, const_cast<wchar_t*>(g_records[i].other.c_str()));
+        ListView_SetItemText(g_list, visibleIndex, 1, const_cast<wchar_t*>(g_records[i].name.c_str()));
+        ListView_SetItemText(g_list, visibleIndex, 2, const_cast<wchar_t*>(g_records[i].status.c_str()));
+        ListView_SetItemText(g_list, visibleIndex, 3, const_cast<wchar_t*>(g_records[i].other.c_str()));
     }
     UpdateStats();
 }
@@ -1032,6 +1323,32 @@ void ApplyThemePalette() {
     ResetBrushes();
 }
 
+void PaintGradientBackground(HWND hwnd, HDC hdc) {
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    if (rc.right <= rc.left || rc.bottom <= rc.top) return;
+
+    COLORREF top = g_theme == UiTheme::Dark ? RGB(18, 22, 31) : RGB(238, 250, 245);
+    COLORREF bottom = g_theme == UiTheme::Dark ? RGB(33, 39, 54) : RGB(246, 249, 255);
+
+    TRIVERTEX vertices[2]{};
+    vertices[0].x = rc.left;
+    vertices[0].y = rc.top;
+    vertices[0].Red = GetRValue(top) << 8;
+    vertices[0].Green = GetGValue(top) << 8;
+    vertices[0].Blue = GetBValue(top) << 8;
+    vertices[0].Alpha = 0;
+    vertices[1].x = rc.right;
+    vertices[1].y = rc.bottom;
+    vertices[1].Red = GetRValue(bottom) << 8;
+    vertices[1].Green = GetGValue(bottom) << 8;
+    vertices[1].Blue = GetBValue(bottom) << 8;
+    vertices[1].Alpha = 0;
+
+    GRADIENT_RECT gradient{0, 1};
+    GradientFill(hdc, vertices, 2, &gradient, 1, GRADIENT_FILL_RECT_V);
+}
+
 BOOL CALLBACK ApplyFontToChild(HWND child, LPARAM) {
     SendMessageW(child, WM_SETFONT, (WPARAM)g_font, TRUE);
     return TRUE;
@@ -1088,6 +1405,8 @@ void ApplyMainLanguage() {
     SetText(GetDlgItem(g_hwnd, 2001), Tr(L"Date/Time", L"\u65e5\u671f\u65f6\u95f4"));
     SetText(GetDlgItem(g_hwnd, 2002), Tr(L"Name", L"\u59d3\u540d"));
     SetText(GetDlgItem(g_hwnd, 2003), Tr(L"Other", L"\u5176\u4ed6"));
+    SetText(GetDlgItem(g_hwnd, IDC_FILTER_LABEL), Tr(L"Search", L"\u641c\u7d22"));
+    SetText(GetDlgItem(g_hwnd, IDC_CLEAR_FILTER), Tr(L"Clear Filter", L"\u6e05\u9664\u7b5b\u9009"));
     SetText(GetDlgItem(g_hwnd, IDC_PRESENT), Tr(L"Present", L"\u51fa\u5e2d"));
     SetText(GetDlgItem(g_hwnd, IDC_ABSENT), Tr(L"Absent", L"\u7f3a\u5e2d"));
     SetText(GetDlgItem(g_hwnd, IDC_LATE), Tr(L"Late", L"\u8fdf\u5230"));
@@ -1144,11 +1463,11 @@ void AddOrUpdateRecord(const std::wstring& status) {
         return;
     }
     if (status == L"Other" && other.empty()) {
-        ShowMessage(Tr(L"Please fill the Other field.", L"\u8bf7\u586b\u5199 Other \u5b57\u6bb5\u3002"));
+        ShowMessage(Tr(L"Please fill the Other field.", L"\u8bf7\u586b\u5199\u5176\u4ed6\u5b57\u6bb5\u3002"));
         return;
     }
 
-    int selected = ListView_GetNextItem(g_list, -1, LVNI_SELECTED);
+    int selected = VisibleToRecordIndex(ListView_GetNextItem(g_list, -1, LVNI_SELECTED));
     AttendanceRecord record{dateTime, name, status, other};
     PushUndo();
     MarkDirty();
@@ -1161,6 +1480,7 @@ void AddOrUpdateRecord(const std::wstring& status) {
 }
 
 void LoadRecordIntoEditor(int index) {
+    index = VisibleToRecordIndex(index);
     if (index < 0 || index >= (int)g_records.size()) {
         ShowMessage(Tr(L"Please select a record to edit.", L"\u8bf7\u9009\u62e9\u8981\u7f16\u8f91\u7684\u8bb0\u5f55\u3002"));
         return;
@@ -1170,12 +1490,15 @@ void LoadRecordIntoEditor(int index) {
     SetText(g_dateEdit, record.dateTime);
     SetText(g_nameEdit, record.name);
     SetText(g_otherEdit, record.other);
-    ListView_SetItemState(g_list, index, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
-    ListView_EnsureVisible(g_list, index, FALSE);
+    int visibleIndex = RecordToVisibleIndex(index);
+    if (visibleIndex >= 0) {
+        ListView_SetItemState(g_list, visibleIndex, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+        ListView_EnsureVisible(g_list, visibleIndex, FALSE);
+    }
 }
 
 void UpdateSelectedRecord() {
-    int selected = ListView_GetNextItem(g_list, -1, LVNI_SELECTED);
+    int selected = VisibleToRecordIndex(ListView_GetNextItem(g_list, -1, LVNI_SELECTED));
     if (selected < 0 || selected >= (int)g_records.size()) {
         AddOrUpdateRecord(L"Present");
         return;
@@ -1199,7 +1522,10 @@ void UpdateSelectedRecord() {
     g_records[selected].name = name;
     g_records[selected].other = g_records[selected].status == L"Other" ? other : L"";
     RefreshList();
-    ListView_SetItemState(g_list, selected, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+    int visibleIndex = RecordToVisibleIndex(selected);
+    if (visibleIndex >= 0) {
+        ListView_SetItemState(g_list, visibleIndex, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+    }
 }
 
 void MarkAllPresent() {
@@ -1207,7 +1533,7 @@ void MarkAllPresent() {
         ShowMessage(Tr(L"There are no records to mark.", L"\u6ca1\u6709\u53ef\u6807\u8bb0\u7684\u8bb0\u5f55\u3002"));
         return;
     }
-    std::wstring allPresentMsg = Tr(L"Mark every record as Present?", L"\u5c06\u6240\u6709\u8bb0\u5f55\u6807\u8bb0\u4e3a Present\uff1f");
+    std::wstring allPresentMsg = Tr(L"Mark every record as Present?", L"\u5c06\u6240\u6709\u8bb0\u5f55\u6807\u8bb0\u4e3a\u51fa\u5e2d\uff1f");
     std::wstring allPresentTitle = Tr(L"All Present", L"\u5168\u5458\u51fa\u5e2d");
     if (MessageBoxW(g_hwnd, allPresentMsg.c_str(), allPresentTitle.c_str(), MB_YESNO | MB_ICONQUESTION) == IDYES) {
         PushUndo();
@@ -1224,7 +1550,8 @@ std::vector<int> SelectedRows() {
     std::vector<int> rows;
     int selected = -1;
     while ((selected = ListView_GetNextItem(g_list, selected, LVNI_SELECTED)) != -1) {
-        if (selected >= 0 && selected < (int)g_records.size()) rows.push_back(selected);
+        int recordIndex = VisibleToRecordIndex(selected);
+        if (recordIndex >= 0) rows.push_back(recordIndex);
     }
     return rows;
 }
@@ -1379,6 +1706,19 @@ std::wstring SaveHtmlFileDialog() {
     return GetSaveFileNameW(&ofn) ? fileName : L"";
 }
 
+std::wstring SavePptxFileDialog() {
+    wchar_t fileName[MAX_PATH] = L"attendance-report.pptx";
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = g_hwnd;
+    ofn.lpstrFilter = L"PowerPoint Files (*.pptx)\0*.pptx\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFile = fileName;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrDefExt = L"pptx";
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+    return GetSaveFileNameW(&ofn) ? fileName : L"";
+}
+
 std::filesystem::path AppDataFilePath(const wchar_t* fileName) {
     PWSTR roamingPath = nullptr;
     std::filesystem::path result;
@@ -1459,7 +1799,10 @@ void ExportCsv() {
     }
 
     file << "\xEF\xBB\xBF";
-    file << "Date/Time,Name,Status,Other\n";
+    file << CsvCell(Tr(L"Date/Time", L"\u65e5\u671f\u65f6\u95f4")) << ','
+         << CsvCell(Tr(L"Name", L"\u59d3\u540d")) << ','
+         << CsvCell(Tr(L"Status", L"\u72b6\u6001")) << ','
+         << CsvCell(Tr(L"Other", L"\u5176\u4ed6")) << '\n';
     for (const auto& record : g_records) {
         file << CsvCell(record.dateTime) << ','
              << CsvCell(record.name) << ','
@@ -1524,6 +1867,435 @@ std::string HtmlCell(const std::wstring& value) {
     return out;
 }
 
+std::string XmlCell(const std::wstring& value) {
+    return HtmlCell(value);
+}
+
+std::string XmlCellUtf8(const std::string& value) {
+    std::string out;
+    for (char ch : value) {
+        if (ch == '&') out += "&amp;";
+        else if (ch == '<') out += "&lt;";
+        else if (ch == '>') out += "&gt;";
+        else if (ch == '"') out += "&quot;";
+        else out.push_back(ch);
+    }
+    return out;
+}
+
+struct ZipEntry {
+    std::string name;
+    std::string data;
+    uint32_t crc = 0;
+    uint32_t offset = 0;
+};
+
+uint32_t Crc32(const std::string& data) {
+    uint32_t crc = 0xFFFFFFFFu;
+    for (unsigned char ch : data) {
+        crc ^= ch;
+        for (int i = 0; i < 8; ++i) {
+            crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+        }
+    }
+    return ~crc;
+}
+
+void Write16(std::ofstream& file, uint16_t value) {
+    file.put((char)(value & 0xFF));
+    file.put((char)((value >> 8) & 0xFF));
+}
+
+void Write32(std::ofstream& file, uint32_t value) {
+    Write16(file, (uint16_t)(value & 0xFFFF));
+    Write16(file, (uint16_t)((value >> 16) & 0xFFFF));
+}
+
+bool WriteZipStore(const std::filesystem::path& path, std::vector<ZipEntry> entries) {
+    std::ofstream file(path, std::ios::binary);
+    if (!file) return false;
+
+    for (auto& entry : entries) {
+        entry.crc = Crc32(entry.data);
+        entry.offset = (uint32_t)file.tellp();
+        Write32(file, 0x04034b50);
+        Write16(file, 20);
+        Write16(file, 0);
+        Write16(file, 0);
+        Write16(file, 0);
+        Write16(file, 0);
+        Write32(file, entry.crc);
+        Write32(file, (uint32_t)entry.data.size());
+        Write32(file, (uint32_t)entry.data.size());
+        Write16(file, (uint16_t)entry.name.size());
+        Write16(file, 0);
+        file.write(entry.name.data(), entry.name.size());
+        file.write(entry.data.data(), entry.data.size());
+    }
+
+    uint32_t centralOffset = (uint32_t)file.tellp();
+    for (const auto& entry : entries) {
+        Write32(file, 0x02014b50);
+        Write16(file, 20);
+        Write16(file, 20);
+        Write16(file, 0);
+        Write16(file, 0);
+        Write16(file, 0);
+        Write16(file, 0);
+        Write32(file, entry.crc);
+        Write32(file, (uint32_t)entry.data.size());
+        Write32(file, (uint32_t)entry.data.size());
+        Write16(file, (uint16_t)entry.name.size());
+        Write16(file, 0);
+        Write16(file, 0);
+        Write16(file, 0);
+        Write16(file, 0);
+        Write32(file, 0);
+        Write32(file, entry.offset);
+        file.write(entry.name.data(), entry.name.size());
+    }
+    uint32_t centralSize = (uint32_t)file.tellp() - centralOffset;
+    Write32(file, 0x06054b50);
+    Write16(file, 0);
+    Write16(file, 0);
+    Write16(file, (uint16_t)entries.size());
+    Write16(file, (uint16_t)entries.size());
+    Write32(file, centralSize);
+    Write32(file, centralOffset);
+    Write16(file, 0);
+    return true;
+}
+
+struct PptStats {
+    int present = 0;
+    int absent = 0;
+    int late = 0;
+    int other = 0;
+    int total = 0;
+};
+
+PptStats CountRecords(const std::vector<AttendanceRecord>& records) {
+    PptStats stats{};
+    stats.total = (int)records.size();
+    for (const auto& r : records) {
+        if (r.status == L"Present") ++stats.present;
+        else if (r.status == L"Absent") ++stats.absent;
+        else if (r.status == L"Late") ++stats.late;
+        else ++stats.other;
+    }
+    return stats;
+}
+
+std::string ShapeText(int id, int x, int y, int cx, int cy, const std::wstring& text, int size, const char* color, bool bold = false) {
+    std::ostringstream ss;
+    ss << "<p:sp><p:nvSpPr><p:cNvPr id=\"" << id << "\" name=\"Text" << id
+       << "\"/><p:cNvSpPr txBox=\"1\"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x=\"" << x << "\" y=\"" << y
+       << "\"/><a:ext cx=\"" << cx << "\" cy=\"" << cy << "\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>"
+       << "<a:noFill/><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap=\"square\"/><a:lstStyle/><a:p>"
+       << "<a:r><a:rPr lang=\"en-US\" sz=\"" << size << "\"" << (bold ? " b=\"1\"" : "") << "><a:solidFill><a:srgbClr val=\""
+       << color << "\"/></a:solidFill></a:rPr><a:t>" << XmlCell(text) << "</a:t></a:r></a:p></p:txBody></p:sp>";
+    return ss.str();
+}
+
+std::string RectShape(int id, int x, int y, int cx, int cy, const char* fill, const char* line = "FFFFFF", int alpha = 100000) {
+    std::ostringstream ss;
+    ss << "<p:sp><p:nvSpPr><p:cNvPr id=\"" << id << "\" name=\"Rect" << id
+       << "\"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x=\"" << x << "\" y=\"" << y
+       << "\"/><a:ext cx=\"" << cx << "\" cy=\"" << cy << "\"/></a:xfrm><a:prstGeom prst=\"roundRect\"><a:avLst/></a:prstGeom>"
+       << "<a:solidFill><a:srgbClr val=\"" << fill << "\"><a:alpha val=\"" << alpha << "\"/></a:srgbClr></a:solidFill>"
+       << "<a:ln w=\"12000\"><a:solidFill><a:srgbClr val=\"" << line << "\"/></a:solidFill></a:ln></p:spPr></p:sp>";
+    return ss.str();
+}
+
+std::string LineShape(int id, int x1, int y1, int x2, int y2, const char* color, int width = 36000) {
+    std::ostringstream ss;
+    bool flipH = x2 < x1;
+    bool flipV = y2 < y1;
+    ss << "<p:cxnSp><p:nvCxnSpPr><p:cNvPr id=\"" << id << "\" name=\"Line" << id
+       << "\"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr><p:spPr><a:xfrm";
+    if (flipH) ss << " flipH=\"1\"";
+    if (flipV) ss << " flipV=\"1\"";
+    ss << "><a:off x=\"" << std::min(x1, x2) << "\" y=\"" << std::min(y1, y2)
+       << "\"/><a:ext cx=\"" << std::max(1, std::abs(x2 - x1)) << "\" cy=\"" << std::max(1, std::abs(y2 - y1)) << "\"/></a:xfrm>"
+       << "<a:prstGeom prst=\"line\"><a:avLst/></a:prstGeom><a:ln w=\"" << width << "\"><a:solidFill><a:srgbClr val=\""
+       << color << "\"/></a:solidFill></a:ln></p:spPr></p:cxnSp>";
+    return ss.str();
+}
+
+std::string ChartFrame(int id, int x, int y, int cx, int cy, const char* relationshipId) {
+    std::ostringstream ss;
+    ss << "<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id=\"" << id << "\" name=\"Chart" << id
+       << "\"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x=\"" << x << "\" y=\"" << y
+       << "\"/><a:ext cx=\"" << cx << "\" cy=\"" << cy << "\"/></p:xfrm><a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">"
+       << "<c:chart xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" r:id=\""
+       << relationshipId << "\"/></a:graphicData></a:graphic></p:graphicFrame>";
+    return ss.str();
+}
+
+std::string SlideBackground() {
+    return "<p:sp><p:nvSpPr><p:cNvPr id=\"2\" name=\"Background\"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>"
+           "<p:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"12192000\" cy=\"6858000\"/></a:xfrm>"
+           "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:gradFill flip=\"none\" rotWithShape=\"1\">"
+           "<a:gsLst><a:gs pos=\"0\"><a:srgbClr val=\"172033\"/></a:gs><a:gs pos=\"100000\"><a:srgbClr val=\"243B68\"/></a:gs></a:gsLst>"
+           "<a:lin ang=\"5400000\" scaled=\"1\"/></a:gradFill><a:ln><a:noFill/></a:ln></p:spPr></p:sp>";
+}
+
+std::string SlideXml(const std::string& body) {
+    return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+           "<p:sld xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\">"
+           "<p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id=\"1\" name=\"\"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"0\" cy=\"0\"/><a:chOff x=\"0\" y=\"0\"/><a:chExt cx=\"0\" cy=\"0\"/></a:xfrm></p:grpSpPr>"
+           + body +
+           "</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>";
+}
+
+std::string BuildPptSlide1(const std::wstring& course, const PptStats& stats) {
+    int id = 3;
+    double rate = stats.total ? stats.present * 100.0 / stats.total : 0.0;
+    std::wstringstream rateText;
+    rateText.setf(std::ios::fixed);
+    rateText.precision(1);
+    rateText << rate << L"%";
+    std::ostringstream ss;
+    ss << SlideBackground();
+    ss << ShapeText(id++, 650000, 520000, 10000000, 700000, Tr(L"Attendance Manager", L"\u70b9\u540d\u7ba1\u7406\u5668"), 3600, "FFFFFF", true);
+    ss << ShapeText(id++, 650000, 1200000, 9500000, 500000, course, 2200, "D9E7FF");
+    const int cardY = 2400000, cardW = 2300000, cardH = 1200000;
+    const wchar_t* labels[] = {L"Total", L"Present", L"Absent", L"Late"};
+    int values[] = {stats.total, stats.present, stats.absent, stats.late};
+    const char* fills[] = {"2E456F", "1F6B4D", "743D45", "735829"};
+    for (int i = 0; i < 4; ++i) {
+        int x = 650000 + i * 2800000;
+        ss << RectShape(id++, x, cardY, cardW, cardH, fills[i], "FFFFFF", 82000);
+        ss << ShapeText(id++, x + 180000, cardY + 180000, 1900000, 330000, Tr(labels[i], labels[i]), 1600, "C7D4EA");
+        ss << ShapeText(id++, x + 180000, cardY + 540000, 1900000, 430000, std::to_wstring(values[i]), 3000, "FFFFFF", true);
+    }
+    ss << ShapeText(id++, 650000, 4200000, 4200000, 520000, Tr(L"Attendance", L"\u51fa\u52e4\u7387") + L": " + rateText.str(), 2200, "45D483", true);
+    ss << ShapeText(id++, 650000, 4820000, 9600000, 420000, Tr(L"Create, edit, export, save, import, and batch clean .attd roll calls.", L""), 1200, "BFD0EA");
+    return SlideXml(ss.str());
+}
+
+std::string BuildPptSlide2(const PptStats& stats) {
+    int id = 3;
+    std::ostringstream ss;
+    ss << SlideBackground();
+    ss << ShapeText(id++, 650000, 420000, 9000000, 520000, Tr(L"Statistics Chart", L"\u7edf\u8ba1\u56fe\u8868"), 2800, "FFFFFF", true);
+    const wchar_t* labels[] = {L"Present", L"Absent", L"Late", L"Other"};
+    int values[] = {stats.present, stats.absent, stats.late, stats.other};
+    const char* colors[] = {"45D483", "FF6B6B", "FFB84D", "6CA8FF"};
+    int pieX = 5100000;
+    int pieY = 3200000;
+    ss << ShapeText(id++, 850000, 2500000, 4200000, 360000, Tr(L"Status", L"\u72b6\u6001") + L" " + Tr(L"Statistics chart", L"\u7edf\u8ba1\u56fe\u8868"), 1500, "E7F0FF", true);
+    ss << ChartFrame(id++, pieX, pieY, 2600000, 2300000, "rId2");
+    int maxVal = std::max(1, std::max(std::max(values[0], values[1]), std::max(values[2], values[3])));
+    for (int i = 0; i < 4; ++i) {
+        int y = 3180000 + i * 650000;
+        ss << RectShape(id++, 900000, y + 90000, 280000, 280000, colors[i], colors[i], 100000);
+        ss << ShapeText(id++, 1300000, y, 1300000, 360000, Tr(labels[i], labels[i]), 1250, "E7F0FF", true);
+        ss << ShapeText(id++, 2550000, y, 800000, 360000, std::to_wstring(values[i]), 1250, "FFFFFF", true);
+        ss << RectShape(id++, 8200000, y + 100000, values[i] * 2600000 / maxVal + 1000, 300000, colors[i], colors[i], 100000);
+        ss << ShapeText(id++, 11000000, y, 600000, 340000, std::to_wstring(values[i]), 1150, "FFFFFF", true);
+    }
+    return SlideXml(ss.str());
+}
+
+std::string BuildPptSlide3(const std::vector<AttendanceRecord>& records) {
+    int id = 3;
+    std::vector<std::pair<std::wstring, PptStats>> days;
+    for (const auto& r : records) {
+        std::wstring day = r.dateTime.size() >= 10 ? r.dateTime.substr(0, 10) : r.dateTime;
+        auto it = std::find_if(days.begin(), days.end(), [&](const auto& p) { return p.first == day; });
+        if (it == days.end()) {
+            PptStats dayStats{};
+            dayStats.total = 1;
+            if (r.status == L"Present") ++dayStats.present;
+            else if (r.status == L"Absent") ++dayStats.absent;
+            else if (r.status == L"Late") ++dayStats.late;
+            else ++dayStats.other;
+            days.push_back({day, dayStats});
+        } else {
+            if (r.status == L"Present") ++it->second.present;
+            else if (r.status == L"Absent") ++it->second.absent;
+            else if (r.status == L"Late") ++it->second.late;
+            else ++it->second.other;
+            ++it->second.total;
+        }
+    }
+    std::sort(days.begin(), days.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    if (days.size() > 8) days.erase(days.begin(), days.end() - 8);
+
+    std::ostringstream ss;
+    ss << SlideBackground();
+    ss << ShapeText(id++, 650000, 420000, 9000000, 520000, Tr(L"Attendance", L"\u51fa\u52e4\u7387") + L" " + Tr(L"Statistics chart", L"\u7edf\u8ba1\u56fe\u8868"), 2500, "FFFFFF", true);
+    const wchar_t* labels[] = {L"Present", L"Absent", L"Late", L"Other"};
+    const char* colors[] = {"45D483", "FF6B6B", "FFB84D", "6CA8FF"};
+    for (int i = 0; i < 4; ++i) {
+        int x = 850000 + i * 1700000;
+        ss << RectShape(id++, x, 1080000, 240000, 240000, colors[i], colors[i], 100000);
+        ss << ShapeText(id++, x + 310000, 1025000, 1250000, 330000, Tr(labels[i], labels[i]), 1050, "D9E7FF", true);
+    }
+
+    int x0 = 950000, y0 = 5400000, w = 10200000, h = 3300000;
+    ss << RectShape(id++, x0, y0, w, 26000, "AFC5E8", "AFC5E8", 100000);
+    ss << RectShape(id++, x0, y0 - h, 26000, h, "AFC5E8", "AFC5E8", 100000);
+    if (days.empty()) {
+        ss << ShapeText(id++, x0 + 600000, y0 - 1900000, 6000000, 500000, Tr(L"There are no records to export.", L"\u6ca1\u6709\u53ef\u5bfc\u51fa\u7684\u8bb0\u5f55\u3002"), 1800, "FFFFFF", true);
+    } else {
+        int slot = w / std::max(1, (int)days.size());
+        int barW = std::clamp(slot / 7, 120000, 260000);
+        int gap = std::max(25000, barW / 4);
+        int maxCount = 1;
+        for (const auto& day : days) {
+            maxCount = std::max(maxCount, std::max(std::max(day.second.present, day.second.absent), std::max(day.second.late, day.second.other)));
+        }
+        std::vector<POINT> trend;
+        for (int i = 0; i < (int)days.size(); ++i) {
+            int groupW = barW * 4 + gap * 3;
+            int groupX = x0 + i * slot + (slot - groupW) / 2;
+            int counts[] = {days[i].second.present, days[i].second.absent, days[i].second.late, days[i].second.other};
+            for (int j = 0; j < 4; ++j) {
+                int barH = counts[j] == 0 ? 45000 : std::max(80000, counts[j] * h / maxCount);
+                int x = groupX + j * (barW + gap);
+                int y = y0 - barH;
+                ss << RectShape(id++, x, y, barW, barH, colors[j], colors[j], 100000);
+            }
+            double rate = days[i].second.total ? days[i].second.present * 1.0 / days[i].second.total : 0.0;
+            int tx = x0 + i * slot + slot / 2;
+            int ty = y0 - (int)(rate * h);
+            trend.push_back({tx, ty});
+            ss << ShapeText(id++, x0 + i * slot, y0 + 110000, slot, 280000, days[i].first, 760, "C7D4EA");
+        }
+        for (int i = 1; i < (int)trend.size(); ++i) {
+            ss << LineShape(id++, trend[i - 1].x, trend[i - 1].y, trend[i].x, trend[i].y, "FFFFFF", 32000);
+        }
+        const auto& latest = days.back().second;
+        double latestRate = latest.total ? latest.present * 100.0 / latest.total : 0.0;
+        std::wstringstream pct;
+        pct.setf(std::ios::fixed);
+        pct.precision(0);
+        pct << latestRate << L"%";
+        ss << ShapeText(id++, 8900000, 780000, 1700000, 360000, Tr(L"Attendance", L"\u51fa\u52e4\u7387"), 1500, "D9E7FF", true);
+        ss << ShapeText(id++, 8900000, 1120000, 1900000, 620000, pct.str(), 3200, "FFFFFF", true);
+    }
+    return SlideXml(ss.str());
+}
+
+std::string PptPieChartXml(const PptStats& stats) {
+    const wchar_t* labels[] = {L"Present", L"Absent", L"Late", L"Other"};
+    int values[] = {stats.present, stats.absent, stats.late, stats.other};
+    const char* colors[] = {"45D483", "FF6B6B", "FFB84D", "6CA8FF"};
+    std::ostringstream ss;
+    ss << "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+       << "<c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">"
+       << "<c:date1904 val=\"0\"/><c:lang val=\"en-US\"/><c:roundedCorners val=\"0\"/>"
+       << "<c:chart><c:autoTitleDeleted val=\"1\"/><c:plotArea><c:layout/>"
+       << "<c:pieChart><c:varyColors val=\"1\"/><c:ser><c:idx val=\"0\"/><c:order val=\"0\"/>";
+    for (int i = 0; i < 4; ++i) {
+        ss << "<c:dPt><c:idx val=\"" << i << "\"/><c:spPr><a:solidFill><a:srgbClr val=\"" << colors[i]
+           << "\"/></a:solidFill><a:ln><a:solidFill><a:srgbClr val=\"172033\"/></a:solidFill></a:ln></c:spPr></c:dPt>";
+    }
+    ss << "<c:cat><c:strRef><c:f>Sheet1!$A$1:$A$4</c:f><c:strCache><c:ptCount val=\"4\"/>";
+    for (int i = 0; i < 4; ++i) {
+        ss << "<c:pt idx=\"" << i << "\"><c:v>" << XmlCell(Tr(labels[i], labels[i])) << "</c:v></c:pt>";
+    }
+    ss << "</c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>Sheet1!$B$1:$B$4</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val=\"4\"/>";
+    for (int i = 0; i < 4; ++i) {
+        ss << "<c:pt idx=\"" << i << "\"><c:v>" << values[i] << "</c:v></c:pt>";
+    }
+    ss << "</c:numCache></c:numRef></c:val></c:ser><c:firstSliceAng val=\"270\"/></c:pieChart>"
+       << "</c:plotArea><c:legend><c:legendPos val=\"r\"/><c:layout/><c:overlay val=\"0\"/></c:legend>"
+       << "<c:plotVisOnly val=\"1\"/><c:dispBlanksAs val=\"gap\"/></c:chart>"
+       << "<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln></c:spPr><c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz=\"1200\"><a:solidFill><a:srgbClr val=\"FFFFFF\"/></a:solidFill></a:defRPr></a:pPr></a:p></c:txPr>"
+       << "</c:chartSpace>";
+    return ss.str();
+}
+
+std::string PptContentTypes() {
+    return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+           "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+           "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+           "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+           "<Override PartName=\"/ppt/presentation.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml\"/>"
+           "<Override PartName=\"/ppt/slides/slide1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.slide+xml\"/>"
+           "<Override PartName=\"/ppt/slides/slide2.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.slide+xml\"/>"
+           "<Override PartName=\"/ppt/slides/slide3.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.slide+xml\"/>"
+           "<Override PartName=\"/ppt/charts/chart1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.drawingml.chart+xml\"/>"
+           "<Override PartName=\"/ppt/slideMasters/slideMaster1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml\"/>"
+           "<Override PartName=\"/ppt/slideLayouts/slideLayout1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml\"/>"
+           "<Override PartName=\"/ppt/theme/theme1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.theme+xml\"/>"
+           "<Override PartName=\"/docProps/core.xml\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>"
+           "<Override PartName=\"/docProps/app.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.extended-properties+xml\"/>"
+           "</Types>";
+}
+
+std::string PptThemeXml() {
+    return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+           "<a:theme xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" name=\"AttendanceApp\">"
+           "<a:themeElements><a:clrScheme name=\"AttendanceApp\"><a:dk1><a:srgbClr val=\"172033\"/></a:dk1><a:lt1><a:srgbClr val=\"FFFFFF\"/></a:lt1><a:dk2><a:srgbClr val=\"243B68\"/></a:dk2><a:lt2><a:srgbClr val=\"D9E7FF\"/></a:lt2><a:accent1><a:srgbClr val=\"45D483\"/></a:accent1><a:accent2><a:srgbClr val=\"FF6B6B\"/></a:accent2><a:accent3><a:srgbClr val=\"FFB84D\"/></a:accent3><a:accent4><a:srgbClr val=\"6CA8FF\"/></a:accent4><a:accent5><a:srgbClr val=\"BFD0EA\"/></a:accent5><a:accent6><a:srgbClr val=\"FFFFFF\"/></a:accent6><a:hlink><a:srgbClr val=\"6CA8FF\"/></a:hlink><a:folHlink><a:srgbClr val=\"BFD0EA\"/></a:folHlink></a:clrScheme>"
+           "<a:fontScheme name=\"AttendanceApp\"><a:majorFont><a:latin typeface=\"Segoe UI\"/><a:ea typeface=\"\"/><a:cs typeface=\"\"/></a:majorFont><a:minorFont><a:latin typeface=\"Segoe UI\"/><a:ea typeface=\"\"/><a:cs typeface=\"\"/></a:minorFont></a:fontScheme>"
+           "<a:fmtScheme name=\"AttendanceApp\"><a:fillStyleLst>"
+           "<a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill>"
+           "<a:gradFill rotWithShape=\"1\"><a:gsLst><a:gs pos=\"0\"><a:schemeClr val=\"phClr\"><a:lumMod val=\"110000\"/><a:satMod val=\"105000\"/></a:schemeClr></a:gs><a:gs pos=\"100000\"><a:schemeClr val=\"phClr\"><a:lumMod val=\"90000\"/><a:satMod val=\"105000\"/></a:schemeClr></a:gs></a:gsLst><a:lin ang=\"5400000\" scaled=\"0\"/></a:gradFill>"
+           "<a:gradFill rotWithShape=\"1\"><a:gsLst><a:gs pos=\"0\"><a:schemeClr val=\"phClr\"><a:lumMod val=\"105000\"/></a:schemeClr></a:gs><a:gs pos=\"100000\"><a:schemeClr val=\"phClr\"><a:lumMod val=\"75000\"/></a:schemeClr></a:gs></a:gsLst><a:lin ang=\"5400000\" scaled=\"0\"/></a:gradFill>"
+           "</a:fillStyleLst><a:lnStyleLst>"
+           "<a:ln w=\"9525\"><a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill><a:prstDash val=\"solid\"/></a:ln>"
+           "<a:ln w=\"25400\"><a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill><a:prstDash val=\"solid\"/></a:ln>"
+           "<a:ln w=\"38100\"><a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill><a:prstDash val=\"solid\"/></a:ln>"
+           "</a:lnStyleLst><a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst>"
+           "<a:bgFillStyleLst><a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill><a:solidFill><a:schemeClr val=\"phClr\"><a:tint val=\"95000\"/></a:schemeClr></a:solidFill><a:solidFill><a:schemeClr val=\"phClr\"><a:shade val=\"85000\"/></a:schemeClr></a:solidFill></a:bgFillStyleLst>"
+           "</a:fmtScheme></a:themeElements></a:theme>";
+}
+
+std::string PptSlideLayoutXml() {
+    return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+           "<p:sldLayout xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\" type=\"blank\" preserve=\"1\"><p:cSld name=\"Blank\"><p:spTree><p:nvGrpSpPr><p:cNvPr id=\"1\" name=\"\"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"0\" cy=\"0\"/><a:chOff x=\"0\" y=\"0\"/><a:chExt cx=\"0\" cy=\"0\"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>";
+}
+
+std::string PptSlideMasterXml() {
+    return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+           "<p:sldMaster xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id=\"1\" name=\"\"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"0\" cy=\"0\"/><a:chOff x=\"0\" y=\"0\"/><a:chExt cx=\"0\" cy=\"0\"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld><p:clrMap bg1=\"lt1\" tx1=\"dk1\" bg2=\"lt2\" tx2=\"dk2\" accent1=\"accent1\" accent2=\"accent2\" accent3=\"accent3\" accent4=\"accent4\" accent5=\"accent5\" accent6=\"accent6\" hlink=\"hlink\" folHlink=\"folHlink\"/><p:sldLayoutIdLst><p:sldLayoutId id=\"2147483649\" r:id=\"rId1\"/></p:sldLayoutIdLst><p:txStyles><p:titleStyle/><p:bodyStyle/><p:otherStyle/></p:txStyles></p:sldMaster>";
+}
+
+bool ExportPptxFile(const std::wstring& path) {
+    SyncActiveSheet();
+    EnsureSheets();
+    const auto& sheet = g_sheets[g_activeSheet];
+    PptStats stats = CountRecords(sheet.records);
+    std::vector<ZipEntry> entries;
+    entries.push_back({"[Content_Types].xml", PptContentTypes()});
+    entries.push_back({"_rels/.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"ppt/presentation.xml\"/><Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties\" Target=\"docProps/core.xml\"/><Relationship Id=\"rId3\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties\" Target=\"docProps/app.xml\"/></Relationships>"});
+    entries.push_back({"docProps/app.xml", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\" xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\"><Application>AttendanceApp</Application><PresentationFormat>Widescreen</PresentationFormat><Slides>3</Slides></Properties>"});
+    entries.push_back({"docProps/core.xml", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:dcterms=\"http://purl.org/dc/terms/\" xmlns:dcmitype=\"http://purl.org/dc/dcmitype/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><dc:title>Attendance Report</dc:title><dc:creator>AttendanceApp</dc:creator></cp:coreProperties>"});
+    entries.push_back({"ppt/presentation.xml", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><p:presentation xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\"><p:sldMasterIdLst><p:sldMasterId id=\"2147483648\" r:id=\"rId4\"/></p:sldMasterIdLst><p:sldIdLst><p:sldId id=\"256\" r:id=\"rId1\"/><p:sldId id=\"257\" r:id=\"rId2\"/><p:sldId id=\"258\" r:id=\"rId3\"/></p:sldIdLst><p:sldSz cx=\"12192000\" cy=\"6858000\" type=\"wide\"/><p:notesSz cx=\"6858000\" cy=\"9144000\"/></p:presentation>"});
+    entries.push_back({"ppt/_rels/presentation.xml.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide\" Target=\"slides/slide1.xml\"/><Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide\" Target=\"slides/slide2.xml\"/><Relationship Id=\"rId3\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide\" Target=\"slides/slide3.xml\"/><Relationship Id=\"rId4\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster\" Target=\"slideMasters/slideMaster1.xml\"/></Relationships>"});
+    entries.push_back({"ppt/theme/theme1.xml", PptThemeXml()});
+    entries.push_back({"ppt/slideMasters/slideMaster1.xml", PptSlideMasterXml()});
+    entries.push_back({"ppt/slideMasters/_rels/slideMaster1.xml.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout\" Target=\"../slideLayouts/slideLayout1.xml\"/><Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme\" Target=\"../theme/theme1.xml\"/></Relationships>"});
+    entries.push_back({"ppt/slideLayouts/slideLayout1.xml", PptSlideLayoutXml()});
+    entries.push_back({"ppt/slideLayouts/_rels/slideLayout1.xml.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster\" Target=\"../slideMasters/slideMaster1.xml\"/></Relationships>"});
+    entries.push_back({"ppt/slides/slide1.xml", BuildPptSlide1(sheet.name, stats)});
+    entries.push_back({"ppt/slides/slide2.xml", BuildPptSlide2(stats)});
+    entries.push_back({"ppt/slides/slide3.xml", BuildPptSlide3(sheet.records)});
+    entries.push_back({"ppt/charts/chart1.xml", PptPieChartXml(stats)});
+    entries.push_back({"ppt/slides/_rels/slide1.xml.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout\" Target=\"../slideLayouts/slideLayout1.xml\"/></Relationships>"});
+    entries.push_back({"ppt/slides/_rels/slide2.xml.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout\" Target=\"../slideLayouts/slideLayout1.xml\"/><Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart\" Target=\"../charts/chart1.xml\"/></Relationships>"});
+    entries.push_back({"ppt/slides/_rels/slide3.xml.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout\" Target=\"../slideLayouts/slideLayout1.xml\"/></Relationships>"});
+    return WriteZipStore(std::filesystem::path(path), entries);
+}
+
+void ExportPptx() {
+    if (g_records.empty()) {
+        ShowMessage(Tr(L"There are no records to export.", L"\u6ca1\u6709\u53ef\u5bfc\u51fa\u7684\u8bb0\u5f55\u3002"));
+        return;
+    }
+    std::wstring path = SavePptxFileDialog();
+    if (path.empty()) return;
+    if (!ExportPptxFile(path)) {
+        ShowMessage(Tr(L"Could not export the PowerPoint file.", L"\u65e0\u6cd5\u5bfc\u51fa PowerPoint \u6587\u4ef6\u3002"));
+        return;
+    }
+    ShowMessage(Tr(L"PowerPoint exported successfully.", L"PowerPoint \u5bfc\u51fa\u6210\u529f\u3002"));
+}
+
 void ExportPrintHtml() {
     SyncActiveSheet();
     std::wstring path = SaveHtmlFileDialog();
@@ -1585,6 +2357,9 @@ void ImportRosterCsv() {
     }
     std::wstringstream ss;
     ss << Tr(L"Imported", L"\u5df2\u5bfc\u5165") << L" " << imported.size() << L" " << Tr(L"students into the current course.", L"\u540d\u5b66\u751f\u5230\u5f53\u524d\u8bfe\u7a0b\u3002");
+    if (!imported.empty()) {
+        ss << L"\n" << Tr(L"Imported roster entries start as Absent until marked.", L"\u5bfc\u5165\u7684\u540d\u5355\u8bb0\u5f55\u5728\u70b9\u540d\u524d\u9ed8\u8ba4\u4e3a\u7f3a\u5e2d\u3002");
+    }
     ShowMessage(ss.str());
 }
 
@@ -1767,6 +2542,7 @@ void ShowToolsMenu(HWND button) {
     HMENU menu = CreatePopupMenu();
     std::wstring roster = Tr(L"Import student roster (CSV)", L"\u5bfc\u5165\u5b66\u751f\u540d\u5355 (CSV)");
     std::wstring print = Tr(L"Print / export PDF", L"\u6253\u5370 / \u5bfc\u51fa PDF");
+    std::wstring pptx = Tr(L"Export PowerPoint (.pptx) [Experimental]", L"\u5bfc\u51fa PowerPoint (.pptx)\uff08\u5b9e\u9a8c\u6027\uff09");
     std::wstring chart = Tr(L"Statistics chart", L"\u7edf\u8ba1\u56fe\u8868");
     std::wstring undo = Tr(L"Undo", L"\u64a4\u9500");
     std::wstring redo = Tr(L"Redo", L"\u91cd\u505a");
@@ -1775,6 +2551,7 @@ void ShowToolsMenu(HWND button) {
     std::wstring autosave = Tr(L"Open autosave", L"\u6253\u5f00\u81ea\u52a8\u4fdd\u5b58");
     AppendMenuW(menu, MF_STRING, IDM_IMPORT_ROSTER, roster.c_str());
     AppendMenuW(menu, MF_STRING, IDM_PRINT_HTML, print.c_str());
+    AppendMenuW(menu, MF_STRING, IDM_EXPORT_PPTX, pptx.c_str());
     AppendMenuW(menu, MF_STRING, IDM_STATS_CHART, chart.c_str());
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, IDM_UNDO, undo.c_str());
@@ -1790,6 +2567,7 @@ void ShowToolsMenu(HWND button) {
     switch (command) {
     case IDM_IMPORT_ROSTER: ImportRosterCsv(); break;
     case IDM_PRINT_HTML: ExportPrintHtml(); break;
+    case IDM_EXPORT_PPTX: ExportPptx(); break;
     case IDM_STATS_CHART: ShowStatsChart(); break;
     case IDM_UNDO: UndoLast(); break;
     case IDM_REDO: RedoLast(); break;
@@ -1893,7 +2671,7 @@ void FillSettingsCombos(HWND hwnd) {
     HWND font = GetDlgItem(hwnd, IDC_SETTINGS_FONT);
 
     SendMessageW(language, CB_RESETCONTENT, 0, 0);
-    for (int i = 0; i <= (int)UiLanguage::Spanish; ++i) {
+    for (int i = 0; i <= (int)UiLanguage::Lithuanian; ++i) {
         SendMessageW(language, CB_ADDSTRING, 0, (LPARAM)LanguageName((UiLanguage)i));
     }
     SendMessageW(language, CB_SETCURSEL, (WPARAM)g_language, 0);
@@ -1933,7 +2711,7 @@ void ApplySettingsFromWindow(HWND hwnd) {
     int theme = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_THEME), CB_GETCURSEL, 0, 0);
     int fontIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_FONT), CB_GETCURSEL, 0, 0);
 
-    if (language < 0 || language > (int)UiLanguage::Spanish) language = 0;
+    if (language < 0 || language > (int)UiLanguage::Lithuanian) language = 0;
     g_language = (UiLanguage)language;
     g_theme = theme == 1 ? UiTheme::Light : UiTheme::Dark;
 
@@ -2039,8 +2817,8 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         HDC hdc = (HDC)wParam;
         HWND control = (HWND)lParam;
         SetTextColor(hdc, GetDlgCtrlID(control) == IDC_SETTINGS_TITLE ? COLOR_TEXT : COLOR_MUTED);
-        SetBkColor(hdc, COLOR_BG);
-        return (LRESULT)g_bgBrush;
+        SetBkMode(hdc, TRANSPARENT);
+        return (LRESULT)GetStockObject(HOLLOW_BRUSH);
     }
     case WM_CTLCOLOREDIT:
     case WM_CTLCOLORLISTBOX: {
@@ -2050,9 +2828,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         return (LRESULT)g_inputBrush;
     }
     case WM_ERASEBKGND: {
-        RECT rc{};
-        GetClientRect(hwnd, &rc);
-        FillRect((HDC)wParam, &rc, g_bgBrush);
+        PaintGradientBackground(hwnd, (HDC)wParam);
         return 1;
     }
     case WM_CLOSE:
@@ -2203,7 +2979,14 @@ void ResizeLayout(HWND hwnd) {
 
     int listX = pad + leftW + 24;
     int listW = std::max(300, layoutW - listX - pad);
-    int listY = pad + 52;
+    int filterY = pad + 52;
+    int clearW = 136;
+    int filterLabelW = 76;
+    MoveWindow(GetDlgItem(hwnd, IDC_FILTER_LABEL), listX - g_scrollX, filterY + 8 + yOffset, filterLabelW, 24, FALSE);
+    MoveWindow(g_filterEdit, listX + filterLabelW - g_scrollX, filterY + yOffset, std::max(180, listW - filterLabelW - clearW - 12), 34, FALSE);
+    MoveWindow(GetDlgItem(hwnd, IDC_CLEAR_FILTER), listX + listW - clearW - g_scrollX, filterY - 1 + yOffset, clearW, 36, FALSE);
+
+    int listY = pad + 96;
     int listH = std::max(300, bottomBarY - listY - 14);
     MoveWindow(g_list, listX - g_scrollX, listY + yOffset, listW, listH, FALSE);
 
@@ -2516,9 +3299,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         MakeControl(L"STATIC", L"Date/Time", 0, 2001);
         MakeControl(L"STATIC", L"Name", 0, 2002);
         MakeControl(L"STATIC", L"Other", 0, 2003);
+        MakeControl(L"STATIC", L"Search", 0, IDC_FILTER_LABEL);
         g_dateEdit = MakeControl(L"EDIT", CurrentDateTimeText().c_str(), WS_TABSTOP | ES_AUTOHSCROLL, IDC_DATE);
         g_nameEdit = MakeControl(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, IDC_NAME);
         g_otherEdit = MakeControl(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, IDC_OTHER);
+        g_filterEdit = MakeControl(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, IDC_FILTER);
 
         MakeButton(L"Present", IDC_PRESENT);
         MakeButton(L"Absent", IDC_ABSENT);
@@ -2534,6 +3319,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         MakeButton(L"Export CSV", IDC_EXPORT_CSV);
         MakeButton(L"Tools", IDC_TOOLS);
         MakeButton(L"Settings", IDC_SETTINGS);
+        MakeButton(L"Clear Filter", IDC_CLEAR_FILTER);
 
         g_list = MakeControl(WC_LISTVIEWW, L"", LVS_REPORT | WS_TABSTOP | WS_BORDER, IDC_LIST);
         EnableMouseWheelForward(g_list);
@@ -2576,6 +3362,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             SwitchCourse(index);
             return 0;
         }
+        if (LOWORD(wParam) == IDC_FILTER && HIWORD(wParam) == EN_CHANGE) {
+            g_filterText = LowerText(GetText(g_filterEdit));
+            RefreshList();
+            return 0;
+        }
         switch (LOWORD(wParam)) {
         case IDC_PRESENT: AddOrUpdateRecord(L"Present"); return 0;
         case IDC_ABSENT: AddOrUpdateRecord(L"Absent"); return 0;
@@ -2590,6 +3381,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case IDC_COURSE_OPTIONS: ShowCourseMenu(GetDlgItem(hwnd, IDC_COURSE_OPTIONS)); return 0;
         case IDC_SAVE: SaveAttendance(); return 0;
         case IDC_IMPORT: ImportAttendance(); return 0;
+        case IDC_CLEAR_FILTER:
+            SetText(g_filterEdit, L"");
+            g_filterText.clear();
+            RefreshList();
+            return 0;
         case IDC_NEW:
             {
             SyncActiveSheet();
@@ -2659,8 +3455,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         auto* hdr = reinterpret_cast<NMHDR*>(lParam);
         if (hdr->idFrom == IDC_LIST && hdr->code == LVN_ITEMCHANGED) {
             auto* item = reinterpret_cast<NMLISTVIEW*>(lParam);
-            if ((item->uNewState & LVIS_SELECTED) && item->iItem >= 0 && item->iItem < (int)g_records.size()) {
-                const auto& record = g_records[item->iItem];
+            int recordIndex = VisibleToRecordIndex(item->iItem);
+            if ((item->uNewState & LVIS_SELECTED) && recordIndex >= 0) {
+                const auto& record = g_records[recordIndex];
                 SetText(g_dateEdit, record.dateTime);
                 SetText(g_nameEdit, record.name);
                 SetText(g_otherEdit, record.other);
@@ -2677,8 +3474,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (GetDlgCtrlID(control) == IDC_TITLE) SetTextColor(hdc, COLOR_TEXT);
         else if (GetDlgCtrlID(control) == IDC_STATS) SetTextColor(hdc, COLOR_ACCENT);
         else SetTextColor(hdc, COLOR_MUTED);
-        SetBkColor(hdc, COLOR_BG);
-        return (LRESULT)g_bgBrush;
+        SetBkMode(hdc, TRANSPARENT);
+        return (LRESULT)GetStockObject(HOLLOW_BRUSH);
     }
     case WM_CTLCOLOREDIT:
     case WM_CTLCOLORLISTBOX: {
@@ -2688,9 +3485,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return (LRESULT)g_inputBrush;
     }
     case WM_ERASEBKGND: {
-        RECT rc{};
-        GetClientRect(hwnd, &rc);
-        FillRect((HDC)wParam, &rc, g_bgBrush);
+        PaintGradientBackground(hwnd, (HDC)wParam);
         return 1;
     }
     case WM_DESTROY:

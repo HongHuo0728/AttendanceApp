@@ -15,3 +15,5 @@ Older `ATTENDANCE_V1` files are still supported on import and are converted into
 ## Security Note
 
 The file uses XOR obfuscation plus Base64 encoding. This is useful for demonstrating a custom encoded project format, but it is not strong cryptographic protection.
+
+Do not use `.attd` encoding as a privacy or security mechanism for sensitive student data. If the attendance data must be protected, store and transfer the files using proper OS, disk, or file encryption outside AttendanceApp.

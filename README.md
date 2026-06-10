@@ -10,8 +10,10 @@ AttendanceApp is a standalone C++/Win32 desktop application for roll call and at
 - Multi-course/class management from the top course selector.
 - Rename, add, and delete courses/classes.
 - Import student rosters from CSV files.
+- Search/filter records by date, name, status, or notes.
 - Export attendance records to CSV.
 - Print or export to PDF through a generated printable HTML report.
+- Experimental PowerPoint `.pptx` export with a gradient theme, summary cards, status charts, and trend charts.
 - Autosave every 30 seconds to `%APPDATA%\AttendanceApp\autosave.attd`.
 - Restore autosave on startup when available.
 - Undo/redo with `Ctrl+Z` and `Ctrl+Y`.
@@ -19,7 +21,7 @@ AttendanceApp is a standalone C++/Win32 desktop application for roll call and at
 - Database mirror export to `%APPDATA%\AttendanceApp\attendance.attddb`.
 - Persistent settings saved to `%APPDATA%\AttendanceApp\settings.ini`.
 - Light/dark theme, interface font selection, and multilingual UI.
-- Supported languages: English, Simplified Chinese, Maltese, Japanese, French, German, Russian, Traditional Chinese Taiwan, Spanish.
+- Supported languages: English, Simplified Chinese, Maltese, Japanese, French, German, Russian, Traditional Chinese Taiwan, Spanish, Italian, Mongolian, Esperanto, Classical Chinese, Thai, Filipino, Turkish, Lithuanian.
 - Default window size: `1600x900`; resizable with `F11` fullscreen.
 
 ## Project Structure
@@ -43,7 +45,7 @@ Attendance Project/
 ## Requirements
 
 - Windows 10 or later
-- Visual Studio 2022 or Visual Studio Build Tools
+- Visual Studio 2022/2026 or Visual Studio Build Tools
 - C++ desktop workload / MSVC toolchain
 - Optional: CMake 3.20 or later
 
@@ -84,7 +86,8 @@ build\Release\AttendanceApp.exe
 4. Click one of the status buttons: `Present`, `Absent`, `Late`, or `Other`.
 5. Use `Save .attd` to save the attendance workbook.
 6. Use `Import .attd` to load a saved attendance workbook.
-7. Use `Tools` for roster import, print/PDF export, statistics chart, undo/redo, shortcuts, autosave, and database mirror export.
+7. Use the search box above the table to filter the current course by date, name, status, or notes.
+8. Use `Tools` for roster import, print/PDF export, experimental PowerPoint export, statistics chart, undo/redo, shortcuts, autosave, and database mirror export.
 
 ## Register `.attd` File Icon
 
@@ -105,6 +108,7 @@ examples\sample_roster.csv
 ```
 
 The roster importer uses the first non-empty cell in each row as the student name.
+Imported roster entries are added to the current course with `Absent` as the initial status, so they can be marked during roll call.
 
 ## File Format
 
@@ -116,7 +120,7 @@ ATTD1: + Base64(XOR encrypted custom attendance data)
 
 Current files use `ATTENDANCE_V3` internally for multi-course data and the last active course/class index. Older `ATTENDANCE_V1` and `ATTENDANCE_V2` files are still supported on import.
 
-This is lightweight protection for a custom project file format, not high-security cryptography.
+This is lightweight protection for a custom project file format, not high-security cryptography. Do not treat `.attd` encoding as privacy protection for sensitive student data.
 
 ## License
 

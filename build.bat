@@ -29,5 +29,5 @@ exit /b 1
 if not exist build mkdir build
 rc /nologo /fo build\app.res resources\app.rc
 if errorlevel 1 exit /b 1
-cl /nologo /std:c++17 /EHsc /utf-8 /DUNICODE /D_UNICODE /O2 /Fo:build\ /Fe:build\AttendanceApp.exe src\main.cpp build\app.res /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib comdlg32.lib comctl32.lib shell32.lib ole32.lib uxtheme.lib dwmapi.lib
+cl /nologo /std:c++17 /EHsc /utf-8 /DUNICODE /D_UNICODE /O2 /Fo:build\ /Fe:build\AttendanceApp.exe src\main.cpp build\app.res /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib comdlg32.lib comctl32.lib shell32.lib ole32.lib uxtheme.lib dwmapi.lib msimg32.lib
 exit /b %errorlevel%

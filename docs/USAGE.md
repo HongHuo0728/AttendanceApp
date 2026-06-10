@@ -19,11 +19,20 @@
 
 - `Import student roster (CSV)`: imports student names into the current course.
 - `Print / export PDF`: creates a printable HTML report and opens it in the browser.
+- `Export PowerPoint (.pptx) [Experimental]`: creates a gradient presentation with summary cards, status charts, and attendance trend charts. This exporter is still experimental.
 - `Statistics chart`: opens a graphical status chart.
 - `Undo` / `Redo`: restores recent changes.
 - `Keyboard shortcuts`: shows available shortcuts.
 - `Export database mirror`: writes a tab-separated database mirror to AppData.
 - `Open autosave`: opens the autosaved `.attd` file.
+
+## Search / Filter
+
+Use the search box above the table to filter the current course by date/time, name, status, or notes. `Clear Filter` restores the full table. Editing, double-clicking, and deleting still target the real record even when the table is filtered.
+
+## Roster Import Behavior
+
+Imported roster names are added to the current course with `Absent` as the initial status. This is intended for a roll-call workflow where each student starts unmarked/absent and is changed to `Present`, `Late`, or `Other` during attendance.
 
 ## Shortcuts
 

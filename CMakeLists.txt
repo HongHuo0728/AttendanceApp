@@ -16,4 +16,4 @@ if (MSVC)
     target_compile_options(AttendanceApp PRIVATE /utf-8)
 endif()
 
-target_link_libraries(AttendanceApp PRIVATE user32 gdi32 comdlg32 comctl32 shell32 ole32 uxtheme dwmapi)
+target_link_libraries(AttendanceApp PRIVATE user32 gdi32 comdlg32 comctl32 shell32 ole32 uxtheme dwmapi msimg32)
