@@ -59,7 +59,13 @@ Run from the project root:
 build.bat
 ```
 
-The executable is generated at:
+When CMake is available, the executable is generated at:
+
+```text
+build\Release\AttendanceApp.exe
+```
+
+If the helper script falls back to direct MSVC compilation, the executable is generated at:
 
 ```text
 build\AttendanceApp.exe

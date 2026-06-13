@@ -180,8 +180,6 @@ void PaintGradientBackground(HWND hwnd, HDC hdc);
 bool DrawButtonItem(const DRAWITEMSTRUCT* draw);
 bool DrawComboItem(const DRAWITEMSTRUCT* draw);
 void EnableHeaderPaint(HWND header);
-void EnableComboPaint(HWND combo);
-void ApplyComboDropDownTheme(HWND combo);
 std::string WideToUtf8(const std::wstring& input);
 std::wstring Utf8ToWide(const std::string& input);
 bool LoadAttendanceFile(const std::wstring& path, bool showSuccess);
@@ -1434,9 +1432,6 @@ void RecreateFonts() {
 
 BOOL CALLBACK ApplyThemeToChild(HWND child, LPARAM) {
     SetWindowTheme(child, g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
-    wchar_t className[32]{};
-    GetClassNameW(child, className, 32);
-    if (lstrcmpiW(className, L"ComboBox") == 0) ApplyComboDropDownTheme(child);
     InvalidateRect(child, nullptr, TRUE);
     return TRUE;
 }
@@ -2786,7 +2781,6 @@ HWND MakeControl(const wchar_t* cls, const wchar_t* text, DWORD style, int id) {
         SendMessageW(hwnd, CB_SETITEMHEIGHT, (WPARAM)-1, 30);
         SendMessageW(hwnd, CB_SETITEMHEIGHT, 0, 30);
         SendMessageW(hwnd, CB_SETMINVISIBLE, 12, 0);
-        EnableComboPaint(hwnd);
     }
     return hwnd;
 }
@@ -2808,7 +2802,6 @@ HWND MakeSettingsControl(HWND parent, const wchar_t* cls, const wchar_t* text, D
         SendMessageW(hwnd, CB_SETITEMHEIGHT, (WPARAM)-1, 30);
         SendMessageW(hwnd, CB_SETITEMHEIGHT, 0, 30);
         SendMessageW(hwnd, CB_SETMINVISIBLE, 12, 0);
-        EnableComboPaint(hwnd);
     }
     return hwnd;
 }
@@ -2925,10 +2918,6 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         ResizeSettingsLayout(hwnd);
         return 0;
     case WM_COMMAND:
-        if (HIWORD(wParam) == CBN_DROPDOWN) {
-            ApplyComboDropDownTheme((HWND)lParam);
-            return 0;
-        }
         if (LOWORD(wParam) == IDC_SETTINGS_APPLY) {
             ApplySettingsFromWindow(hwnd);
             return 0;
@@ -3371,118 +3360,6 @@ bool DrawComboItem(const DRAWITEMSTRUCT* draw) {
     return true;
 }
 
-void PaintComboClosed(HWND hwnd, HDC hdc) {
-    RECT rc{};
-    GetClientRect(hwnd, &rc);
-    bool enabled = IsWindowEnabled(hwnd) != FALSE;
-    bool focused = GetFocus() == hwnd;
-
-    COLORREF fill = enabled ? COLOR_INPUT : (g_theme == UiTheme::Dark ? RGB(36, 39, 47) : RGB(232, 236, 243));
-    COLORREF border = focused ? COLOR_ACCENT : (g_theme == UiTheme::Dark ? RGB(76, 82, 96) : RGB(197, 204, 218));
-    COLORREF arrowFill = g_theme == UiTheme::Dark ? RGB(38, 43, 54) : RGB(237, 244, 252);
-    COLORREF textColor = enabled ? COLOR_TEXT : COLOR_MUTED;
-
-    HBRUSH bg = CreateSolidBrush(fill);
-    FillRect(hdc, &rc, bg);
-    DeleteObject(bg);
-
-    RECT arrowRc = rc;
-    arrowRc.left = std::max(arrowRc.left, arrowRc.right - 34);
-    HBRUSH arrowBg = CreateSolidBrush(arrowFill);
-    FillRect(hdc, &arrowRc, arrowBg);
-    DeleteObject(arrowBg);
-
-    HPEN borderPen = CreatePen(PS_SOLID, 1, border);
-    HGDIOBJ oldPen = SelectObject(hdc, borderPen);
-    HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
-    Rectangle(hdc, rc.left, rc.top, rc.right, rc.bottom);
-    MoveToEx(hdc, arrowRc.left, arrowRc.top + 1, nullptr);
-    LineTo(hdc, arrowRc.left, arrowRc.bottom - 1);
-    SelectObject(hdc, oldBrush);
-    SelectObject(hdc, oldPen);
-    DeleteObject(borderPen);
-
-    int selected = (int)SendMessageW(hwnd, CB_GETCURSEL, 0, 0);
-    std::wstring text;
-    if (selected >= 0) {
-        int len = (int)SendMessageW(hwnd, CB_GETLBTEXTLEN, selected, 0);
-        if (len >= 0) {
-            text.resize(len + 1);
-            SendMessageW(hwnd, CB_GETLBTEXT, selected, (LPARAM)text.data());
-            text.resize(len);
-        }
-    } else {
-        text = GetText(hwnd);
-    }
-
-    RECT textRc = rc;
-    textRc.left += 10;
-    textRc.right = arrowRc.left - 8;
-    HGDIOBJ oldFont = SelectObject(hdc, g_font);
-    SetBkMode(hdc, TRANSPARENT);
-    SetTextColor(hdc, textColor);
-    DrawTextW(hdc, text.c_str(), -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-    SelectObject(hdc, oldFont);
-
-    int cx = arrowRc.left + (arrowRc.right - arrowRc.left) / 2;
-    int cy = arrowRc.top + (arrowRc.bottom - arrowRc.top) / 2 + 1;
-    POINT pts[3] = {{cx - 5, cy - 3}, {cx + 5, cy - 3}, {cx, cy + 4}};
-    HBRUSH arrowBrush = CreateSolidBrush(textColor);
-    HPEN arrowPen = CreatePen(PS_SOLID, 1, textColor);
-    oldBrush = SelectObject(hdc, arrowBrush);
-    oldPen = SelectObject(hdc, arrowPen);
-    Polygon(hdc, pts, 3);
-    SelectObject(hdc, oldPen);
-    SelectObject(hdc, oldBrush);
-    DeleteObject(arrowPen);
-    DeleteObject(arrowBrush);
-}
-
-LRESULT CALLBACK ComboPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
-    switch (msg) {
-    case WM_PAINT: {
-        PAINTSTRUCT ps{};
-        HDC hdc = BeginPaint(hwnd, &ps);
-        PaintComboClosed(hwnd, hdc);
-        EndPaint(hwnd, &ps);
-        return 0;
-    }
-    case WM_ERASEBKGND:
-        return 1;
-    case WM_SETFOCUS:
-    case WM_KILLFOCUS:
-    case WM_ENABLE:
-    case WM_THEMECHANGED: {
-        LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
-        InvalidateRect(hwnd, nullptr, TRUE);
-        return result;
-    }
-    }
-    return DefSubclassProc(hwnd, msg, wParam, lParam);
-}
-
-void ApplyComboDropDownTheme(HWND combo) {
-    if (!combo) return;
-    COMBOBOXINFO info{};
-    info.cbSize = sizeof(info);
-    if (!GetComboBoxInfo(combo, &info)) return;
-
-    const wchar_t* themeName = g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer";
-    SetWindowTheme(combo, themeName, nullptr);
-    if (info.hwndItem) SetWindowTheme(info.hwndItem, themeName, nullptr);
-    if (info.hwndList) {
-        SetWindowTheme(info.hwndList, themeName, nullptr);
-        InvalidateRect(info.hwndList, nullptr, TRUE);
-        RedrawWindow(info.hwndList, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME);
-    }
-}
-
-void EnableComboPaint(HWND combo) {
-    if (!combo) return;
-    SetWindowSubclass(combo, ComboPaintProc, 5, 0);
-    ApplyComboDropDownTheme(combo);
-}
-
 void PaintHeaderControl(HWND hwnd, HDC hdc) {
     RECT full{};
     GetClientRect(hwnd, &full);
@@ -3655,10 +3532,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         ScrollMainWindow(hwnd, SB_HORZ, 0, GET_WHEEL_DELTA_WPARAM(wParam));
         return 0;
     case WM_COMMAND: {
-        if (HIWORD(wParam) == CBN_DROPDOWN) {
-            ApplyComboDropDownTheme((HWND)lParam);
-            return 0;
-        }
         if (LOWORD(wParam) == IDC_COURSE_COMBO && HIWORD(wParam) == CBN_SELCHANGE) {
             int index = (int)SendMessageW(g_courseCombo, CB_GETCURSEL, 0, 0);
             SwitchCourse(index);
