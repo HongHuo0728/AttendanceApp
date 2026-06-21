@@ -179,6 +179,7 @@ void ApplyThemedControls(HWND root);
 void PaintGradientBackground(HWND hwnd, HDC hdc);
 bool DrawButtonItem(const DRAWITEMSTRUCT* draw);
 bool DrawComboItem(const DRAWITEMSTRUCT* draw);
+void PaintComboClosed(HWND hwnd, HDC hdc);
 void EnableHeaderPaint(HWND header);
 void EnableComboPaint(HWND combo);
 void ApplyComboDropDownTheme(HWND combo);
@@ -1230,6 +1231,7 @@ void RefreshCourseCombo() {
         SendMessageW(g_courseCombo, CB_ADDSTRING, 0, (LPARAM)sheet.name.c_str());
     }
     SendMessageW(g_courseCombo, CB_SETCURSEL, g_activeSheet, 0);
+    RedrawWindow(g_courseCombo, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
 }
 
 void SwitchCourse(int index) {
@@ -2839,17 +2841,20 @@ void FillSettingsCombos(HWND hwnd) {
         if (g_fontFamily == fonts[i]) selected = i;
     }
     SendMessageW(font, CB_SETCURSEL, selected, 0);
+    RedrawWindow(language, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+    RedrawWindow(theme, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+    RedrawWindow(font, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
 }
 
 void ApplySettingsLanguage(HWND hwnd) {
     std::wstring settingsTitle = Tr(L"Settings", L"\u8bbe\u7f6e");
     SetWindowTextW(hwnd, settingsTitle.c_str());
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), Tr(L"Interface Settings", L"界面设置"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_LANG_LABEL), Tr(L"Language", L"语言"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_THEME_LABEL), Tr(L"Style", L"风格"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_FONT_LABEL), Tr(L"Interface Font", L"界面字体"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_APPLY), Tr(L"Apply", L"应用"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_CLOSE), Tr(L"Close", L"关闭"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), Tr(L"Interface Settings", L"\u754c\u9762\u8bbe\u7f6e"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_LANG_LABEL), Tr(L"Language", L"\u8bed\u8a00"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_THEME_LABEL), Tr(L"Style", L"\u98ce\u683c"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_FONT_LABEL), Tr(L"Interface Font", L"\u754c\u9762\u5b57\u4f53"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_APPLY), Tr(L"Apply", L"\u5e94\u7528"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_CLOSE), Tr(L"Close", L"\u5173\u95ed"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_RESET), Tr(L"Reset All Settings", L"\u91cd\u7f6e\u6240\u6709\u8bbe\u7f6e"));
     FillSettingsCombos(hwnd);
 }
@@ -3329,27 +3334,20 @@ bool DrawComboItem(const DRAWITEMSTRUCT* draw) {
     if (!draw || draw->CtlType != ODT_COMBOBOX) return false;
 
     RECT rc = draw->rcItem;
+    bool comboEdit = (draw->itemState & ODS_COMBOBOXEDIT) != 0;
+    if (comboEdit) {
+        PaintComboClosed(draw->hwndItem, draw->hDC);
+        return true;
+    }
     bool selected = (draw->itemState & ODS_SELECTED) != 0;
-    bool focused = (draw->itemState & ODS_FOCUS) != 0;
     COLORREF fill = selected
         ? (g_theme == UiTheme::Dark ? RGB(50, 86, 132) : RGB(218, 237, 255))
         : COLOR_INPUT;
     COLORREF textColor = COLOR_TEXT;
-    COLORREF border = focused ? COLOR_ACCENT : (g_theme == UiTheme::Dark ? RGB(76, 82, 96) : RGB(197, 204, 218));
 
     HBRUSH brush = CreateSolidBrush(fill);
     FillRect(draw->hDC, &rc, brush);
     DeleteObject(brush);
-
-    if ((draw->itemState & ODS_COMBOBOXEDIT) != 0) {
-        HPEN pen = CreatePen(PS_SOLID, 1, border);
-        HGDIOBJ oldPen = SelectObject(draw->hDC, pen);
-        HGDIOBJ oldBrush = SelectObject(draw->hDC, GetStockObject(HOLLOW_BRUSH));
-        Rectangle(draw->hDC, rc.left, rc.top, rc.right, rc.bottom);
-        SelectObject(draw->hDC, oldBrush);
-        SelectObject(draw->hDC, oldPen);
-        DeleteObject(pen);
-    }
 
     std::wstring text;
     if (draw->itemID != (UINT)-1) {
@@ -3449,6 +3447,11 @@ LRESULT CALLBACK ComboPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     }
     case WM_ERASEBKGND:
         return 1;
+    case CB_SETCURSEL: {
+        LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
+        RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+        return result;
+    }
     case WM_SETFOCUS:
     case WM_KILLFOCUS:
     case WM_ENABLE:

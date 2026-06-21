@@ -13,7 +13,7 @@ AttendanceApp is a standalone C++/Win32 desktop application for roll call and at
 - Search/filter records by date, name, status, or notes.
 - Export attendance records to CSV.
 - Print or export to PDF through a generated printable HTML report.
-- Experimental PowerPoint `.pptx` export with a gradient theme, summary cards, status charts, and trend charts.
+- PowerPoint `.pptx` export with a gradient theme, summary cards, status charts, and trend charts.
 - Autosave every 30 seconds to `%APPDATA%\AttendanceApp\autosave.attd`.
 - Restore autosave on startup when available.
 - Undo/redo with `Ctrl+Z` and `Ctrl+Y`.
@@ -93,7 +93,7 @@ build\Release\AttendanceApp.exe
 5. Use `Save .attd` to save the attendance workbook.
 6. Use `Import .attd` to load a saved attendance workbook.
 7. Use the search box above the table to filter the current course by date, name, status, or notes.
-8. Use `Tools` for roster import, print/PDF export, experimental PowerPoint export, statistics chart, undo/redo, shortcuts, autosave, and database mirror export.
+8. Use `Tools` for roster import, print/PDF export, PowerPoint export, statistics chart, undo/redo, shortcuts, autosave, and database mirror export.
 
 ## Register `.attd` File Icon
 

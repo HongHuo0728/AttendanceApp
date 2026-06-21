@@ -19,7 +19,7 @@
 
 - `Import student roster (CSV)`: imports student names into the current course.
 - `Print / export PDF`: creates a printable HTML report and opens it in the browser.
-- `Export PowerPoint (.pptx) [Experimental]`: creates a gradient presentation with summary cards, status charts, and attendance trend charts. This exporter is still experimental.
+- `Export PowerPoint (.pptx)`: creates a gradient presentation with summary cards, status charts, and attendance trend charts.
 - `Statistics chart`: opens a graphical status chart.
 - `Undo` / `Redo`: restores recent changes.
 - `Keyboard shortcuts`: shows available shortcuts.
