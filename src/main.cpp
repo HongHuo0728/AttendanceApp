@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include <windows.h>
+#include <windowsx.h>
 #include <commctrl.h>
 #include <dwmapi.h>
 #include <shellapi.h>
@@ -12,6 +13,7 @@
 #include <cwctype>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <sstream>
 #include <string>
@@ -192,6 +194,21 @@ std::wstring Tr(const wchar_t* english, const wchar_t* chinese);
 void EnableEditShortcuts(HWND hwnd);
 void EnableMouseWheelForward(HWND hwnd);
 
+struct ThemedMenuItem {
+    int command = 0;
+    std::wstring text;
+    bool separator = false;
+};
+
+struct ThemedMenuState {
+    std::vector<ThemedMenuItem> items;
+    int hover = -1;
+    int selected = 0;
+    bool done = false;
+};
+
+int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem>& items);
+
 void MarkDirty() {
     g_dirty = true;
     g_allowAutosaveOverwrite = true;
@@ -255,6 +272,10 @@ int RecordToVisibleIndex(int recordIndex) {
 }
 
 LRESULT CALLBACK EditShortcutProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
+    if (msg == WM_NCDESTROY) {
+        RemoveWindowSubclass(hwnd, EditShortcutProc, 1);
+        return DefSubclassProc(hwnd, msg, wParam, lParam);
+    }
     if (msg == WM_KEYDOWN && wParam == 'A' && (GetKeyState(VK_CONTROL) & 0x8000)) {
         SendMessageW(hwnd, EM_SETSEL, 0, -1);
         return 0;
@@ -270,6 +291,10 @@ void EnableEditShortcuts(HWND hwnd) {
 }
 
 LRESULT CALLBACK WheelForwardProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
+    if (msg == WM_NCDESTROY) {
+        RemoveWindowSubclass(hwnd, WheelForwardProc, 2);
+        return DefSubclassProc(hwnd, msg, wParam, lParam);
+    }
     if (msg == WM_MOUSEWHEEL && g_hwnd) {
         ScrollMainWindow(g_hwnd, SB_VERT, 0, GET_WHEEL_DELTA_WPARAM(wParam));
         return 0;
@@ -304,8 +329,9 @@ LRESULT CALLBACK InputDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         MakeSettingsControl(hwnd, L"EDIT", state->value.c_str(), WS_TABSTOP | ES_AUTOHSCROLL | WS_BORDER, IDC_INPUT_EDIT);
         std::wstring okText = Tr(L"OK", L"\u786e\u5b9a");
         std::wstring cancelText = Tr(L"Cancel", L"\u53d6\u6d88");
-        MakeSettingsControl(hwnd, L"BUTTON", okText.c_str(), BS_PUSHBUTTON | WS_TABSTOP, IDC_INPUT_OK);
-        MakeSettingsControl(hwnd, L"BUTTON", cancelText.c_str(), BS_PUSHBUTTON | WS_TABSTOP, IDC_INPUT_CANCEL);
+        MakeSettingsControl(hwnd, L"BUTTON", okText.c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_INPUT_OK);
+        MakeSettingsControl(hwnd, L"BUTTON", cancelText.c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_INPUT_CANCEL);
+        ApplyThemedControls(hwnd);
         SendMessageW(GetDlgItem(hwnd, IDC_INPUT_EDIT), EM_SETSEL, 0, -1);
         SetFocus(GetDlgItem(hwnd, IDC_INPUT_EDIT));
         return 0;
@@ -348,6 +374,23 @@ LRESULT CALLBACK InputDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         GetClientRect(hwnd, &rc);
         FillRect((HDC)wParam, &rc, g_bgBrush);
         return 1;
+    }
+    case WM_DRAWITEM: {
+        auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
+        if (DrawButtonItem(draw)) return TRUE;
+        break;
+    }
+    case WM_CTLCOLORSTATIC: {
+        HDC hdc = (HDC)wParam;
+        SetTextColor(hdc, COLOR_TEXT);
+        SetBkMode(hdc, TRANSPARENT);
+        return (LRESULT)GetStockObject(HOLLOW_BRUSH);
+    }
+    case WM_CTLCOLOREDIT: {
+        HDC hdc = (HDC)wParam;
+        SetTextColor(hdc, COLOR_TEXT);
+        SetBkColor(hdc, COLOR_INPUT);
+        return (LRESULT)g_inputBrush;
     }
     case WM_CLOSE:
         DestroyWindow(hwnd);
@@ -1289,18 +1332,284 @@ void DeleteCurrentCourse() {
     RefreshList();
 }
 
+int ThemedMenuItemTop(const ThemedMenuState* state, int index) {
+    int y = 8;
+    for (int i = 0; i < index; ++i) {
+        y += state->items[i].separator ? 13 : 34;
+    }
+    return y;
+}
+
+int ThemedMenuTotalHeight(const ThemedMenuState* state) {
+    int height = 16;
+    for (const auto& item : state->items) {
+        height += item.separator ? 13 : 34;
+    }
+    return height;
+}
+
+int ThemedMenuHitTest(ThemedMenuState* state, int y) {
+    for (int i = 0; i < (int)state->items.size(); ++i) {
+        int top = ThemedMenuItemTop(state, i);
+        int height = state->items[i].separator ? 13 : 34;
+        if (y >= top && y < top + height) {
+            return state->items[i].separator ? -1 : i;
+        }
+    }
+    return -1;
+}
+
+RECT ThemedMenuItemRect(HWND hwnd, const ThemedMenuState* state, int index) {
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    if (!state || index < 0 || index >= (int)state->items.size() || state->items[index].separator) {
+        return rc;
+    }
+    int top = ThemedMenuItemTop(state, index);
+    return RECT{6, top, rc.right - 6, top + 34};
+}
+
+void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState* state) {
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    COLORREF fill = g_theme == UiTheme::Dark ? RGB(31, 35, 44) : RGB(248, 252, 248);
+    COLORREF border = g_theme == UiTheme::Dark ? RGB(78, 87, 106) : RGB(180, 205, 186);
+    COLORREF hover = g_theme == UiTheme::Dark ? RGB(48, 82, 126) : RGB(224, 246, 232);
+    COLORREF separator = g_theme == UiTheme::Dark ? RGB(72, 78, 94) : RGB(209, 222, 212);
+
+    HBRUSH bg = CreateSolidBrush(fill);
+    FillRect(hdc, &rc, bg);
+    DeleteObject(bg);
+
+    HGDIOBJ oldFont = SelectObject(hdc, g_font);
+    SetBkMode(hdc, TRANSPARENT);
+
+    for (int i = 0; i < (int)state->items.size(); ++i) {
+        int top = ThemedMenuItemTop(state, i);
+        if (state->items[i].separator) {
+            HPEN sepPen = CreatePen(PS_SOLID, 1, separator);
+            HGDIOBJ oldPen = SelectObject(hdc, sepPen);
+            MoveToEx(hdc, 12, top + 6, nullptr);
+            LineTo(hdc, rc.right - 12, top + 6);
+            SelectObject(hdc, oldPen);
+            DeleteObject(sepPen);
+            continue;
+        }
+
+        RECT itemRc{6, top, rc.right - 6, top + 34};
+        if (i == state->hover) {
+            HBRUSH hoverBrush = CreateSolidBrush(hover);
+            FillRect(hdc, &itemRc, hoverBrush);
+            DeleteObject(hoverBrush);
+        }
+
+        RECT textRc = itemRc;
+        textRc.left += 16;
+        textRc.right -= 16;
+        SetTextColor(hdc, COLOR_TEXT);
+        DrawTextW(hdc, state->items[i].text.c_str(), -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
+
+    SelectObject(hdc, oldFont);
+
+    HPEN borderPen = CreatePen(PS_SOLID, 1, border);
+    HGDIOBJ oldPen = SelectObject(hdc, borderPen);
+    HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
+    Rectangle(hdc, rc.left, rc.top, rc.right, rc.bottom);
+    SelectObject(hdc, oldBrush);
+    SelectObject(hdc, oldPen);
+    DeleteObject(borderPen);
+}
+
+void PaintThemedPopupMenu(HWND hwnd, HDC hdc, ThemedMenuState* state) {
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    int width = std::max(1, (int)(rc.right - rc.left));
+    int height = std::max(1, (int)(rc.bottom - rc.top));
+
+    HDC memDc = CreateCompatibleDC(hdc);
+    HBITMAP bitmap = CreateCompatibleBitmap(hdc, width, height);
+    HGDIOBJ oldBitmap = SelectObject(memDc, bitmap);
+    PaintThemedPopupMenuContent(hwnd, memDc, state);
+    BitBlt(hdc, 0, 0, width, height, memDc, 0, 0, SRCCOPY);
+    SelectObject(memDc, oldBitmap);
+    DeleteObject(bitmap);
+    DeleteDC(memDc);
+}
+
+LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    auto* state = reinterpret_cast<ThemedMenuState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    switch (msg) {
+    case WM_NCCREATE: {
+        auto* create = reinterpret_cast<CREATESTRUCTW*>(lParam);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(create->lpCreateParams));
+        return TRUE;
+    }
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(hwnd, &ps);
+        if (state) PaintThemedPopupMenu(hwnd, hdc, state);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_MOUSEMOVE:
+        if (state) {
+            int next = ThemedMenuHitTest(state, GET_Y_LPARAM(lParam));
+            if (next != state->hover) {
+                RECT oldRc = ThemedMenuItemRect(hwnd, state, state->hover);
+                state->hover = next;
+                RECT newRc = ThemedMenuItemRect(hwnd, state, state->hover);
+                InvalidateRect(hwnd, &oldRc, FALSE);
+                InvalidateRect(hwnd, &newRc, FALSE);
+            }
+        }
+        return 0;
+    case WM_LBUTTONDOWN:
+        if (state) {
+            POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            RECT rc{};
+            GetClientRect(hwnd, &rc);
+            if (!PtInRect(&rc, pt)) {
+                state->selected = 0;
+                state->done = true;
+                DestroyWindow(hwnd);
+                return 0;
+            }
+        }
+        return 0;
+    case WM_LBUTTONUP:
+        if (state) {
+            int hit = ThemedMenuHitTest(state, GET_Y_LPARAM(lParam));
+            state->selected = hit >= 0 ? state->items[hit].command : 0;
+            state->done = true;
+            DestroyWindow(hwnd);
+        }
+        return 0;
+    case WM_KEYDOWN:
+        if (wParam == VK_ESCAPE && state) {
+            state->selected = 0;
+            state->done = true;
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        break;
+    case WM_ACTIVATE:
+        if (LOWORD(wParam) == WA_INACTIVE && state && !state->done) {
+            state->selected = 0;
+            state->done = true;
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        break;
+    case WM_CAPTURECHANGED:
+        if (state && !state->done && (HWND)lParam != hwnd) {
+            state->selected = 0;
+            state->done = true;
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        break;
+    case WM_DESTROY:
+        ReleaseCapture();
+        if (state) state->done = true;
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+void RegisterThemedMenuClass() {
+    static bool registered = false;
+    if (registered) return;
+
+    WNDCLASSW wc{};
+    wc.lpfnWndProc = ThemedMenuProc;
+    wc.hInstance = GetModuleHandleW(nullptr);
+    wc.lpszClassName = L"AttendanceThemedPopupMenu";
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hbrBackground = nullptr;
+    RegisterClassW(&wc);
+    registered = true;
+}
+
+int MeasureThemedMenuWidth(const std::vector<ThemedMenuItem>& items) {
+    HDC hdc = GetDC(g_hwnd);
+    HGDIOBJ oldFont = SelectObject(hdc, g_font);
+    int width = 180;
+    for (const auto& item : items) {
+        if (item.separator) continue;
+        SIZE size{};
+        GetTextExtentPoint32W(hdc, item.text.c_str(), (int)item.text.size(), &size);
+        width = std::max(width, (int)size.cx + 42);
+    }
+    SelectObject(hdc, oldFont);
+    ReleaseDC(g_hwnd, hdc);
+    return std::min(width, 360);
+}
+
+int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem>& items) {
+    if (!button || items.empty()) return 0;
+    RegisterThemedMenuClass();
+
+    ThemedMenuState state;
+    state.items = items;
+
+    RECT buttonRc{};
+    GetWindowRect(button, &buttonRc);
+    int width = MeasureThemedMenuWidth(items);
+    int height = ThemedMenuTotalHeight(&state);
+    int x = buttonRc.right - width;
+    int y = buttonRc.bottom + 4;
+
+    HMONITOR monitor = MonitorFromRect(&buttonRc, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    if (GetMonitorInfoW(monitor, &mi)) {
+        int minX = (int)mi.rcWork.left + 4;
+        int maxX = std::max(minX, (int)mi.rcWork.right - width - 4);
+        int minY = (int)mi.rcWork.top + 4;
+        int maxY = std::max(minY, (int)mi.rcWork.bottom - height - 4);
+        x = std::clamp(x, minX, maxX);
+        if (y + height > (int)mi.rcWork.bottom) y = (int)buttonRc.top - height - 4;
+        y = std::clamp(y, minY, maxY);
+    }
+
+    HWND popup = CreateWindowExW(
+        WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        L"AttendanceThemedPopupMenu", L"",
+        WS_POPUP,
+        x, y, width, height,
+        g_hwnd, nullptr, GetModuleHandleW(nullptr), &state
+    );
+    if (!popup) return 0;
+
+    BOOL dark = g_theme == UiTheme::Dark;
+    DwmSetWindowAttribute(popup, 20, &dark, sizeof(dark));
+    ShowWindow(popup, SW_SHOW);
+    SetWindowPos(popup, HWND_TOPMOST, x, y, width, height, SWP_SHOWWINDOW);
+    SetForegroundWindow(popup);
+    SetFocus(popup);
+    SetCapture(popup);
+
+    MSG msg{};
+    while (!state.done && IsWindow(popup) && GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+    if (IsWindow(popup)) DestroyWindow(popup);
+    return state.selected;
+}
+
 void ShowCourseMenu(HWND button) {
-    HMENU menu = CreatePopupMenu();
     std::wstring addCourseText = Tr(L"Add course/class", L"\u65b0\u589e\u8bfe\u7a0b/\u73ed\u7ea7");
     std::wstring renameCourseText = Tr(L"Rename current course/class", L"\u91cd\u547d\u540d\u5f53\u524d\u8bfe\u7a0b/\u73ed\u7ea7");
     std::wstring deleteCourseText = Tr(L"Delete current course/class", L"\u5220\u9664\u5f53\u524d\u8bfe\u7a0b/\u73ed\u7ea7");
-    AppendMenuW(menu, MF_STRING, IDM_COURSE_ADD, addCourseText.c_str());
-    AppendMenuW(menu, MF_STRING, IDM_COURSE_RENAME, renameCourseText.c_str());
-    AppendMenuW(menu, MF_STRING, IDM_COURSE_DELETE, deleteCourseText.c_str());
-    RECT rc{};
-    GetWindowRect(button, &rc);
-    int command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTALIGN | TPM_TOPALIGN, rc.right, rc.bottom + 4, 0, g_hwnd, nullptr);
-    DestroyMenu(menu);
+    int command = ShowThemedPopupMenu(button, {
+        {IDM_COURSE_ADD, addCourseText, false},
+        {IDM_COURSE_RENAME, renameCourseText, false},
+        {IDM_COURSE_DELETE, deleteCourseText, false}
+    });
     if (command == IDM_COURSE_ADD) AddCourse();
     else if (command == IDM_COURSE_RENAME) RenameCurrentCourse();
     else if (command == IDM_COURSE_DELETE) DeleteCurrentCourse();
@@ -1684,21 +1993,17 @@ void ClearAllRecords() {
 }
 
 void ShowDeleteMenu(HWND button) {
-    HMENU menu = CreatePopupMenu();
     std::wstring selected = Tr(L"Delete selected records", L"\u5220\u9664\u9009\u4e2d\u8bb0\u5f55");
     std::wstring absent = Tr(L"Delete all Absent records", L"\u5220\u9664\u6240\u6709\u7f3a\u5e2d\u8bb0\u5f55");
     std::wstring late = Tr(L"Delete all Late records", L"\u5220\u9664\u6240\u6709\u8fdf\u5230\u8bb0\u5f55");
     std::wstring clear = Tr(L"Clear all records", L"\u6e05\u7a7a\u6240\u6709\u8bb0\u5f55");
-    AppendMenuW(menu, MF_STRING, IDM_DELETE_SELECTED, selected.c_str());
-    AppendMenuW(menu, MF_STRING, IDM_DELETE_ABSENT, absent.c_str());
-    AppendMenuW(menu, MF_STRING, IDM_DELETE_LATE, late.c_str());
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, IDM_CLEAR_ALL, clear.c_str());
-
-    RECT rc{};
-    GetWindowRect(button, &rc);
-    int command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTALIGN | TPM_TOPALIGN, rc.right, rc.bottom + 4, 0, g_hwnd, nullptr);
-    DestroyMenu(menu);
+    int command = ShowThemedPopupMenu(button, {
+        {IDM_DELETE_SELECTED, selected, false},
+        {IDM_DELETE_ABSENT, absent, false},
+        {IDM_DELETE_LATE, late, false},
+        {0, L"", true},
+        {IDM_CLEAR_ALL, clear, false}
+    });
 
     switch (command) {
     case IDM_DELETE_SELECTED: DeleteSelectedRecords(); break;
@@ -2687,7 +2992,6 @@ void ShowStatsChart() {
 }
 
 void ShowToolsMenu(HWND button) {
-    HMENU menu = CreatePopupMenu();
     std::wstring roster = Tr(L"Import student roster (CSV)", L"\u5bfc\u5165\u5b66\u751f\u540d\u5355 (CSV)");
     std::wstring print = Tr(L"Print / export PDF", L"\u6253\u5370 / \u5bfc\u51fa PDF");
     std::wstring pptx = Tr(L"Export PowerPoint (.pptx)", L"\u5bfc\u51fa PowerPoint (.pptx)");
@@ -2697,21 +3001,19 @@ void ShowToolsMenu(HWND button) {
     std::wstring shortcuts = Tr(L"Keyboard shortcuts", L"\u5feb\u6377\u952e");
     std::wstring db = Tr(L"Export database mirror", L"\u5bfc\u51fa\u6570\u636e\u5e93\u955c\u50cf");
     std::wstring autosave = Tr(L"Open autosave", L"\u6253\u5f00\u81ea\u52a8\u4fdd\u5b58");
-    AppendMenuW(menu, MF_STRING, IDM_IMPORT_ROSTER, roster.c_str());
-    AppendMenuW(menu, MF_STRING, IDM_PRINT_HTML, print.c_str());
-    AppendMenuW(menu, MF_STRING, IDM_EXPORT_PPTX, pptx.c_str());
-    AppendMenuW(menu, MF_STRING, IDM_STATS_CHART, chart.c_str());
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, IDM_UNDO, undo.c_str());
-    AppendMenuW(menu, MF_STRING, IDM_REDO, redo.c_str());
-    AppendMenuW(menu, MF_STRING, IDM_SHORTCUTS, shortcuts.c_str());
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, IDM_EXPORT_DB, db.c_str());
-    AppendMenuW(menu, MF_STRING, IDM_OPEN_AUTOSAVE, autosave.c_str());
-    RECT rc{};
-    GetWindowRect(button, &rc);
-    int command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTALIGN | TPM_TOPALIGN, rc.right, rc.bottom + 4, 0, g_hwnd, nullptr);
-    DestroyMenu(menu);
+    int command = ShowThemedPopupMenu(button, {
+        {IDM_IMPORT_ROSTER, roster, false},
+        {IDM_PRINT_HTML, print, false},
+        {IDM_EXPORT_PPTX, pptx, false},
+        {IDM_STATS_CHART, chart, false},
+        {0, L"", true},
+        {IDM_UNDO, undo, false},
+        {IDM_REDO, redo, false},
+        {IDM_SHORTCUTS, shortcuts, false},
+        {0, L"", true},
+        {IDM_EXPORT_DB, db, false},
+        {IDM_OPEN_AUTOSAVE, autosave, false}
+    });
     switch (command) {
     case IDM_IMPORT_ROSTER: ImportRosterCsv(); break;
     case IDM_PRINT_HTML: ExportPrintHtml(); break;
@@ -3438,6 +3740,9 @@ void PaintComboClosed(HWND hwnd, HDC hdc) {
 
 LRESULT CALLBACK ComboPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
     switch (msg) {
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(hwnd, ComboPaintProc, 5);
+        return DefSubclassProc(hwnd, msg, wParam, lParam);
     case WM_PAINT: {
         PAINTSTRUCT ps{};
         HDC hdc = BeginPaint(hwnd, &ps);
@@ -3529,6 +3834,9 @@ void PaintHeaderControl(HWND hwnd, HDC hdc) {
 
 LRESULT CALLBACK HeaderPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
     switch (msg) {
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(hwnd, HeaderPaintProc, 3);
+        return DefSubclassProc(hwnd, msg, wParam, lParam);
     case WM_PAINT: {
         PAINTSTRUCT ps{};
         HDC hdc = BeginPaint(hwnd, &ps);
@@ -3548,6 +3856,9 @@ void EnableHeaderPaint(HWND header) {
 
 LRESULT CALLBACK StatsPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
     switch (msg) {
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(hwnd, StatsPaintProc, 4);
+        return DefSubclassProc(hwnd, msg, wParam, lParam);
     case WM_PAINT: {
         PAINTSTRUCT ps{};
         HDC hdc = BeginPaint(hwnd, &ps);
