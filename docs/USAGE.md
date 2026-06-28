@@ -14,15 +14,24 @@
 - Use `Courses` -> `Add course/class` to create a course.
 - Use `Courses` -> `Rename current course/class` to rename it.
 - Use `Courses` -> `Delete current course/class` to delete it.
+- Use `Tools` -> `Course details` to set teacher/owner, location, and notes.
 
 ## Tools
 
 - `Import student roster (CSV)`: imports student names into the current course.
+- `Add student to roster`: adds one student name to the current course roster.
+- `Remove student from roster`: removes one student name from the current course roster.
+- `Create records from roster`: creates Absent attendance records for roster students at the current date/time.
 - `Print / export PDF`: creates a printable HTML report and opens it in the browser.
 - `Export PowerPoint (.pptx)`: creates a gradient presentation with summary cards, status charts, and attendance trend charts.
 - `Statistics chart`: opens a graphical status chart.
+- `Statistics summary`: shows course and student attendance summary information.
 - `Undo` / `Redo`: restores recent changes.
 - `Keyboard shortcuts`: shows available shortcuts.
+- `Backup now`: writes the latest backup to AppData.
+- `Restore latest backup`: restores the latest AppData backup.
+- `Open recent file`: opens the last saved or imported `.attd` file.
+- `Set default save folder`: chooses the initial folder for save/export dialogs.
 - `Export database mirror`: writes a tab-separated database mirror to AppData.
 - `Open autosave`: opens the autosaved `.attd` file.
 

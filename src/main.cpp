@@ -35,6 +35,10 @@ struct AttendanceRecord {
 
 struct AttendanceSheet {
     std::wstring name;
+    std::wstring teacher;
+    std::wstring location;
+    std::wstring notes;
+    std::vector<std::wstring> students;
     std::vector<AttendanceRecord> records;
 };
 
@@ -82,6 +86,15 @@ static constexpr int IDM_SHORTCUTS = 3025;
 static constexpr int IDM_EXPORT_DB = 3026;
 static constexpr int IDM_OPEN_AUTOSAVE = 3027;
 static constexpr int IDM_EXPORT_PPTX = 3028;
+static constexpr int IDM_STUDENTS_ADD = 3029;
+static constexpr int IDM_STUDENTS_REMOVE = 3030;
+static constexpr int IDM_STUDENTS_GENERATE = 3031;
+static constexpr int IDM_COURSE_DETAILS = 3032;
+static constexpr int IDM_STATS_SUMMARY = 3033;
+static constexpr int IDM_BACKUP_NOW = 3034;
+static constexpr int IDM_RESTORE_BACKUP = 3035;
+static constexpr int IDM_OPEN_RECENT = 3036;
+static constexpr int IDM_SET_SAVE_DIR = 3037;
 
 static constexpr int IDC_SETTINGS_LANGUAGE = 4001;
 static constexpr int IDC_SETTINGS_THEME = 4002;
@@ -157,13 +170,17 @@ enum class UiLanguage {
     Thai,
     Filipino,
     Turkish,
-    Lithuanian
+    Lithuanian,
+    Norwegian,
+    Vietnamese,
+    ChineseTraditionalHongKong
 };
 enum class UiTheme { Dark, Light };
 
 static UiLanguage g_language = UiLanguage::English;
 static UiTheme g_theme = UiTheme::Dark;
 static std::wstring g_fontFamily = L"Segoe UI";
+static std::wstring g_defaultSaveDir;
 
 static COLORREF COLOR_BG = RGB(24, 26, 32);
 static COLORREF COLOR_PANEL = RGB(34, 37, 45);
@@ -193,6 +210,7 @@ HWND MakeSettingsControl(HWND parent, const wchar_t* cls, const wchar_t* text, D
 std::wstring Tr(const wchar_t* english, const wchar_t* chinese);
 void EnableEditShortcuts(HWND hwnd);
 void EnableMouseWheelForward(HWND hwnd);
+void CountStatuses(int& present, int& absent, int& late, int& other);
 
 struct ThemedMenuItem {
     int command = 0;
@@ -458,11 +476,96 @@ const wchar_t* LanguageName(UiLanguage language) {
     case UiLanguage::Filipino: return L"Filipino";
     case UiLanguage::Turkish: return L"T\u00fcrk\u00e7e";
     case UiLanguage::Lithuanian: return L"Lietuvi\u0173";
+    case UiLanguage::Norwegian: return L"Norsk";
+    case UiLanguage::Vietnamese: return L"Ti\u1ebfng Vi\u1ec7t";
+    case UiLanguage::ChineseTraditionalHongKong: return L"\u7e41\u9ad4\u4e2d\u6587\uff08\u9999\u6e2f\u7cb5\u8a9e\uff09";
     default: return L"English";
     }
 }
 
 bool TranslateAdditionalLanguage(const std::wstring& key, std::wstring& out) {
+    if (g_language == UiLanguage::Norwegian || g_language == UiLanguage::Vietnamese || g_language == UiLanguage::ChineseTraditionalHongKong) {
+        struct V12Entry {
+            const wchar_t* key;
+            const wchar_t* no;
+            const wchar_t* vi;
+            const wchar_t* zhhk;
+        };
+        static const V12Entry entries[] = {
+            {L"AttendanceApp - .attd Roll Call Manager", L"AttendanceApp - .attd oppropsbehandler", L"AttendanceApp - Tr\u00ecnh qu\u1ea3n l\u00fd \u0111i\u1ec3m danh .attd", L"AttendanceApp - .attd \u9ede\u540d\u7ba1\u7406"},
+            {L"Attendance Manager", L"Frav\u00e6rsbehandler", L"Qu\u1ea3n l\u00fd \u0111i\u1ec3m danh", L"\u9ede\u540d\u7ba1\u7406"},
+            {L"Create, edit, export, save, import, and batch clean .attd roll calls.", L"Opprett, rediger, eksporter, lagre, importer og rydd .attd-opprop.", L"T\u1ea1o, s\u1eeda, xu\u1ea5t, l\u01b0u, nh\u1eadp v\u00e0 d\u1ecdn d\u1eb9p \u0111i\u1ec3m danh .attd.", L"\u5efa\u7acb\u3001\u7de8\u8f2f\u3001\u532f\u51fa\u3001\u5132\u5b58\u3001\u532f\u5165\u540c\u6279\u91cf\u6e05\u7406 .attd \u9ede\u540d\u8a18\u9304\u3002"},
+            {L"Date/Time", L"Dato/tid", L"Ng\u00e0y/gi\u1edd", L"\u65e5\u671f/\u6642\u9593"},
+            {L"Date / Time", L"Dato / tid", L"Ng\u00e0y / gi\u1edd", L"\u65e5\u671f / \u6642\u9593"},
+            {L"Name", L"Navn", L"T\u00ean", L"\u59d3\u540d"},
+            {L"Status", L"Status", L"Tr\u1ea1ng th\u00e1i", L"\u72c0\u614b"},
+            {L"Other", L"Annet", L"Kh\u00e1c", L"\u5176\u4ed6"},
+            {L"Present", L"Tilstede", L"C\u00f3 m\u1eb7t", L"\u51fa\u5e2d"},
+            {L"Absent", L"Frav\u00e6rende", L"V\u1eafng", L"\u7f3a\u5e2d"},
+            {L"Late", L"Sen", L"\u0110i tr\u1ec5", L"\u9072\u5230"},
+            {L"Search", L"S\u00f8k", L"T\u00ecm ki\u1ebfm", L"\u641c\u5c0b"},
+            {L"Clear Filter", L"T\u00f8m filter", L"X\u00f3a b\u1ed9 l\u1ecdc", L"\u6e05\u9664\u7be9\u9078"},
+            {L"Total", L"Totalt", L"T\u1ed5ng", L"\u7e3d\u6578"},
+            {L"Attendance", L"Oppm\u00f8te", L"Chuy\u00ean c\u1ea7n", L"\u51fa\u52e4"},
+            {L"Absent/Late", L"Frav\u00e6r/sen", L"V\u1eafng/tr\u1ec5", L"\u7f3a\u5e2d/\u9072\u5230"},
+            {L"Save .attd", L"Lagre .attd", L"L\u01b0u .attd", L"\u5132\u5b58 .attd"},
+            {L"Import .attd", L"Importer .attd", L"Nh\u1eadp .attd", L"\u532f\u5165 .attd"},
+            {L"Export CSV", L"Eksporter CSV", L"Xu\u1ea5t CSV", L"\u532f\u51fa CSV"},
+            {L"Tools", L"Verkt\u00f8y", L"C\u00f4ng c\u1ee5", L"\u5de5\u5177"},
+            {L"Courses", L"Kurs", L"Kh\u00f3a/l\u1edbp", L"\u8ab2\u7a0b"},
+            {L"Settings", L"Innstillinger", L"C\u00e0i \u0111\u1eb7t", L"\u8a2d\u5b9a"},
+            {L"Language", L"Spr\u00e5k", L"Ng\u00f4n ng\u1eef", L"\u8a9e\u8a00"},
+            {L"Style", L"Stil", L"Giao di\u1ec7n", L"\u98a8\u683c"},
+            {L"Interface Font", L"Grensesnittskrift", L"Ph\u00f4ng giao di\u1ec7n", L"\u4ecb\u9762\u5b57\u578b"},
+            {L"Dark", L"M\u00f8rk", L"T\u1ed1i", L"\u6df1\u8272"},
+            {L"Light", L"Lys", L"S\u00e1ng", L"\u6dfa\u8272"},
+            {L"Apply", L"Bruk", L"\u00c1p d\u1ee5ng", L"\u5957\u7528"},
+            {L"Close", L"Lukk", L"\u0110\u00f3ng", L"\u95dc\u9589"},
+            {L"OK", L"OK", L"OK", L"\u78ba\u5b9a"},
+            {L"Cancel", L"Avbryt", L"H\u1ee7y", L"\u53d6\u6d88"},
+            {L"Import student roster (CSV)", L"Importer elevliste (CSV)", L"Nh\u1eadp danh s\u00e1ch h\u1ecdc sinh (CSV)", L"\u532f\u5165\u5b78\u751f\u540d\u55ae (CSV)"},
+            {L"Manage students", L"Administrer elever", L"Qu\u1ea3n l\u00fd h\u1ecdc sinh", L"\u7ba1\u7406\u5b78\u751f"},
+            {L"Add student to roster", L"Legg elev til liste", L"Th\u00eam h\u1ecdc sinh v\u00e0o danh s\u00e1ch", L"\u52a0\u5b78\u751f\u5165\u540d\u55ae"},
+            {L"Remove student from roster", L"Fjern elev fra liste", L"X\u00f3a h\u1ecdc sinh kh\u1ecfi danh s\u00e1ch", L"\u5f9e\u540d\u55ae\u79fb\u9664\u5b78\u751f"},
+            {L"Create records from roster", L"Opprett poster fra liste", L"T\u1ea1o b\u1ea3n ghi t\u1eeb danh s\u00e1ch", L"\u7528\u540d\u55ae\u5efa\u7acb\u9ede\u540d\u8a18\u9304"},
+            {L"Course details", L"Kursdetaljer", L"Chi ti\u1ebft kh\u00f3a/l\u1edbp", L"\u8ab2\u7a0b\u8cc7\u6599"},
+            {L"Teacher/owner:", L"L\u00e6rer/ansvarlig:", L"Gi\u00e1o vi\u00ean/ph\u1ee5 tr\u00e1ch:", L"\u8001\u5e2b/\u8ca0\u8cac\u4eba\uff1a"},
+            {L"Location:", L"Sted:", L"\u0110\u1ecba \u0111i\u1ec3m:", L"\u5730\u9ede\uff1a"},
+            {L"Course notes:", L"Kursnotater:", L"Ghi ch\u00fa kh\u00f3a/l\u1edbp:", L"\u8ab2\u7a0b\u5099\u8a3b\uff1a"},
+            {L"Student name:", L"Elevnavn:", L"T\u00ean h\u1ecdc sinh:", L"\u5b78\u751f\u59d3\u540d\uff1a"},
+            {L"Student added.", L"Elev lagt til.", L"\u0110\u00e3 th\u00eam h\u1ecdc sinh.", L"\u5df2\u52a0\u5165\u5b78\u751f\u3002"},
+            {L"Student removed.", L"Elev fjernet.", L"\u0110\u00e3 x\u00f3a h\u1ecdc sinh.", L"\u5df2\u79fb\u9664\u5b78\u751f\u3002"},
+            {L"No students in the roster.", L"Ingen elever i listen.", L"Ch\u01b0a c\u00f3 h\u1ecdc sinh trong danh s\u00e1ch.", L"\u540d\u55ae\u672a\u6709\u5b78\u751f\u3002"},
+            {L"Roster records created.", L"Listeposter opprettet.", L"\u0110\u00e3 t\u1ea1o b\u1ea3n ghi t\u1eeb danh s\u00e1ch.", L"\u5df2\u7528\u540d\u55ae\u5efa\u7acb\u8a18\u9304\u3002"},
+            {L"Statistics summary", L"Statistikksammendrag", L"T\u00f3m t\u1eaft th\u1ed1ng k\u00ea", L"\u7d71\u8a08\u6458\u8981"},
+            {L"Top absent/late students", L"Flest frav\u00e6r/sene elever", L"H\u1ecdc sinh v\u1eafng/tr\u1ec5 nhi\u1ec1u nh\u1ea5t", L"\u7f3a\u5e2d/\u9072\u5230\u6700\u591a\u5b78\u751f"},
+            {L"Backup now", L"Sikkerhetskopier n\u00e5", L"Sao l\u01b0u ngay", L"\u7acb\u5373\u5099\u4efd"},
+            {L"Restore latest backup", L"Gjenopprett siste kopi", L"Kh\u00f4i ph\u1ee5c b\u1ea3n sao l\u01b0u m\u1edbi nh\u1ea5t", L"\u9084\u539f\u6700\u65b0\u5099\u4efd"},
+            {L"Open recent file", L"\u00c5pne nylig fil", L"M\u1edf t\u1ec7p g\u1ea7n \u0111\u00e2y", L"\u958b\u555f\u6700\u8fd1\u6a94\u6848"},
+            {L"Backup created:", L"Sikkerhetskopi opprettet:", L"\u0110\u00e3 t\u1ea1o sao l\u01b0u:", L"\u5df2\u5efa\u7acb\u5099\u4efd\uff1a"},
+            {L"No backup file was found.", L"Ingen sikkerhetskopi funnet.", L"Kh\u00f4ng t\u00ecm th\u1ea5y b\u1ea3n sao l\u01b0u.", L"\u627e\u4e0d\u5230\u5099\u4efd\u6a94\u3002"},
+            {L"No recent file was found.", L"Ingen nylig fil funnet.", L"Kh\u00f4ng t\u00ecm th\u1ea5y t\u1ec7p g\u1ea7n \u0111\u00e2y.", L"\u627e\u4e0d\u5230\u6700\u8fd1\u6a94\u6848\u3002"},
+            {L"Set default save folder", L"Velg standard lagringsmappe", L"\u0110\u1eb7t th\u01b0 m\u1ee5c l\u01b0u m\u1eb7c \u0111\u1ecbnh", L"\u8a2d\u5b9a\u9810\u8a2d\u5132\u5b58\u8cc7\u6599\u593e"},
+            {L"Default save folder updated:", L"Standard lagringsmappe oppdatert:", L"\u0110\u00e3 c\u1eadp nh\u1eadt th\u01b0 m\u1ee5c l\u01b0u m\u1eb7c \u0111\u1ecbnh:", L"\u9810\u8a2d\u5132\u5b58\u8cc7\u6599\u593e\u5df2\u66f4\u65b0\uff1a"}
+        };
+        for (const auto& entry : entries) {
+            if (key == entry.key) {
+                if (g_language == UiLanguage::Norwegian) out = entry.no;
+                else if (g_language == UiLanguage::Vietnamese) out = entry.vi;
+                else out = entry.zhhk;
+                return true;
+            }
+        }
+        if (g_language == UiLanguage::ChineseTraditionalHongKong) {
+            UiLanguage saved = g_language;
+            g_language = UiLanguage::ChineseTraditional;
+            out = Tr(key.c_str(), L"");
+            g_language = saved;
+            return out != key;
+        }
+        return false;
+    }
+
     if (g_language < UiLanguage::Italian) return false;
 
     if (g_language == UiLanguage::ClassicalChinese) {
@@ -642,7 +745,30 @@ bool TranslateAdditionalLanguage(const std::wstring& key, std::wstring& out) {
         {L"Could not open the file.", L"Impossibile aprire il file.", L"\u0424\u0430\u0439\u043b \u043d\u044d\u044d\u0436 \u0447\u0430\u0434\u0441\u0430\u043d\u0433\u04af\u0439.", L"Ne eblis malfermi la dosieron.", L"\u4e0d\u80fd\u958b\u6a94\u3002", L"\u0e40\u0e1b\u0e34\u0e14\u0e44\u0e1f\u0e25\u0e4c\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49", L"Hindi mabuksan ang file.", L"Dosya a\u00e7\u0131lamad\u0131.", L"Nepavyko atidaryti failo."},
         {L"Please enter a date and time.", L"Inserisci data e ora.", L"\u041e\u0433\u043d\u043e\u043e, \u0446\u0430\u0433 \u043e\u0440\u0443\u0443\u043b\u043d\u0430 \u0443\u0443.", L"Enigu daton kaj tempon.", L"\u8acb\u8f38\u65e5\u6642\u3002", L"\u0e01\u0e23\u0e38\u0e13\u0e32\u0e43\u0e2a\u0e48\u0e27\u0e31\u0e19\u0e41\u0e25\u0e30\u0e40\u0e27\u0e25\u0e32", L"Ilagay ang petsa at oras.", L"L\u00fctfen tarih ve saat girin.", L"\u012eveskite dat\u0105 ir laik\u0105."},
         {L"Please enter a name.", L"Inserisci un nome.", L"\u041d\u044d\u0440 \u043e\u0440\u0443\u0443\u043b\u043d\u0430 \u0443\u0443.", L"Enigu nomon.", L"\u8acb\u8f38\u59d3\u540d\u3002", L"\u0e01\u0e23\u0e38\u0e13\u0e32\u0e43\u0e2a\u0e48\u0e0a\u0e37\u0e48\u0e2d", L"Ilagay ang pangalan.", L"L\u00fctfen ad girin.", L"\u012eveskite vard\u0105."},
-        {L"Please fill the Other field.", L"Compila il campo Altro.", L"\u0411\u0443\u0441\u0430\u0434 \u0442\u0430\u043b\u0431\u0430\u0440\u044b\u0433 \u0431\u04e9\u0433\u043b\u04e9\u043d\u04e9 \u04af\u04af.", L"Plenigu la kampon Alia.", L"\u8acb\u586b\u5176\u4ed6\u6b04\u3002", L"\u0e01\u0e23\u0e38\u0e13\u0e32\u0e01\u0e23\u0e2d\u0e01\u0e0a\u0e48\u0e2d\u0e07\u0e2d\u0e37\u0e48\u0e19\u0e46", L"Punan ang field na Iba pa.", L"L\u00fctfen Di\u011fer alan\u0131n\u0131 doldurun.", L"U\u017epildykite lauk\u0105 Kita."}
+        {L"Please fill the Other field.", L"Compila il campo Altro.", L"\u0411\u0443\u0441\u0430\u0434 \u0442\u0430\u043b\u0431\u0430\u0440\u044b\u0433 \u0431\u04e9\u0433\u043b\u04e9\u043d\u04e9 \u04af\u04af.", L"Plenigu la kampon Alia.", L"\u8acb\u586b\u5176\u4ed6\u6b04\u3002", L"\u0e01\u0e23\u0e38\u0e13\u0e32\u0e01\u0e23\u0e2d\u0e01\u0e0a\u0e48\u0e2d\u0e07\u0e2d\u0e37\u0e48\u0e19\u0e46", L"Punan ang field na Iba pa.", L"L\u00fctfen Di\u011fer alan\u0131n\u0131 doldurun.", L"U\u017epildykite lauk\u0105 Kita."},
+        {L"Manage students", L"Gestisci studenti", L"\u0421\u0443\u0440\u0430\u0433\u0447\u0434\u044b\u0433 \u0443\u0434\u0438\u0440\u0434\u0430\u0445", L"Administri studentojn", L"\u7ba1\u5f1f\u5b50", L"\u0e08\u0e31\u0e14\u0e01\u0e32\u0e23\u0e19\u0e31\u0e01\u0e40\u0e23\u0e35\u0e22\u0e19", L"Pamahalaan ang mga estudyante", L"\u00d6\u011frencileri y\u00f6net", L"Tvarkyti mokinius"},
+        {L"Add student to roster", L"Aggiungi studente alla lista", L"\u0421\u0443\u0440\u0430\u0433\u0447\u0438\u0439\u0433 \u0436\u0430\u0433\u0441\u0430\u0430\u043b\u0442\u0430\u0434 \u043d\u044d\u043c\u044d\u0445", L"Aldoni studenton al listo", L"\u7c4d\u4e2d\u589e\u5f1f\u5b50", L"\u0e40\u0e1e\u0e34\u0e48\u0e21\u0e19\u0e31\u0e01\u0e40\u0e23\u0e35\u0e22\u0e19\u0e25\u0e07\u0e23\u0e32\u0e22\u0e0a\u0e37\u0e48\u0e2d", L"Magdagdag ng estudyante sa roster", L"\u00d6\u011frenciyi listeye ekle", L"Prid\u0117ti mokin\u012f \u012f s\u0105ra\u0161\u0105"},
+        {L"Remove student from roster", L"Rimuovi studente dalla lista", L"\u0421\u0443\u0440\u0430\u0433\u0447\u0438\u0439\u0433 \u0436\u0430\u0433\u0441\u0430\u0430\u043b\u0442\u0430\u0430\u0441 \u0445\u0430\u0441\u0430\u0445", L"Forigi studenton el listo", L"\u7c4d\u4e2d\u53bb\u5f1f\u5b50", L"\u0e25\u0e1a\u0e19\u0e31\u0e01\u0e40\u0e23\u0e35\u0e22\u0e19\u0e2d\u0e2d\u0e01\u0e08\u0e32\u0e01\u0e23\u0e32\u0e22\u0e0a\u0e37\u0e48\u0e2d", L"Alisin ang estudyante sa roster", L"\u00d6\u011frenciyi listeden kald\u0131r", L"Pa\u0161alinti mokin\u012f i\u0161 s\u0105ra\u0161o"},
+        {L"Create records from roster", L"Crea registri dalla lista", L"\u0416\u0430\u0433\u0441\u0430\u0430\u043b\u0442\u0430\u0430\u0441 \u0431\u0438\u0447\u043b\u044d\u0433 \u04af\u04af\u0441\u0433\u044d\u0445", L"Krei registrojn el listo", L"\u64da\u540d\u7c4d\u7acb\u9304", L"\u0e2a\u0e23\u0e49\u0e32\u0e07\u0e23\u0e32\u0e22\u0e01\u0e32\u0e23\u0e08\u0e32\u0e01\u0e23\u0e32\u0e22\u0e0a\u0e37\u0e48\u0e2d", L"Gumawa ng records mula sa roster", L"Listeden kay\u0131t olu\u015ftur", L"Kurti \u012fra\u0161us i\u0161 s\u0105ra\u0161o"},
+        {L"Course details", L"Dettagli corso", L"\u041a\u0443\u0440\u0441\u044b\u043d \u0434\u044d\u043b\u0433\u044d\u0440\u044d\u043d\u0433\u04af\u0439", L"Kursaj detaloj", L"\u8ab2\u4e4b\u8a73", L"\u0e23\u0e32\u0e22\u0e25\u0e30\u0e40\u0e2d\u0e35\u0e22\u0e14\u0e04\u0e2d\u0e23\u0e4c\u0e2a", L"Detalye ng kurso", L"Kurs ayr\u0131nt\u0131lar\u0131", L"Kurso informacija"},
+        {L"Teacher/owner:", L"Insegnante/responsabile:", L"\u0411\u0430\u0433\u0448/\u0445\u0430\u0440\u0438\u0443\u0446\u0430\u0433\u0447:", L"Instruisto/posedanto:", L"\u5e2b/\u4e3b\u8005\uff1a", L"\u0e04\u0e23\u0e39/\u0e1c\u0e39\u0e49\u0e23\u0e31\u0e1a\u0e1c\u0e34\u0e14\u0e0a\u0e2d\u0e1a:", L"Guro/may-ari:", L"\u00d6\u011fretmen/sorumlu:", L"Mokytojas/savininkas:"},
+        {L"Location:", L"Luogo:", L"\u0411\u0430\u0439\u0440\u0448\u0438\u043b:", L"Loko:", L"\u6240\u5728\uff1a", L"\u0e2a\u0e16\u0e32\u0e19\u0e17\u0e35\u0e48:", L"Lokasyon:", L"Konum:", L"Vieta:"},
+        {L"Course notes:", L"Note corso:", L"\u041a\u0443\u0440\u0441\u044b\u043d \u0442\u044d\u043c\u0434\u044d\u0433\u043b\u044d\u043b:", L"Kursaj notoj:", L"\u8ab2\u8a18\uff1a", L"\u0e2b\u0e21\u0e32\u0e22\u0e40\u0e2b\u0e15\u0e38\u0e04\u0e2d\u0e23\u0e4c\u0e2a:", L"Tala ng kurso:", L"Kurs notlar\u0131:", L"Kurso pastabos:"},
+        {L"Student name:", L"Nome studente:", L"\u0421\u0443\u0440\u0430\u0433\u0447\u0438\u0439\u043d \u043d\u044d\u0440:", L"Studenta nomo:", L"\u5f1f\u5b50\u59d3\u540d\uff1a", L"\u0e0a\u0e37\u0e48\u0e2d\u0e19\u0e31\u0e01\u0e40\u0e23\u0e35\u0e22\u0e19:", L"Pangalan ng estudyante:", L"\u00d6\u011frenci ad\u0131:", L"Mokinio vardas:"},
+        {L"Student added.", L"Studente aggiunto.", L"\u0421\u0443\u0440\u0430\u0433\u0447 \u043d\u044d\u043c\u044d\u0433\u0434\u043b\u044d\u044d.", L"Studento aldonita.", L"\u5df2\u589e\u5f1f\u5b50\u3002", L"\u0e40\u0e1e\u0e34\u0e48\u0e21\u0e19\u0e31\u0e01\u0e40\u0e23\u0e35\u0e22\u0e19\u0e41\u0e25\u0e49\u0e27", L"Naidagdag ang estudyante.", L"\u00d6\u011frenci eklendi.", L"Mokinys prid\u0117tas."},
+        {L"Student removed.", L"Studente rimosso.", L"\u0421\u0443\u0440\u0430\u0433\u0447 \u0445\u0430\u0441\u0430\u0433\u0434\u043b\u0430\u0430.", L"Studento forigita.", L"\u5df2\u53bb\u5f1f\u5b50\u3002", L"\u0e25\u0e1a\u0e19\u0e31\u0e01\u0e40\u0e23\u0e35\u0e22\u0e19\u0e41\u0e25\u0e49\u0e27", L"Naalis ang estudyante.", L"\u00d6\u011frenci kald\u0131r\u0131ld\u0131.", L"Mokinys pa\u0161alintas."},
+        {L"No students in the roster.", L"Nessuno studente nella lista.", L"\u0416\u0430\u0433\u0441\u0430\u0430\u043b\u0442\u0430\u0434 \u0441\u0443\u0440\u0430\u0433\u0447 \u0430\u043b\u0433\u0430.", L"Neniu studento en la listo.", L"\u540d\u7c4d\u7121\u5f1f\u5b50\u3002", L"\u0e44\u0e21\u0e48\u0e21\u0e35\u0e19\u0e31\u0e01\u0e40\u0e23\u0e35\u0e22\u0e19\u0e43\u0e19\u0e23\u0e32\u0e22\u0e0a\u0e37\u0e48\u0e2d", L"Walang estudyante sa roster.", L"Listede \u00f6\u011frenci yok.", L"S\u0105ra\u0161e n\u0117ra mokini\u0173."},
+        {L"Roster records created.", L"Registri creati dalla lista.", L"\u0416\u0430\u0433\u0441\u0430\u0430\u043b\u0442\u044b\u043d \u0431\u0438\u0447\u043b\u044d\u0433 \u04af\u04af\u0441\u043b\u044d\u044d.", L"Listaj registroj kreitaj.", L"\u540d\u7c4d\u4e4b\u9304\u5df2\u7acb\u3002", L"\u0e2a\u0e23\u0e49\u0e32\u0e07\u0e23\u0e32\u0e22\u0e01\u0e32\u0e23\u0e08\u0e32\u0e01\u0e23\u0e32\u0e22\u0e0a\u0e37\u0e48\u0e2d\u0e41\u0e25\u0e49\u0e27", L"Nagawa ang records mula sa roster.", L"Liste kay\u0131tlar\u0131 olu\u015fturuldu.", L"\u012era\u0161ai i\u0161 s\u0105ra\u0161o sukurti."},
+        {L"Statistics summary", L"Riepilogo statistiche", L"\u0421\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043a\u0438\u0439\u043d \u0445\u0443\u0440\u0430\u0430\u043d\u0433\u0443\u0439", L"Statistika resumo", L"\u6578\u64da\u6458\u8981", L"\u0e2a\u0e23\u0e38\u0e1b\u0e2a\u0e16\u0e34\u0e15\u0e34", L"Buod ng estadistika", L"\u0130statistik \u00f6zeti", L"Statistikos santrauka"},
+        {L"Top absent/late students", L"Studenti pi\u00f9 assenti/in ritardo", L"\u0425\u0430\u043c\u0433\u0438\u0439\u043d \u0438\u0445 \u0442\u0430\u0441\u0430\u043b\u0441\u0430\u043d/\u0445\u043e\u0446\u043e\u0440\u0441\u043e\u043d \u0441\u0443\u0440\u0430\u0433\u0447\u0438\u0434", L"Plej forestantaj/malfruaj studentoj", L"\u95d5\u9072\u6700\u591a\u8005", L"\u0e19\u0e31\u0e01\u0e40\u0e23\u0e35\u0e22\u0e19\u0e02\u0e32\u0e14/\u0e2a\u0e32\u0e22\u0e21\u0e32\u0e01\u0e2a\u0e38\u0e14", L"Pinakamaraming absent/late", L"En \u00e7ok yok/ge\u00e7 kalan \u00f6\u011frenciler", L"Daugiausia nedalyvav\u0119/v\u0117lav\u0119 mokiniai"},
+        {L"Backup now", L"Esegui backup ora", L"\u041e\u0434\u043e\u043e \u043d\u04e9\u04e9\u0446\u043b\u04e9\u0445", L"Sekurkopii nun", L"\u5373\u5099\u4efd", L"\u0e2a\u0e33\u0e23\u0e2d\u0e07\u0e15\u0e2d\u0e19\u0e19\u0e35\u0e49", L"Mag-backup ngayon", L"\u015eimdi yedekle", L"Kurti atsargin\u0119 kopij\u0105"},
+        {L"Restore latest backup", L"Ripristina ultimo backup", L"\u0421\u04af\u04af\u043b\u0438\u0439\u043d \u043d\u04e9\u04e9\u0446\u0438\u0439\u0433 \u0441\u044d\u0440\u0433\u044d\u044d\u0445", L"Restarigi lastan sekurkopion", L"\u9084\u6700\u65b0\u5099\u4efd", L"\u0e01\u0e39\u0e49\u0e04\u0e37\u0e19\u0e44\u0e1f\u0e25\u0e4c\u0e2a\u0e33\u0e23\u0e2d\u0e07\u0e25\u0e48\u0e32\u0e2a\u0e38\u0e14", L"I-restore ang pinakabagong backup", L"Son yede\u011fi geri y\u00fckle", L"Atkurti naujausi\u0105 kopij\u0105"},
+        {L"Open recent file", L"Apri file recente", L"\u0421\u04af\u04af\u043b\u0438\u0439\u043d \u0444\u0430\u0439\u043b\u044b\u0433 \u043d\u044d\u044d\u0445", L"Malfermi lastatempan dosieron", L"\u958b\u8fd1\u6a94", L"\u0e40\u0e1b\u0e34\u0e14\u0e44\u0e1f\u0e25\u0e4c\u0e25\u0e48\u0e32\u0e2a\u0e38\u0e14", L"Buksan ang recent file", L"Son dosyay\u0131 a\u00e7", L"Atidaryti naujausi\u0105 fail\u0105"},
+        {L"Backup created:", L"Backup creato:", L"\u041d\u04e9\u04e9\u0446 \u04af\u04af\u0441\u043b\u044d\u044d:", L"Sekurkopio kreita:", L"\u5099\u4efd\u5df2\u6210\uff1a", L"\u0e2a\u0e23\u0e49\u0e32\u0e07\u0e44\u0e1f\u0e25\u0e4c\u0e2a\u0e33\u0e23\u0e2d\u0e07\u0e41\u0e25\u0e49\u0e27:", L"Nagawa ang backup:", L"Yedek olu\u015fturuldu:", L"Atsargin\u0117 kopija sukurta:"},
+        {L"No backup file was found.", L"Nessun file di backup trovato.", L"\u041d\u04e9\u04e9\u0446 \u0444\u0430\u0439\u043b \u043e\u043b\u0434\u0441\u043e\u043d\u0433\u04af\u0439.", L"Neniu sekurkopia dosiero trovita.", L"\u672a\u5f97\u5099\u4efd\u6a94\u3002", L"\u0e44\u0e21\u0e48\u0e1e\u0e1a\u0e44\u0e1f\u0e25\u0e4c\u0e2a\u0e33\u0e23\u0e2d\u0e07", L"Walang nakitang backup file.", L"Yedek dosyas\u0131 bulunamad\u0131.", L"Atsargin\u0117s kopijos failas nerastas."},
+        {L"No recent file was found.", L"Nessun file recente trovato.", L"\u0421\u04af\u04af\u043b\u0438\u0439\u043d \u0444\u0430\u0439\u043b \u043e\u043b\u0434\u0441\u043e\u043d\u0433\u04af\u0439.", L"Neniu lastatempa dosiero trovita.", L"\u672a\u5f97\u8fd1\u6a94\u3002", L"\u0e44\u0e21\u0e48\u0e1e\u0e1a\u0e44\u0e1f\u0e25\u0e4c\u0e25\u0e48\u0e32\u0e2a\u0e38\u0e14", L"Walang nakitang recent file.", L"Son dosya bulunamad\u0131.", L"Naujausias failas nerastas."},
+        {L"Set default save folder", L"Imposta cartella di salvataggio", L"\u04e8\u0433\u04e9\u0433\u0434\u043c\u04e9\u043b \u0445\u0430\u0434\u0433\u0430\u043b\u0430\u0445 \u0445\u0430\u0432\u0442\u0430\u0441", L"Agordi defa\u016dltan konservan dosierujon", L"\u5b9a\u9810\u8a2d\u85cf\u6a94\u8655", L"\u0e15\u0e31\u0e49\u0e07\u0e42\u0e1f\u0e25\u0e40\u0e14\u0e2d\u0e23\u0e4c\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01\u0e40\u0e23\u0e34\u0e48\u0e21\u0e15\u0e49\u0e19", L"Itakda ang default save folder", L"Varsay\u0131lan kay\u0131t klas\u00f6r\u00fcn\u00fc ayarla", L"Nustatyti numatyt\u0105j\u012f aplank\u0105"},
+        {L"Default save folder updated:", L"Cartella di salvataggio aggiornata:", L"\u04e8\u0433\u04e9\u0433\u0434\u043c\u04e9\u043b \u0445\u0430\u0434\u0433\u0430\u043b\u0430\u0445 \u0445\u0430\u0432\u0442\u0430\u0441 \u0448\u0438\u043d\u044d\u0447\u043b\u044d\u0433\u0434\u043b\u044d\u044d:", L"Defa\u016dlta konserva dosierujo \u011disdatigita:", L"\u9810\u8a2d\u85cf\u6a94\u8655\u5df2\u66f4\uff1a", L"\u0e2d\u0e31\u0e1b\u0e40\u0e14\u0e15\u0e42\u0e1f\u0e25\u0e40\u0e14\u0e2d\u0e23\u0e4c\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01\u0e40\u0e23\u0e34\u0e48\u0e21\u0e15\u0e49\u0e19\u0e41\u0e25\u0e49\u0e27:", L"Na-update ang default save folder:", L"Varsay\u0131lan kay\u0131t klas\u00f6r\u00fc g\u00fcncellendi:", L"Numatytasis aplankas atnaujintas:"}
     };
 
     for (const auto& entry : entries) {
@@ -741,6 +867,29 @@ std::wstring Tr(const wchar_t* english, const wchar_t*) {
         {L"Rename Course/Class", L"\u91cd\u547d\u540d\u8bfe\u7a0b/\u73ed\u7ea7", L"Semmi mill-\u0121did", L"\u30b3\u30fc\u30b9/\u30af\u30e9\u30b9\u540d\u5909\u66f4", L"Renommer cours/classe", L"Kurs/Klasse umbenennen", L"\u041f\u0435\u0440\u0435\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u0442\u044c", L"\u91cd\u65b0\u547d\u540d\u8ab2\u7a0b/\u73ed\u7d1a", L"Renombrar curso/clase"},
         {L"New course or class name:", L"\u65b0\u8bfe\u7a0b\u6216\u73ed\u7ea7\u540d\u79f0\uff1a", L"Isem \u0121did tal-kors jew klassi:", L"\u65b0\u3057\u3044\u30b3\u30fc\u30b9/\u30af\u30e9\u30b9\u540d:", L"Nouveau nom :", L"Neuer Kurs-/Klassenname:", L"\u041d\u043e\u0432\u043e\u0435 \u0438\u043c\u044f:", L"\u65b0\u8ab2\u7a0b\u6216\u73ed\u7d1a\u540d\u7a31\uff1a", L"Nuevo nombre:"},
         {L"Import student roster (CSV)", L"\u5bfc\u5165\u5b66\u751f\u540d\u5355 (CSV)", L"Importa lista tal-istudenti (CSV)", L"\u5b66\u751f\u540d\u7c3f\u3092\u8aad\u307f\u8fbc\u3080 (CSV)", L"Importer liste d'\u00e9tudiants (CSV)", L"Sch\u00fclerliste importieren (CSV)", L"\u0418\u043c\u043f\u043e\u0440\u0442 \u0441\u043f\u0438\u0441\u043a\u0430 (CSV)", L"\u532f\u5165\u5b78\u751f\u540d\u55ae (CSV)", L"Importar lista de estudiantes (CSV)"},
+        {L"Manage students", L"\u7ba1\u7406\u5b66\u751f", L"Immani\u0121\u0121ja studenti", L"\u5b66\u751f\u7ba1\u7406", L"G\u00e9rer les \u00e9tudiants", L"Sch\u00fcler verwalten", L"\u0423\u043f\u0440\u0430\u0432\u043b\u044f\u0442\u044c \u0443\u0447\u0435\u043d\u0438\u043a\u0430\u043c\u0438", L"\u7ba1\u7406\u5b78\u751f", L"Gestionar estudiantes"},
+        {L"Add student to roster", L"\u6dfb\u52a0\u5b66\u751f\u5230\u540d\u5355", L"\u017bid student mal-lista", L"\u540d\u7c3f\u306b\u5b66\u751f\u3092\u8ffd\u52a0", L"Ajouter un \u00e9tudiant \u00e0 la liste", L"Sch\u00fcler zur Liste hinzuf\u00fcgen", L"\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u0443\u0447\u0435\u043d\u0438\u043a\u0430 \u0432 \u0441\u043f\u0438\u0441\u043e\u043a", L"\u65b0\u589e\u5b78\u751f\u5230\u540d\u55ae", L"Agregar estudiante a la lista"},
+        {L"Remove student from roster", L"\u4ece\u540d\u5355\u79fb\u9664\u5b66\u751f", L"Ne\u0127\u0127i student mil-lista", L"\u540d\u7c3f\u304b\u3089\u5b66\u751f\u3092\u524a\u9664", L"Retirer un \u00e9tudiant de la liste", L"Sch\u00fcler aus Liste entfernen", L"\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u0443\u0447\u0435\u043d\u0438\u043a\u0430 \u0438\u0437 \u0441\u043f\u0438\u0441\u043a\u0430", L"\u5f9e\u540d\u55ae\u79fb\u9664\u5b78\u751f", L"Quitar estudiante de la lista"},
+        {L"Create records from roster", L"\u4ece\u540d\u5355\u521b\u5efa\u70b9\u540d\u8bb0\u5f55", L"O\u0127loq rekords mil-lista", L"\u540d\u7c3f\u304b\u3089\u8a18\u9332\u3092\u4f5c\u6210", L"Cr\u00e9er des enregistrements depuis la liste", L"Eintr\u00e4ge aus Liste erstellen", L"\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u0437\u0430\u043f\u0438\u0441\u0438 \u0438\u0437 \u0441\u043f\u0438\u0441\u043a\u0430", L"\u5f9e\u540d\u55ae\u5efa\u7acb\u9ede\u540d\u8a18\u9304", L"Crear registros desde la lista"},
+        {L"Course details", L"\u8bfe\u7a0b\u8d44\u6599", L"Dettalji tal-kors", L"\u30b3\u30fc\u30b9\u8a73\u7d30", L"D\u00e9tails du cours", L"Kursdetails", L"\u0421\u0432\u0435\u0434\u0435\u043d\u0438\u044f \u043e \u043a\u0443\u0440\u0441\u0435", L"\u8ab2\u7a0b\u8cc7\u6599", L"Detalles del curso"},
+        {L"Teacher/owner:", L"\u6559\u5e08/\u8d1f\u8d23\u4eba\uff1a", L"G\u0127alliem/sid:", L"\u6559\u5e2b/\u62c5\u5f53:", L"Enseignant/responsable :", L"Lehrer/verantwortlich:", L"\u0423\u0447\u0438\u0442\u0435\u043b\u044c/\u043e\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0435\u043d\u043d\u044b\u0439:", L"\u6559\u5e2b/\u8ca0\u8cac\u4eba\uff1a", L"Profesor/responsable:"},
+        {L"Location:", L"\u5730\u70b9\uff1a", L"Post:", L"\u5834\u6240:", L"Lieu :", L"Ort:", L"\u041c\u0435\u0441\u0442\u043e:", L"\u5730\u9ede\uff1a", L"Ubicaci\u00f3n:"},
+        {L"Course notes:", L"\u8bfe\u7a0b\u5907\u6ce8\uff1a", L"Noti tal-kors:", L"\u30b3\u30fc\u30b9\u30e1\u30e2:", L"Notes du cours :", L"Kursnotizen:", L"\u0417\u0430\u043c\u0435\u0442\u043a\u0438 \u043a\u0443\u0440\u0441\u0430:", L"\u8ab2\u7a0b\u5099\u8a3b\uff1a", L"Notas del curso:"},
+        {L"Student name:", L"\u5b66\u751f\u59d3\u540d\uff1a", L"Isem tal-istudent:", L"\u5b66\u751f\u540d:", L"Nom de l'\u00e9tudiant :", L"Sch\u00fclername:", L"\u0418\u043c\u044f \u0443\u0447\u0435\u043d\u0438\u043a\u0430:", L"\u5b78\u751f\u59d3\u540d\uff1a", L"Nombre del estudiante:"},
+        {L"Student added.", L"\u5df2\u6dfb\u52a0\u5b66\u751f\u3002", L"Student mi\u017cjud.", L"\u5b66\u751f\u3092\u8ffd\u52a0\u3057\u307e\u3057\u305f\u3002", L"\u00c9tudiant ajout\u00e9.", L"Sch\u00fcler hinzugef\u00fcgt.", L"\u0423\u0447\u0435\u043d\u0438\u043a \u0434\u043e\u0431\u0430\u0432\u043b\u0435\u043d.", L"\u5df2\u65b0\u589e\u5b78\u751f\u3002", L"Estudiante agregado."},
+        {L"Student removed.", L"\u5df2\u79fb\u9664\u5b66\u751f\u3002", L"Student imne\u0127\u0127i.", L"\u5b66\u751f\u3092\u524a\u9664\u3057\u307e\u3057\u305f\u3002", L"\u00c9tudiant retir\u00e9.", L"Sch\u00fcler entfernt.", L"\u0423\u0447\u0435\u043d\u0438\u043a \u0443\u0434\u0430\u043b\u0451\u043d.", L"\u5df2\u79fb\u9664\u5b78\u751f\u3002", L"Estudiante quitado."},
+        {L"No students in the roster.", L"\u540d\u5355\u4e2d\u6ca1\u6709\u5b66\u751f\u3002", L"M'hemmx studenti fil-lista.", L"\u540d\u7c3f\u306b\u5b66\u751f\u304c\u3044\u307e\u305b\u3093\u3002", L"Aucun \u00e9tudiant dans la liste.", L"Keine Sch\u00fcler in der Liste.", L"\u0412 \u0441\u043f\u0438\u0441\u043a\u0435 \u043d\u0435\u0442 \u0443\u0447\u0435\u043d\u0438\u043a\u043e\u0432.", L"\u540d\u55ae\u4e2d\u6c92\u6709\u5b78\u751f\u3002", L"No hay estudiantes en la lista."},
+        {L"Roster records created.", L"\u5df2\u4ece\u540d\u5355\u521b\u5efa\u8bb0\u5f55\u3002", L"In\u0127olqu rekords mil-lista.", L"\u540d\u7c3f\u304b\u3089\u8a18\u9332\u3092\u4f5c\u6210\u3057\u307e\u3057\u305f\u3002", L"Enregistrements cr\u00e9\u00e9s depuis la liste.", L"Eintr\u00e4ge aus Liste erstellt.", L"\u0417\u0430\u043f\u0438\u0441\u0438 \u0438\u0437 \u0441\u043f\u0438\u0441\u043a\u0430 \u0441\u043e\u0437\u0434\u0430\u043d\u044b.", L"\u5df2\u5f9e\u540d\u55ae\u5efa\u7acb\u8a18\u9304\u3002", L"Registros creados desde la lista."},
+        {L"Statistics summary", L"\u7edf\u8ba1\u6458\u8981", L"Sommarju statistiku", L"\u7d71\u8a08\u30b5\u30de\u30ea\u30fc", L"R\u00e9sum\u00e9 statistique", L"Statistik\u00fcbersicht", L"\u0421\u0432\u043e\u0434\u043a\u0430 \u0441\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043a\u0438", L"\u7d71\u8a08\u6458\u8981", L"Resumen estad\u00edstico"},
+        {L"Top absent/late students", L"\u7f3a\u5e2d/\u8fdf\u5230\u6700\u591a\u5b66\u751f", L"L-aktar studenti assenti/tard", L"\u6b20\u5e2d/\u9045\u523b\u304c\u591a\u3044\u5b66\u751f", L"\u00c9tudiants les plus absents/en retard", L"Sch\u00fcler mit meisten Fehlzeiten/Versp\u00e4tungen", L"\u0427\u0430\u0449\u0435 \u0432\u0441\u0435\u0433\u043e \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442/\u043e\u043f\u0430\u0437\u0434\u044b\u0432\u0430\u044e\u0442", L"\u7f3a\u5e2d/\u9072\u5230\u6700\u591a\u5b78\u751f", L"Estudiantes con m\u00e1s ausencias/tardanzas"},
+        {L"Backup now", L"\u7acb\u5373\u5907\u4efd", L"Ag\u0127mel backup issa", L"\u4eca\u3059\u3050\u30d0\u30c3\u30af\u30a2\u30c3\u30d7", L"Sauvegarder maintenant", L"Jetzt sichern", L"\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u0440\u0435\u0437\u0435\u0440\u0432\u043d\u0443\u044e \u043a\u043e\u043f\u0438\u044e", L"\u7acb\u5373\u5099\u4efd", L"Hacer copia ahora"},
+        {L"Restore latest backup", L"\u6062\u590d\u6700\u65b0\u5907\u4efd", L"Irrestawra l-a\u0127\u0127ar backup", L"\u6700\u65b0\u30d0\u30c3\u30af\u30a2\u30c3\u30d7\u3092\u5fa9\u5143", L"Restaurer la derni\u00e8re sauvegarde", L"Letzte Sicherung wiederherstellen", L"\u0412\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u044c \u043f\u043e\u0441\u043b\u0435\u0434\u043d\u044e\u044e \u043a\u043e\u043f\u0438\u044e", L"\u9084\u539f\u6700\u65b0\u5099\u4efd", L"Restaurar copia reciente"},
+        {L"Open recent file", L"\u6253\u5f00\u6700\u8fd1\u6587\u4ef6", L"Ifta\u0127 fajl re\u010benti", L"\u6700\u8fd1\u306e\u30d5\u30a1\u30a4\u30eb\u3092\u958b\u304f", L"Ouvrir un fichier r\u00e9cent", L"Zuletzt verwendete Datei \u00f6ffnen", L"\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u043d\u0435\u0434\u0430\u0432\u043d\u0438\u0439 \u0444\u0430\u0439\u043b", L"\u958b\u555f\u6700\u8fd1\u6a94\u6848", L"Abrir archivo reciente"},
+        {L"Backup created:", L"\u5907\u4efd\u5df2\u521b\u5efa\uff1a", L"Backup ma\u0127luq:", L"\u30d0\u30c3\u30af\u30a2\u30c3\u30d7\u4f5c\u6210\u5148:", L"Sauvegarde cr\u00e9\u00e9e :", L"Sicherung erstellt:", L"\u0420\u0435\u0437\u0435\u0440\u0432\u043d\u0430\u044f \u043a\u043e\u043f\u0438\u044f \u0441\u043e\u0437\u0434\u0430\u043d\u0430:", L"\u5099\u4efd\u5df2\u5efa\u7acb\uff1a", L"Copia creada:"},
+        {L"No backup file was found.", L"\u672a\u627e\u5230\u5907\u4efd\u6587\u4ef6\u3002", L"Ma nstabx fajl backup.", L"\u30d0\u30c3\u30af\u30a2\u30c3\u30d7\u30d5\u30a1\u30a4\u30eb\u304c\u3042\u308a\u307e\u305b\u3093\u3002", L"Aucune sauvegarde trouv\u00e9e.", L"Keine Sicherungsdatei gefunden.", L"\u0424\u0430\u0439\u043b \u043a\u043e\u043f\u0438\u0438 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d.", L"\u672a\u627e\u5230\u5099\u4efd\u6a94\u6848\u3002", L"No se encontr\u00f3 copia."},
+        {L"No recent file was found.", L"\u672a\u627e\u5230\u6700\u8fd1\u6587\u4ef6\u3002", L"Ma nstabx fajl re\u010benti.", L"\u6700\u8fd1\u306e\u30d5\u30a1\u30a4\u30eb\u304c\u3042\u308a\u307e\u305b\u3093\u3002", L"Aucun fichier r\u00e9cent trouv\u00e9.", L"Keine zuletzt verwendete Datei gefunden.", L"\u041d\u0435\u0434\u0430\u0432\u043d\u0438\u0439 \u0444\u0430\u0439\u043b \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d.", L"\u672a\u627e\u5230\u6700\u8fd1\u6a94\u6848\u3002", L"No se encontr\u00f3 archivo reciente."},
+        {L"Set default save folder", L"\u8bbe\u7f6e\u9ed8\u8ba4\u4fdd\u5b58\u6587\u4ef6\u5939", L"Issettja folder ta' save default", L"\u65e2\u5b9a\u306e\u4fdd\u5b58\u30d5\u30a9\u30eb\u30c0\u30fc\u3092\u8a2d\u5b9a", L"D\u00e9finir le dossier d'enregistrement", L"Standard-Speicherordner festlegen", L"\u0417\u0430\u0434\u0430\u0442\u044c \u043f\u0430\u043f\u043a\u0443 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u044f", L"\u8a2d\u5b9a\u9810\u8a2d\u5132\u5b58\u8cc7\u6599\u593e", L"Definir carpeta predeterminada"},
+        {L"Default save folder updated:", L"\u9ed8\u8ba4\u4fdd\u5b58\u6587\u4ef6\u5939\u5df2\u66f4\u65b0\uff1a", L"Folder ta' save default a\u0121\u0121ornat:", L"\u65e2\u5b9a\u306e\u4fdd\u5b58\u30d5\u30a9\u30eb\u30c0\u30fc\u3092\u66f4\u65b0:", L"Dossier d'enregistrement mis \u00e0 jour :", L"Standard-Speicherordner aktualisiert:", L"\u041f\u0430\u043f\u043a\u0430 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u044f \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0430:", L"\u9810\u8a2d\u5132\u5b58\u8cc7\u6599\u593e\u5df2\u66f4\u65b0\uff1a", L"Carpeta predeterminada actualizada:"},
         {L"Print / export PDF", L"\u6253\u5370 / \u5bfc\u51fa PDF", L"Stampa / esporta PDF", L"\u5370\u5237 / PDF \u51fa\u529b", L"Imprimer / exporter PDF", L"Drucken / PDF exportieren", L"\u041f\u0435\u0447\u0430\u0442\u044c / PDF", L"\u5217\u5370 / \u532f\u51fa PDF", L"Imprimir / exportar PDF"},
         {L"Export PowerPoint (.pptx)", L"\u5bfc\u51fa PowerPoint (.pptx)", L"Esporta PowerPoint (.pptx)", L"PowerPoint \u51fa\u529b (.pptx)", L"Exporter PowerPoint (.pptx)", L"PowerPoint exportieren (.pptx)", L"\u042d\u043a\u0441\u043f\u043e\u0440\u0442 PowerPoint (.pptx)", L"\u532f\u51fa PowerPoint (.pptx)", L"Exportar PowerPoint (.pptx)"},
         {L"Statistics chart", L"\u7edf\u8ba1\u56fe\u8868", L"\u010aart tal-istatistika", L"\u7d71\u8a08\u30b0\u30e9\u30d5", L"Graphique statistique", L"Statistikdiagramm", L"\u0413\u0440\u0430\u0444\u0438\u043a", L"\u7d71\u8a08\u5716\u8868", L"Gr\u00e1fico estad\u00edstico"},
@@ -855,6 +1004,9 @@ std::string LanguageToString(UiLanguage language) {
     case UiLanguage::Filipino: return "fil";
     case UiLanguage::Turkish: return "tr";
     case UiLanguage::Lithuanian: return "lt";
+    case UiLanguage::Norwegian: return "no";
+    case UiLanguage::Vietnamese: return "vi";
+    case UiLanguage::ChineseTraditionalHongKong: return "zh-HK";
     default: return "en";
     }
 }
@@ -876,6 +1028,9 @@ UiLanguage LanguageFromString(const std::string& value) {
     if (value == "fil") return UiLanguage::Filipino;
     if (value == "tr") return UiLanguage::Turkish;
     if (value == "lt") return UiLanguage::Lithuanian;
+    if (value == "no") return UiLanguage::Norwegian;
+    if (value == "vi") return UiLanguage::Vietnamese;
+    if (value == "zh-HK") return UiLanguage::ChineseTraditionalHongKong;
     return UiLanguage::English;
 }
 
@@ -888,6 +1043,7 @@ void SaveSettings() {
     file << "language=" << LanguageToString(g_language) << "\n";
     file << "theme=" << (g_theme == UiTheme::Light ? "light" : "dark") << "\n";
     file << "font=" << WideToUtf8(g_fontFamily) << "\n";
+    file << "default_save_dir=" << WideToUtf8(g_defaultSaveDir) << "\n";
 }
 
 void LoadSettings() {
@@ -906,6 +1062,7 @@ void LoadSettings() {
         if (key == "language") g_language = LanguageFromString(value);
         else if (key == "theme") g_theme = value == "light" ? UiTheme::Light : UiTheme::Dark;
         else if (key == "font" && !value.empty()) g_fontFamily = Utf8ToWide(value);
+        else if (key == "default_save_dir") g_defaultSaveDir = Utf8ToWide(value);
     }
 }
 
@@ -918,6 +1075,7 @@ void ResetSettings() {
     g_language = UiLanguage::English;
     g_theme = UiTheme::Dark;
     g_fontFamily = L"Segoe UI";
+    g_defaultSaveDir.clear();
 }
 
 std::string WideToUtf8(const std::wstring& input) {
@@ -987,6 +1145,13 @@ std::vector<std::string> SplitTabs(const std::string& line) {
     return parts;
 }
 
+AttendanceSheet MakeSheet(const std::wstring& name, std::vector<AttendanceRecord> records = {}) {
+    AttendanceSheet sheet;
+    sheet.name = name.empty() ? L"Course" : name;
+    sheet.records = std::move(records);
+    return sheet;
+}
+
 std::string SerializeRecords() {
     std::ostringstream ss;
     ss << "ATTENDANCE_V1\n";
@@ -1035,7 +1200,7 @@ bool DeserializeRecords(const std::string& plainText, std::vector<AttendanceReco
 
 void EnsureSheets() {
     if (g_sheets.empty()) {
-        g_sheets.push_back({L"Default Course", g_records});
+        g_sheets.push_back(MakeSheet(L"Default Course", g_records));
         g_activeSheet = 0;
     }
 }
@@ -1052,11 +1217,18 @@ void SyncActiveSheet() {
 std::string SerializeWorkbook() {
     SyncActiveSheet();
     std::ostringstream ss;
-    ss << "ATTENDANCE_V3\n";
+    ss << "ATTENDANCE_V4\n";
     ss << g_activeSheet << "\n";
     ss << g_sheets.size() << "\n";
     for (const auto& sheet : g_sheets) {
         ss << Escape(WideToUtf8(sheet.name)) << "\n";
+        ss << Escape(WideToUtf8(sheet.teacher)) << "\n";
+        ss << Escape(WideToUtf8(sheet.location)) << "\n";
+        ss << Escape(WideToUtf8(sheet.notes)) << "\n";
+        ss << sheet.students.size() << "\n";
+        for (const auto& student : sheet.students) {
+            ss << Escape(WideToUtf8(student)) << "\n";
+        }
         ss << sheet.records.size() << "\n";
         for (const auto& record : sheet.records) {
             ss << Escape(WideToUtf8(record.dateTime)) << '\t'
@@ -1076,13 +1248,13 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
     if (header == "ATTENDANCE_V1") {
         std::vector<AttendanceRecord> records;
         if (!DeserializeRecords(plainText, records)) return false;
-        output = {{L"Default Course", std::move(records)}};
+        output = {MakeSheet(L"Default Course", std::move(records))};
         return true;
     }
-    if (header != "ATTENDANCE_V2" && header != "ATTENDANCE_V3") return false;
+    if (header != "ATTENDANCE_V2" && header != "ATTENDANCE_V3" && header != "ATTENDANCE_V4") return false;
 
     std::string countLine;
-    if (header == "ATTENDANCE_V3") {
+    if (header == "ATTENDANCE_V3" || header == "ATTENDANCE_V4") {
         std::string activeLine;
         std::getline(ss, activeLine);
         try {
@@ -1104,6 +1276,35 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
         std::string nameLine;
         std::string recordCountLine;
         if (!std::getline(ss, nameLine)) return false;
+
+        AttendanceSheet sheet;
+        sheet.name = Utf8ToWide(Unescape(nameLine));
+        if (sheet.name.empty()) sheet.name = L"Course";
+        if (header == "ATTENDANCE_V4") {
+            std::string teacherLine;
+            std::string locationLine;
+            std::string notesLine;
+            std::string studentCountLine;
+            if (!std::getline(ss, teacherLine)) return false;
+            if (!std::getline(ss, locationLine)) return false;
+            if (!std::getline(ss, notesLine)) return false;
+            if (!std::getline(ss, studentCountLine)) return false;
+            sheet.teacher = Utf8ToWide(Unescape(teacherLine));
+            sheet.location = Utf8ToWide(Unescape(locationLine));
+            sheet.notes = Utf8ToWide(Unescape(notesLine));
+            size_t studentCount = 0;
+            try {
+                studentCount = std::stoull(studentCountLine);
+            } catch (...) {
+                return false;
+            }
+            for (size_t i = 0; i < studentCount; ++i) {
+                std::string studentLine;
+                if (!std::getline(ss, studentLine)) return false;
+                std::wstring student = Utf8ToWide(Unescape(studentLine));
+                if (!student.empty()) sheet.students.push_back(student);
+            }
+        }
         if (!std::getline(ss, recordCountLine)) return false;
         size_t recordCount = 0;
         try {
@@ -1111,10 +1312,6 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
         } catch (...) {
             return false;
         }
-
-        AttendanceSheet sheet;
-        sheet.name = Utf8ToWide(Unescape(nameLine));
-        if (sheet.name.empty()) sheet.name = L"Course";
         for (size_t i = 0; i < recordCount; ++i) {
             std::string line;
             if (!std::getline(ss, line)) return false;
@@ -1130,7 +1327,7 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
         sheets.push_back(std::move(sheet));
     }
 
-    if (sheets.empty()) sheets.push_back({L"Default Course", {}});
+    if (sheets.empty()) sheets.push_back(MakeSheet(L"Default Course"));
     output = std::move(sheets);
     return true;
 }
@@ -1294,7 +1491,7 @@ void AddCourse() {
     if (name.empty()) return;
     PushUndo();
     MarkDirty();
-    g_sheets.push_back({name, {}});
+    g_sheets.push_back(MakeSheet(name));
     g_activeSheet = (int)g_sheets.size() - 1;
     g_records.clear();
     RefreshCourseCombo();
@@ -2022,6 +2219,7 @@ std::wstring SaveFileDialog() {
     ofn.lpstrFile = fileName;
     ofn.nMaxFile = MAX_PATH;
     ofn.lpstrDefExt = L"attd";
+    if (!g_defaultSaveDir.empty()) ofn.lpstrInitialDir = g_defaultSaveDir.c_str();
     ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
     return GetSaveFileNameW(&ofn) ? fileName : L"";
 }
@@ -2035,6 +2233,7 @@ std::wstring SaveCsvFileDialog() {
     ofn.lpstrFile = fileName;
     ofn.nMaxFile = MAX_PATH;
     ofn.lpstrDefExt = L"csv";
+    if (!g_defaultSaveDir.empty()) ofn.lpstrInitialDir = g_defaultSaveDir.c_str();
     ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
     return GetSaveFileNameW(&ofn) ? fileName : L"";
 }
@@ -2072,6 +2271,7 @@ std::wstring SaveHtmlFileDialog() {
     ofn.lpstrFile = fileName;
     ofn.nMaxFile = MAX_PATH;
     ofn.lpstrDefExt = L"html";
+    if (!g_defaultSaveDir.empty()) ofn.lpstrInitialDir = g_defaultSaveDir.c_str();
     ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
     return GetSaveFileNameW(&ofn) ? fileName : L"";
 }
@@ -2085,8 +2285,23 @@ std::wstring SavePptxFileDialog() {
     ofn.lpstrFile = fileName;
     ofn.nMaxFile = MAX_PATH;
     ofn.lpstrDefExt = L"pptx";
+    if (!g_defaultSaveDir.empty()) ofn.lpstrInitialDir = g_defaultSaveDir.c_str();
     ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
     return GetSaveFileNameW(&ofn) ? fileName : L"";
+}
+
+std::wstring ChooseFolderDialog() {
+    BROWSEINFOW bi{};
+    bi.hwndOwner = g_hwnd;
+    std::wstring title = Tr(L"Set default save folder", L"\u8bbe\u7f6e\u9ed8\u8ba4\u4fdd\u5b58\u6587\u4ef6\u5939");
+    bi.lpszTitle = title.c_str();
+    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+    PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi);
+    if (!pidl) return {};
+    wchar_t path[MAX_PATH]{};
+    bool ok = SHGetPathFromIDListW(pidl, path) != FALSE;
+    CoTaskMemFree(pidl);
+    return ok ? std::wstring(path) : L"";
 }
 
 std::filesystem::path AppDataFilePath(const wchar_t* fileName) {
@@ -2765,6 +2980,16 @@ void ExportPrintHtml() {
             "@media print{button{display:none}}</style>";
     file << "<button onclick='window.print()'>" << HtmlCell(Tr(L"Print / Save as PDF", L"\u6253\u5370 / \u53e6\u5b58\u4e3a PDF")) << "</button>";
     file << "<h1>" << HtmlCell(g_sheets[g_activeSheet].name) << "</h1>";
+    if (!g_sheets[g_activeSheet].teacher.empty() || !g_sheets[g_activeSheet].location.empty() || !g_sheets[g_activeSheet].notes.empty()) {
+        file << "<p>";
+        if (!g_sheets[g_activeSheet].teacher.empty()) file << "<strong>" << HtmlCell(Tr(L"Teacher/owner:", L"\u6559\u5e08/\u8d1f\u8d23\u4eba\uff1a")) << "</strong> " << HtmlCell(g_sheets[g_activeSheet].teacher) << "<br>";
+        if (!g_sheets[g_activeSheet].location.empty()) file << "<strong>" << HtmlCell(Tr(L"Location:", L"\u5730\u70b9\uff1a")) << "</strong> " << HtmlCell(g_sheets[g_activeSheet].location) << "<br>";
+        if (!g_sheets[g_activeSheet].notes.empty()) file << "<strong>" << HtmlCell(Tr(L"Course notes:", L"\u8bfe\u7a0b\u5907\u6ce8\uff1a")) << "</strong> " << HtmlCell(g_sheets[g_activeSheet].notes);
+        file << "</p>";
+    }
+    if (!g_sheets[g_activeSheet].students.empty()) {
+        file << "<p><strong>" << HtmlCell(Tr(L"Manage students", L"\u7ba1\u7406\u5b66\u751f")) << ":</strong> " << g_sheets[g_activeSheet].students.size() << "</p>";
+    }
     file << "<table><tr><th>" << HtmlCell(Tr(L"Date/Time", L"\u65e5\u671f\u65f6\u95f4")) << "</th><th>"
          << HtmlCell(Tr(L"Name", L"\u59d3\u540d")) << "</th><th>"
          << HtmlCell(Tr(L"Status", L"\u72b6\u6001")) << "</th><th>"
@@ -2805,6 +3030,12 @@ void ImportRosterCsv() {
     if (!imported.empty()) {
         PushUndo();
         MarkDirty();
+        SyncActiveSheet();
+        for (const auto& record : imported) {
+            if (std::find(g_sheets[g_activeSheet].students.begin(), g_sheets[g_activeSheet].students.end(), record.name) == g_sheets[g_activeSheet].students.end()) {
+                g_sheets[g_activeSheet].students.push_back(record.name);
+            }
+        }
         g_records.insert(g_records.end(), imported.begin(), imported.end());
         RefreshList();
     }
@@ -2816,6 +3047,180 @@ void ImportRosterCsv() {
     ShowMessage(ss.str());
 }
 
+void AddStudentToRoster() {
+    SyncActiveSheet();
+    std::wstring name;
+    if (!PromptText(Tr(L"Add student to roster", L"\u6dfb\u52a0\u5b66\u751f\u5230\u540d\u5355"), Tr(L"Student name:", L"\u5b66\u751f\u59d3\u540d\uff1a"), name)) return;
+    if (name.empty()) return;
+    auto& students = g_sheets[g_activeSheet].students;
+    if (std::find(students.begin(), students.end(), name) == students.end()) {
+        PushUndo();
+        MarkDirty();
+        students.push_back(name);
+        ShowMessage(Tr(L"Student added.", L"\u5b66\u751f\u5df2\u6dfb\u52a0\u3002"));
+    }
+}
+
+void RemoveStudentFromRoster() {
+    SyncActiveSheet();
+    if (g_sheets[g_activeSheet].students.empty()) {
+        ShowMessage(Tr(L"No students in the roster.", L"\u540d\u5355\u4e2d\u6ca1\u6709\u5b66\u751f\u3002"));
+        return;
+    }
+    std::wstring name;
+    if (!PromptText(Tr(L"Remove student from roster", L"\u4ece\u540d\u5355\u79fb\u9664\u5b66\u751f"), Tr(L"Student name:", L"\u5b66\u751f\u59d3\u540d\uff1a"), name)) return;
+    auto& students = g_sheets[g_activeSheet].students;
+    auto it = std::find(students.begin(), students.end(), name);
+    if (it != students.end()) {
+        PushUndo();
+        MarkDirty();
+        students.erase(it);
+        ShowMessage(Tr(L"Student removed.", L"\u5b66\u751f\u5df2\u79fb\u9664\u3002"));
+    } else {
+        ShowMessage(Tr(L"No matching records found.", L"\u672a\u627e\u5230\u5339\u914d\u8bb0\u5f55\u3002"));
+    }
+}
+
+void CreateRecordsFromRoster() {
+    SyncActiveSheet();
+    const auto& students = g_sheets[g_activeSheet].students;
+    if (students.empty()) {
+        ShowMessage(Tr(L"No students in the roster.", L"\u540d\u5355\u4e2d\u6ca1\u6709\u5b66\u751f\u3002"));
+        return;
+    }
+    PushUndo();
+    MarkDirty();
+    std::wstring dateTime = GetText(g_dateEdit);
+    if (dateTime.empty()) dateTime = CurrentDateTimeText();
+    int added = 0;
+    for (const auto& student : students) {
+        auto duplicate = std::find_if(g_records.begin(), g_records.end(), [&](const AttendanceRecord& record) {
+            return record.name == student && record.dateTime == dateTime;
+        });
+        if (duplicate == g_records.end()) {
+            g_records.push_back({dateTime, student, L"Absent", L""});
+            ++added;
+        }
+    }
+    RefreshList();
+    std::wstringstream ss;
+    ss << Tr(L"Roster records created.", L"\u5df2\u4ece\u540d\u5355\u521b\u5efa\u70b9\u540d\u8bb0\u5f55\u3002") << L" (" << added << L")";
+    ShowMessage(ss.str());
+}
+
+void EditCourseDetails() {
+    SyncActiveSheet();
+    auto& sheet = g_sheets[g_activeSheet];
+    std::wstring teacher = sheet.teacher;
+    std::wstring location = sheet.location;
+    std::wstring notes = sheet.notes;
+    if (!PromptText(Tr(L"Course details", L"\u8bfe\u7a0b\u8d44\u6599"), Tr(L"Teacher/owner:", L"\u6559\u5e08/\u8d1f\u8d23\u4eba\uff1a"), teacher)) return;
+    if (!PromptText(Tr(L"Course details", L"\u8bfe\u7a0b\u8d44\u6599"), Tr(L"Location:", L"\u5730\u70b9\uff1a"), location)) return;
+    if (!PromptText(Tr(L"Course details", L"\u8bfe\u7a0b\u8d44\u6599"), Tr(L"Course notes:", L"\u8bfe\u7a0b\u5907\u6ce8\uff1a"), notes)) return;
+    PushUndo();
+    MarkDirty();
+    sheet.teacher = teacher;
+    sheet.location = location;
+    sheet.notes = notes;
+}
+
+void ShowStatisticsSummary() {
+    SyncActiveSheet();
+    int present = 0;
+    int absent = 0;
+    int late = 0;
+    int other = 0;
+    CountStatuses(present, absent, late, other);
+    std::vector<std::pair<std::wstring, int>> studentIssues;
+    for (const auto& record : g_records) {
+        if (record.status != L"Absent" && record.status != L"Late") continue;
+        auto it = std::find_if(studentIssues.begin(), studentIssues.end(), [&](const auto& item) { return item.first == record.name; });
+        if (it == studentIssues.end()) studentIssues.push_back({record.name, 1});
+        else ++it->second;
+    }
+    std::sort(studentIssues.begin(), studentIssues.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+
+    std::wstringstream ss;
+    ss << Tr(L"Statistics summary", L"\u7edf\u8ba1\u6458\u8981") << L"\n\n";
+    ss << Tr(L"Courses", L"\u8bfe\u7a0b") << L": " << g_sheets[g_activeSheet].name << L"\n";
+    ss << Tr(L"Total", L"\u603b\u6570") << L": " << g_records.size() << L"\n";
+    ss << Tr(L"Present", L"\u51fa\u5e2d") << L": " << present << L"\n";
+    ss << Tr(L"Absent", L"\u7f3a\u5e2d") << L": " << absent << L"\n";
+    ss << Tr(L"Late", L"\u8fdf\u5230") << L": " << late << L"\n";
+    ss << Tr(L"Other", L"\u5176\u4ed6") << L": " << other << L"\n";
+    if (!studentIssues.empty()) {
+        ss << L"\n" << Tr(L"Top absent/late students", L"\u7f3a\u5e2d/\u8fdf\u5230\u6700\u591a\u5b66\u751f") << L":\n";
+        for (int i = 0; i < (int)std::min<size_t>(5, studentIssues.size()); ++i) {
+            ss << L"- " << studentIssues[i].first << L": " << studentIssues[i].second << L"\n";
+        }
+    }
+    ShowMessage(ss.str(), Tr(L"Statistics summary", L"\u7edf\u8ba1\u6458\u8981"));
+}
+
+std::filesystem::path RecentFileRecordPath() {
+    return AppDataFilePath(L"recent.txt");
+}
+
+void SaveRecentFilePath(const std::wstring& path) {
+    auto recent = RecentFileRecordPath();
+    if (recent.empty()) return;
+    std::ofstream file(recent, std::ios::binary);
+    if (file) file << WideToUtf8(path);
+}
+
+std::wstring LoadRecentFilePath() {
+    auto recent = RecentFileRecordPath();
+    if (recent.empty() || !std::filesystem::exists(recent)) return {};
+    std::ifstream file(recent, std::ios::binary);
+    std::string value((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    return Utf8ToWide(value);
+}
+
+std::filesystem::path LatestBackupPath() {
+    return AppDataFilePath(L"backup-latest.attd");
+}
+
+void BackupNow() {
+    SyncActiveSheet();
+    auto path = LatestBackupPath();
+    if (path.empty()) return;
+    std::ofstream file(path, std::ios::binary);
+    if (!file) {
+        ShowMessage(Tr(L"Could not save the file.", L"\u65e0\u6cd5\u4fdd\u5b58\u6587\u4ef6\u3002"));
+        return;
+    }
+    file << EncodeAttd(SerializeWorkbook());
+    ShowMessage(Tr(L"Backup created:", L"\u5907\u4efd\u5df2\u521b\u5efa\uff1a") + L"\n" + path.wstring());
+}
+
+void RestoreLatestBackup() {
+    auto path = LatestBackupPath();
+    if (path.empty() || !std::filesystem::exists(path)) {
+        ShowMessage(Tr(L"No backup file was found.", L"\u672a\u627e\u5230\u5907\u4efd\u6587\u4ef6\u3002"));
+        return;
+    }
+    if (!ConfirmDiscardUnsaved(Tr(L"Restore latest backup", L"\u6062\u590d\u6700\u65b0\u5907\u4efd"))) return;
+    LoadAttendanceFile(path.wstring(), true);
+}
+
+void OpenRecentFile() {
+    std::wstring path = LoadRecentFilePath();
+    if (path.empty() || !std::filesystem::exists(path)) {
+        ShowMessage(Tr(L"No recent file was found.", L"\u672a\u627e\u5230\u6700\u8fd1\u6587\u4ef6\u3002"));
+        return;
+    }
+    if (!ConfirmDiscardUnsaved(Tr(L"Open recent file", L"\u6253\u5f00\u6700\u8fd1\u6587\u4ef6"))) return;
+    LoadAttendanceFile(path, true);
+}
+
+void SetDefaultSaveFolder() {
+    std::wstring folder = ChooseFolderDialog();
+    if (folder.empty()) return;
+    g_defaultSaveDir = folder;
+    SaveSettings();
+    ShowMessage(Tr(L"Default save folder updated:", L"\u9ed8\u8ba4\u4fdd\u5b58\u6587\u4ef6\u5939\u5df2\u66f4\u65b0\uff1a") + L"\n" + folder);
+}
+
 void ExportDatabaseMirror() {
     SyncActiveSheet();
     auto path = AppDataFilePath(L"attendance.attddb");
@@ -2825,10 +3230,11 @@ void ExportDatabaseMirror() {
         return;
     }
     file << "\xEF\xBB\xBF";
-    file << "course\tdate_time\tname\tstatus\tother\n";
+    file << "course\tteacher\tlocation\tstudent_count\tdate_time\tname\tstatus\tother\n";
     for (const auto& sheet : g_sheets) {
         for (const auto& r : sheet.records) {
-            file << TsvCell(sheet.name) << '\t' << TsvCell(r.dateTime) << '\t' << TsvCell(r.name)
+            file << TsvCell(sheet.name) << '\t' << TsvCell(sheet.teacher) << '\t' << TsvCell(sheet.location) << '\t' << sheet.students.size()
+                 << '\t' << TsvCell(r.dateTime) << '\t' << TsvCell(r.name)
                  << '\t' << TsvCell(r.status) << '\t' << TsvCell(r.other) << '\n';
         }
     }
@@ -2996,32 +3402,61 @@ void ShowToolsMenu(HWND button) {
     std::wstring print = Tr(L"Print / export PDF", L"\u6253\u5370 / \u5bfc\u51fa PDF");
     std::wstring pptx = Tr(L"Export PowerPoint (.pptx)", L"\u5bfc\u51fa PowerPoint (.pptx)");
     std::wstring chart = Tr(L"Statistics chart", L"\u7edf\u8ba1\u56fe\u8868");
+    std::wstring summary = Tr(L"Statistics summary", L"\u7edf\u8ba1\u6458\u8981");
+    std::wstring courseDetails = Tr(L"Course details", L"\u8bfe\u7a0b\u8d44\u6599");
+    std::wstring addStudent = Tr(L"Add student to roster", L"\u6dfb\u52a0\u5b66\u751f\u5230\u540d\u5355");
+    std::wstring removeStudent = Tr(L"Remove student from roster", L"\u4ece\u540d\u5355\u79fb\u9664\u5b66\u751f");
+    std::wstring createFromRoster = Tr(L"Create records from roster", L"\u4ece\u540d\u5355\u521b\u5efa\u70b9\u540d\u8bb0\u5f55");
     std::wstring undo = Tr(L"Undo", L"\u64a4\u9500");
     std::wstring redo = Tr(L"Redo", L"\u91cd\u505a");
     std::wstring shortcuts = Tr(L"Keyboard shortcuts", L"\u5feb\u6377\u952e");
     std::wstring db = Tr(L"Export database mirror", L"\u5bfc\u51fa\u6570\u636e\u5e93\u955c\u50cf");
     std::wstring autosave = Tr(L"Open autosave", L"\u6253\u5f00\u81ea\u52a8\u4fdd\u5b58");
+    std::wstring backup = Tr(L"Backup now", L"\u7acb\u5373\u5907\u4efd");
+    std::wstring restore = Tr(L"Restore latest backup", L"\u6062\u590d\u6700\u65b0\u5907\u4efd");
+    std::wstring recent = Tr(L"Open recent file", L"\u6253\u5f00\u6700\u8fd1\u6587\u4ef6");
+    std::wstring saveDir = Tr(L"Set default save folder", L"\u8bbe\u7f6e\u9ed8\u8ba4\u4fdd\u5b58\u6587\u4ef6\u5939");
     int command = ShowThemedPopupMenu(button, {
         {IDM_IMPORT_ROSTER, roster, false},
+        {IDM_STUDENTS_ADD, addStudent, false},
+        {IDM_STUDENTS_REMOVE, removeStudent, false},
+        {IDM_STUDENTS_GENERATE, createFromRoster, false},
+        {IDM_COURSE_DETAILS, courseDetails, false},
+        {0, L"", true},
         {IDM_PRINT_HTML, print, false},
         {IDM_EXPORT_PPTX, pptx, false},
         {IDM_STATS_CHART, chart, false},
+        {IDM_STATS_SUMMARY, summary, false},
         {0, L"", true},
         {IDM_UNDO, undo, false},
         {IDM_REDO, redo, false},
         {IDM_SHORTCUTS, shortcuts, false},
+        {0, L"", true},
+        {IDM_BACKUP_NOW, backup, false},
+        {IDM_RESTORE_BACKUP, restore, false},
+        {IDM_OPEN_RECENT, recent, false},
+        {IDM_SET_SAVE_DIR, saveDir, false},
         {0, L"", true},
         {IDM_EXPORT_DB, db, false},
         {IDM_OPEN_AUTOSAVE, autosave, false}
     });
     switch (command) {
     case IDM_IMPORT_ROSTER: ImportRosterCsv(); break;
+    case IDM_STUDENTS_ADD: AddStudentToRoster(); break;
+    case IDM_STUDENTS_REMOVE: RemoveStudentFromRoster(); break;
+    case IDM_STUDENTS_GENERATE: CreateRecordsFromRoster(); break;
+    case IDM_COURSE_DETAILS: EditCourseDetails(); break;
     case IDM_PRINT_HTML: ExportPrintHtml(); break;
     case IDM_EXPORT_PPTX: ExportPptx(); break;
     case IDM_STATS_CHART: ShowStatsChart(); break;
+    case IDM_STATS_SUMMARY: ShowStatisticsSummary(); break;
     case IDM_UNDO: UndoLast(); break;
     case IDM_REDO: RedoLast(); break;
     case IDM_SHORTCUTS: ShowShortcuts(); break;
+    case IDM_BACKUP_NOW: BackupNow(); break;
+    case IDM_RESTORE_BACKUP: RestoreLatestBackup(); break;
+    case IDM_OPEN_RECENT: OpenRecentFile(); break;
+    case IDM_SET_SAVE_DIR: SetDefaultSaveFolder(); break;
     case IDM_EXPORT_DB: ExportDatabaseMirror(); break;
     case IDM_OPEN_AUTOSAVE: OpenAutosave(); break;
     }
@@ -3039,6 +3474,7 @@ void SaveAttendance() {
     file << EncodeAttd(SerializeWorkbook());
     g_dirty = false;
     g_allowAutosaveOverwrite = true;
+    SaveRecentFilePath(path);
     ShowMessage(Tr(L"Saved successfully.", L"\u4fdd\u5b58\u6210\u529f\u3002"));
 }
 
@@ -3064,6 +3500,7 @@ bool LoadAttendanceFile(const std::wstring& path, bool showSuccess) {
     g_redoStack.clear();
     g_dirty = false;
     g_allowAutosaveOverwrite = true;
+    SaveRecentFilePath(path);
     RefreshCourseCombo();
     RefreshList();
     if (showSuccess) ShowMessage(Tr(L"Imported successfully.", L"\u5bfc\u5165\u6210\u529f\u3002"));
@@ -3123,7 +3560,7 @@ void FillSettingsCombos(HWND hwnd) {
     HWND font = GetDlgItem(hwnd, IDC_SETTINGS_FONT);
 
     SendMessageW(language, CB_RESETCONTENT, 0, 0);
-    for (int i = 0; i <= (int)UiLanguage::Lithuanian; ++i) {
+    for (int i = 0; i <= (int)UiLanguage::ChineseTraditionalHongKong; ++i) {
         SendMessageW(language, CB_ADDSTRING, 0, (LPARAM)LanguageName((UiLanguage)i));
     }
     SendMessageW(language, CB_SETCURSEL, (WPARAM)g_language, 0);
@@ -3166,7 +3603,7 @@ void ApplySettingsFromWindow(HWND hwnd) {
     int theme = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_THEME), CB_GETCURSEL, 0, 0);
     int fontIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_FONT), CB_GETCURSEL, 0, 0);
 
-    if (language < 0 || language > (int)UiLanguage::Lithuanian) language = 0;
+    if (language < 0 || language > (int)UiLanguage::ChineseTraditionalHongKong) language = 0;
     g_language = (UiLanguage)language;
     g_theme = theme == 1 ? UiTheme::Light : UiTheme::Dark;
 
@@ -4011,7 +4448,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (sheetName.empty()) return 0;
             PushUndo();
             MarkDirty();
-            g_sheets.push_back({sheetName, {}});
+            g_sheets.push_back(MakeSheet(sheetName));
             g_activeSheet = (int)g_sheets.size() - 1;
             g_records.clear();
             RefreshCourseCombo();
