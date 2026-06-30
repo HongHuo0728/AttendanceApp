@@ -23,7 +23,7 @@
 - `Remove student from roster`: removes one student name from the current course roster.
 - `Create records from roster`: creates Absent attendance records for roster students at the current date/time.
 - `Print / export PDF`: creates a printable HTML report and opens it in the browser.
-- `Export PowerPoint (.pptx)`: creates a gradient presentation with summary cards, status charts, and attendance trend charts.
+- `Export PowerPoint (.pptx)`: creates a pure-black presentation with summary cards, status charts, and attendance trend charts.
 - `Statistics chart`: opens a graphical status chart.
 - `Statistics summary`: shows course and student attendance summary information.
 - `Undo` / `Redo`: restores recent changes.

@@ -11,6 +11,8 @@ obj/
 *.pdb
 *.ilk
 *.exp
+*.zip
+AttendanceApp.v*/
 
 # CMake generated files
 CMakeCache.txt

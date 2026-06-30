@@ -15,7 +15,7 @@ AttendanceApp is a standalone C++/Win32 desktop application for roll call and at
 - Search/filter records by date, name, status, or notes.
 - Export attendance records to CSV.
 - Print or export to PDF through a generated printable HTML report.
-- PowerPoint `.pptx` export with a gradient theme, summary cards, status charts, and trend charts.
+- PowerPoint `.pptx` export with a pure-black report theme, summary cards, status charts, and trend charts.
 - Autosave every 30 seconds to `%APPDATA%\AttendanceApp\autosave.attd`.
 - Restore autosave on startup when available.
 - Backup and restore the latest attendance workbook from AppData.
@@ -25,7 +25,7 @@ AttendanceApp is a standalone C++/Win32 desktop application for roll call and at
 - Graphical statistics chart window.
 - Database mirror export to `%APPDATA%\AttendanceApp\attendance.attddb`.
 - Persistent settings saved to `%APPDATA%\AttendanceApp\settings.ini`.
-- Light/dark theme, interface font selection, and multilingual UI.
+- Pure-black interface theme, interface font selection, and multilingual UI.
 - Supported languages: English, Simplified Chinese, Maltese, Japanese, French, German, Russian, Traditional Chinese Taiwan, Spanish, Italian, Mongolian, Esperanto, Classical Chinese, Thai, Filipino, Turkish, Lithuanian, Norwegian, Vietnamese, Traditional Chinese Hong Kong Cantonese.
 - Default window size: `1600x900`; resizable with `F11` fullscreen.
 

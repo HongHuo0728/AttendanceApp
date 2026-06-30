@@ -8,6 +8,8 @@
 #include <uxtheme.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cwctype>
@@ -15,8 +17,13 @@
 #include <fstream>
 #include <functional>
 #include <iomanip>
+#include <map>
+#include <mutex>
+#include <random>
+#include <set>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "../include/resource.h"
@@ -25,6 +32,19 @@
 #pragma comment(lib, "uxtheme.lib")
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "msimg32.lib")
+
+#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#endif
+#ifndef DWMWA_CAPTION_COLOR
+#define DWMWA_CAPTION_COLOR 35
+#endif
+#ifndef DWMWA_TEXT_COLOR
+#define DWMWA_TEXT_COLOR 36
+#endif
+#ifndef DWMWA_SYSTEMBACKDROP_TYPE
+#define DWMWA_SYSTEMBACKDROP_TYPE 38
+#endif
 
 struct AttendanceRecord {
     std::wstring dateTime;
@@ -69,6 +89,10 @@ static constexpr int IDC_SUBTITLE = 2005;
 static constexpr int IDC_STATS = 2006;
 static constexpr int IDC_HINT = 2007;
 static constexpr int IDC_FILTER_LABEL = 2008;
+static constexpr int IDC_STAT_TOTAL = 2009;
+static constexpr int IDC_STAT_ATTENDANCE = 2010;
+static constexpr int IDC_STAT_ISSUES = 2011;
+static constexpr int IDC_STAT_VISIBLE = 2012;
 
 static constexpr int IDM_DELETE_SELECTED = 3001;
 static constexpr int IDM_DELETE_ABSENT = 3002;
@@ -106,9 +130,14 @@ static constexpr int IDC_SETTINGS_THEME_LABEL = 4007;
 static constexpr int IDC_SETTINGS_FONT_LABEL = 4008;
 static constexpr int IDC_SETTINGS_TITLE = 4009;
 static constexpr int IDC_SETTINGS_RESET = 4010;
+static constexpr int IDC_SETTINGS_PARTICLES = 4011;
 static constexpr int IDC_INPUT_EDIT = 5001;
 static constexpr int IDC_INPUT_OK = 5002;
 static constexpr int IDC_INPUT_CANCEL = 5003;
+static constexpr int IDC_MESSAGE_TEXT = 6001;
+static constexpr int IDC_MESSAGE_YES = 6002;
+static constexpr int IDC_MESSAGE_NO = 6003;
+static constexpr int IDC_MESSAGE_OK = 6004;
 
 static HWND g_hwnd = nullptr;
 static HWND g_dateEdit = nullptr;
@@ -136,6 +165,7 @@ static bool g_allowAutosaveOverwrite = true;
 static bool g_dirty = false;
 static bool g_fullscreen = false;
 static bool g_liveResizing = false;
+static bool g_particlesEnabled = true;
 static WINDOWPLACEMENT g_previousPlacement{sizeof(g_previousPlacement)};
 static DWORD g_previousStyle = 0;
 static int g_scrollX = 0;
@@ -145,12 +175,22 @@ static int g_contentH = 0;
 static std::wstring g_filterText;
 static constexpr int MIN_LAYOUT_W = 1180;
 static constexpr int MIN_LAYOUT_H = 820;
+static constexpr UINT WM_APP_ANIMATION_TICK = WM_APP + 41;
+static constexpr UINT WM_APP_ANIMATION_DONE = WM_APP + 42;
 
 struct InputDialogState {
     std::wstring title;
     std::wstring prompt;
     std::wstring value;
     bool accepted = false;
+};
+
+struct MessageDialogState {
+    std::wstring title;
+    std::wstring message;
+    bool yesNo = false;
+    int result = IDOK;
+    bool done = false;
 };
 
 enum class UiLanguage {
@@ -175,27 +215,73 @@ enum class UiLanguage {
     Vietnamese,
     ChineseTraditionalHongKong
 };
-enum class UiTheme { Dark, Light };
+enum class UiTheme { Dark };
 
 static UiLanguage g_language = UiLanguage::English;
 static UiTheme g_theme = UiTheme::Dark;
 static std::wstring g_fontFamily = L"Segoe UI";
 static std::wstring g_defaultSaveDir;
+static std::vector<std::wstring> g_availableFonts;
 
-static COLORREF COLOR_BG = RGB(24, 26, 32);
-static COLORREF COLOR_PANEL = RGB(34, 37, 45);
-static COLORREF COLOR_INPUT = RGB(44, 48, 58);
-static COLORREF COLOR_TEXT = RGB(235, 238, 245);
-static COLORREF COLOR_MUTED = RGB(168, 174, 190);
-static COLORREF COLOR_ACCENT = RGB(64, 156, 255);
-static COLORREF COLOR_DANGER = RGB(238, 91, 91);
+static COLORREF COLOR_BG = RGB(0, 0, 0);
+static COLORREF COLOR_PANEL = RGB(18, 18, 18);
+static COLORREF COLOR_INPUT = RGB(26, 26, 26);
+static COLORREF COLOR_TEXT = RGB(255, 255, 255);
+static COLORREF COLOR_MUTED = RGB(224, 224, 224);
+static COLORREF COLOR_ACCENT = RGB(188, 188, 188);
+static COLORREF COLOR_DANGER = RGB(176, 112, 112);
+
+enum class AnimChannel : int {
+    Hover = 1,
+    Press = 2,
+    ComboOpen = 3,
+    Reveal = 4,
+    Close = 5,
+    ListReveal = 6,
+    Effect = 7
+};
+
+struct AnimValue {
+    double current = 0.0;
+    double start = 0.0;
+    double target = 0.0;
+    uint64_t startMs = 0;
+    uint32_t durationMs = 160;
+    bool active = false;
+    bool closeOnDone = false;
+};
+
+static std::mutex g_animMutex;
+static std::map<HWND, std::map<int, AnimValue>> g_animations;
+static std::atomic_bool g_animationShutdown{false};
+static std::thread g_animationThread;
+
+struct ButtonParticle {
+    double x = 0.0;
+    double y = 0.0;
+    double vx = 0.0;
+    double vy = 0.0;
+    double radius = 2.0;
+    uint32_t lifetimeMs = 1000;
+    COLORREF color = RGB(255, 255, 255);
+    bool star = false;
+};
+
+struct ButtonEffectState {
+    POINT origin{};
+    uint64_t startMs = 0;
+    std::vector<ButtonParticle> particles;
+};
+
+static std::map<HWND, ButtonEffectState> g_buttonEffects;
+static std::mt19937 g_effectRng{std::random_device{}()};
 
 void ResizeLayout(HWND hwnd);
 void ScrollMainWindow(HWND hwnd, int bar, int code, int wheelDelta = 0);
 void ApplyVisualSettings();
 void ApplyDarkMode(HWND hwnd);
 void ApplyThemedControls(HWND root);
-void PaintGradientBackground(HWND hwnd, HDC hdc);
+void PaintAppBackground(HWND hwnd, HDC hdc);
 bool DrawButtonItem(const DRAWITEMSTRUCT* draw);
 bool DrawComboItem(const DRAWITEMSTRUCT* draw);
 void PaintComboClosed(HWND hwnd, HDC hdc);
@@ -211,6 +297,31 @@ std::wstring Tr(const wchar_t* english, const wchar_t* chinese);
 void EnableEditShortcuts(HWND hwnd);
 void EnableMouseWheelForward(HWND hwnd);
 void CountStatuses(int& present, int& absent, int& late, int& other);
+void EnableInteractiveAnimation(HWND hwnd);
+void StartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t durationMs = 160, bool closeOnDone = false);
+void RestartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t durationMs = 220);
+double GetAnimationValue(HWND hwnd, AnimChannel channel, double fallback = 0.0);
+void RemoveAnimationState(HWND hwnd);
+void StartWindowReveal(HWND hwnd, uint32_t durationMs = 180);
+void BeginAnimatedClose(HWND hwnd, uint32_t durationMs = 140);
+COLORREF BlendColor(COLORREF from, COLORREF to, double amount);
+double EaseInOut(double value);
+double EaseOut(double value);
+double ElasticOut(double value);
+void StartListTransition();
+LRESULT HandleListCustomDraw(LPARAM lParam);
+void StopAnimationThread();
+void ApplyGlassTitleBar(HWND hwnd);
+void CancelMainWindowClose();
+void FillInstalledFontFamilies();
+std::wstring GetComboSelectedText(HWND combo);
+void CommitComboSelectionNow(HWND combo);
+void ConfigureEditMetrics(HWND hwnd);
+void TriggerButtonFeedback(HWND hwnd, POINT origin);
+void DrawButtonEffects(const DRAWITEMSTRUCT* draw, const RECT& buttonRc, COLORREF baseFill);
+void DrawSoftDivider(HDC hdc, int left, int right, int y);
+int ThemedMessageBox(HWND owner, const std::wstring& message, const std::wstring& title, bool yesNo);
+bool DrawParticleToggleItem(const DRAWITEMSTRUCT* draw);
 
 struct ThemedMenuItem {
     int command = 0;
@@ -223,6 +334,7 @@ struct ThemedMenuState {
     int hover = -1;
     int selected = 0;
     bool done = false;
+    bool closing = false;
 };
 
 int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem>& items);
@@ -242,6 +354,225 @@ std::wstring GetText(HWND hwnd) {
 
 void SetText(HWND hwnd, const std::wstring& text) {
     SetWindowTextW(hwnd, text.c_str());
+}
+
+void ConfigureEditMetrics(HWND hwnd) {
+    if (!hwnd) return;
+    SendMessageW(hwnd, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(10, 10));
+
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    int width = rc.right - rc.left;
+    int height = rc.bottom - rc.top;
+    if (width <= 0 || height <= 0) return;
+
+    HDC hdc = GetDC(hwnd);
+    HFONT font = (HFONT)SendMessageW(hwnd, WM_GETFONT, 0, 0);
+    HGDIOBJ oldFont = font ? SelectObject(hdc, font) : nullptr;
+    TEXTMETRICW tm{};
+    GetTextMetricsW(hdc, &tm);
+    if (oldFont) SelectObject(hdc, oldFont);
+    ReleaseDC(hwnd, hdc);
+
+    int textH = std::max(1, (int)(tm.tmHeight + tm.tmExternalLeading));
+    int top = std::max(2, (height - textH) / 2);
+    RECT textRc{10, top, std::max(11, width - 10), std::min(height - 2, top + textH + 2)};
+    SendMessageW(hwnd, EM_SETRECTNP, 0, (LPARAM)&textRc);
+}
+
+uint64_t AnimationNowMs() {
+    using namespace std::chrono;
+    return (uint64_t)duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
+
+double EaseInOut(double value) {
+    value = std::clamp(value, 0.0, 1.0);
+    return value < 0.5
+        ? 4.0 * value * value * value
+        : 1.0 - std::pow(-2.0 * value + 2.0, 3.0) / 2.0;
+}
+
+double EaseOut(double value) {
+    value = std::clamp(value, 0.0, 1.0);
+    return 1.0 - std::pow(1.0 - value, 3.0);
+}
+
+double ElasticOut(double value) {
+    value = std::clamp(value, 0.0, 1.0);
+    if (value <= 0.0 || value >= 1.0) return value;
+    constexpr double c4 = (2.0 * 3.14159265358979323846) / 3.0;
+    return std::pow(2.0, -10.0 * value) * std::sin((value * 10.0 - 0.75) * c4) + 1.0;
+}
+
+COLORREF BlendColor(COLORREF from, COLORREF to, double amount) {
+    amount = std::clamp(amount, 0.0, 1.0);
+    auto mix = [&](int a, int b) {
+        return (int)std::lround(a + (b - a) * amount);
+    };
+    return RGB(
+        mix(GetRValue(from), GetRValue(to)),
+        mix(GetGValue(from), GetGValue(to)),
+        mix(GetBValue(from), GetBValue(to)));
+}
+
+void EnsureAnimationThread() {
+    if (g_animationThread.joinable()) return;
+    g_animationShutdown = false;
+    g_animationThread = std::thread([] {
+        while (!g_animationShutdown.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+
+            std::vector<HWND> tickWindows;
+            std::vector<HWND> doneWindows;
+            uint64_t now = AnimationNowMs();
+            {
+                std::lock_guard<std::mutex> lock(g_animMutex);
+                for (auto& hwndEntry : g_animations) {
+                    bool changed = false;
+                    for (auto& channelEntry : hwndEntry.second) {
+                        AnimValue& anim = channelEntry.second;
+                        if (!anim.active) continue;
+                        double t = anim.durationMs == 0
+                            ? 1.0
+                            : (double)(now - anim.startMs) / (double)anim.durationMs;
+                        if (t >= 1.0) {
+                            anim.current = anim.target;
+                            anim.active = false;
+                            changed = true;
+                            if (anim.closeOnDone) doneWindows.push_back(hwndEntry.first);
+                        } else {
+                            double eased = (channelEntry.first == (int)AnimChannel::Reveal || channelEntry.first == (int)AnimChannel::Close)
+                                ? EaseOut(t)
+                                : EaseInOut(t);
+                            anim.current = anim.start + (anim.target - anim.start) * eased;
+                            changed = true;
+                        }
+                    }
+                    if (changed) tickWindows.push_back(hwndEntry.first);
+                }
+            }
+
+            for (HWND hwnd : tickWindows) {
+                PostMessageW(hwnd, WM_APP_ANIMATION_TICK, 0, 0);
+            }
+            for (HWND hwnd : doneWindows) {
+                PostMessageW(hwnd, WM_APP_ANIMATION_DONE, 0, 0);
+            }
+        }
+    });
+}
+
+void StopAnimationThread() {
+    g_animationShutdown = true;
+    if (g_animationThread.joinable()) g_animationThread.join();
+}
+
+void StartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t durationMs, bool closeOnDone) {
+    if (!hwnd) return;
+    EnsureAnimationThread();
+    std::lock_guard<std::mutex> lock(g_animMutex);
+    AnimValue& anim = g_animations[hwnd][(int)channel];
+    target = std::clamp(target, 0.0, 1.0);
+    if (std::abs(anim.target - target) <= 0.001 && (anim.active || std::abs(anim.current - target) <= 0.001)) {
+        return;
+    }
+    anim.start = anim.current;
+    anim.target = target;
+    anim.startMs = AnimationNowMs();
+    anim.durationMs = durationMs;
+    anim.active = durationMs > 0 && std::abs(anim.target - anim.start) > 0.001;
+    anim.closeOnDone = closeOnDone;
+    if (!anim.active) anim.current = anim.target;
+}
+
+void RestartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t durationMs) {
+    if (!hwnd) return;
+    EnsureAnimationThread();
+    std::lock_guard<std::mutex> lock(g_animMutex);
+    AnimValue& anim = g_animations[hwnd][(int)channel];
+    anim.current = 0.0;
+    anim.start = 0.0;
+    anim.target = std::clamp(target, 0.0, 1.0);
+    anim.startMs = AnimationNowMs();
+    anim.durationMs = durationMs;
+    anim.active = durationMs > 0;
+    anim.closeOnDone = false;
+}
+
+double GetAnimationValue(HWND hwnd, AnimChannel channel, double fallback) {
+    if (!hwnd) return fallback;
+    std::lock_guard<std::mutex> lock(g_animMutex);
+    auto hwndIt = g_animations.find(hwnd);
+    if (hwndIt == g_animations.end()) return fallback;
+    auto channelIt = hwndIt->second.find((int)channel);
+    if (channelIt == hwndIt->second.end()) return fallback;
+    return channelIt->second.current;
+}
+
+void RemoveAnimationState(HWND hwnd) {
+    if (!hwnd) return;
+    std::lock_guard<std::mutex> lock(g_animMutex);
+    g_animations.erase(hwnd);
+}
+
+void StartWindowReveal(HWND hwnd, uint32_t durationMs) {
+    if (!hwnd) return;
+    RestartAnimation(hwnd, AnimChannel::Reveal, 1.0, durationMs);
+}
+
+void BeginAnimatedClose(HWND hwnd, uint32_t durationMs) {
+    (void)durationMs;
+    if (!hwnd) return;
+    DestroyWindow(hwnd);
+}
+
+void CancelMainWindowClose() {
+}
+
+void ApplyGlassTitleBar(HWND hwnd) {
+    if (!hwnd) return;
+    BOOL dark = TRUE;
+    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+
+    COLORREF caption = RGB(0, 0, 0);
+    COLORREF text = RGB(255, 255, 255);
+    DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &caption, sizeof(caption));
+    DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, &text, sizeof(text));
+
+    int backdrop = 2; // DWMSBT_MAINWINDOW / Mica on supported Windows builds.
+    DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
+
+    MARGINS margins{0, 0, 1, 0};
+    DwmExtendFrameIntoClientArea(hwnd, &margins);
+}
+
+void StartListTransition() {
+    if (!g_list) return;
+    RestartAnimation(g_list, AnimChannel::ListReveal, 1.0, 260);
+    RedrawWindow(g_list, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME);
+}
+
+LRESULT HandleListCustomDraw(LPARAM lParam) {
+    auto* draw = reinterpret_cast<NMLVCUSTOMDRAW*>(lParam);
+    if (!draw) return CDRF_DODEFAULT;
+
+    if (draw->nmcd.dwDrawStage == CDDS_PREPAINT) {
+        return CDRF_NOTIFYITEMDRAW;
+    }
+    if (draw->nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
+        int item = (int)draw->nmcd.dwItemSpec;
+        bool selected = (ListView_GetItemState(g_list, item, LVIS_SELECTED) & LVIS_SELECTED) != 0;
+        double reveal = GetAnimationValue(g_list, AnimChannel::ListReveal, 1.0);
+        double rowProgress = std::clamp(reveal * 1.25 - item * 0.035, 0.0, 1.0);
+
+        COLORREF rowBase = selected
+            ? RGB(42, 42, 42)
+            : (item % 2 == 0 ? COLOR_PANEL : RGB(14, 14, 14));
+        draw->clrTextBk = BlendColor(COLOR_BG, rowBase, rowProgress);
+        draw->clrText = BlendColor(COLOR_MUTED, COLOR_TEXT, rowProgress);
+        return CDRF_NEWFONT;
+    }
+    return CDRF_DODEFAULT;
 }
 
 void SetStaticTextClean(HWND hwnd, const std::wstring& text) {
@@ -298,14 +629,28 @@ LRESULT CALLBACK EditShortcutProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         SendMessageW(hwnd, EM_SETSEL, 0, -1);
         return 0;
     }
+    if (msg == WM_CHAR && wParam == VK_RETURN) {
+        return 0;
+    }
     if (msg == WM_CHAR && wParam == 1) {
         return 0;
+    }
+    if (msg == WM_SIZE || msg == WM_WINDOWPOSCHANGED) {
+        LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
+        ConfigureEditMetrics(hwnd);
+        return result;
+    }
+    if (msg == WM_SETFONT) {
+        LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
+        ConfigureEditMetrics(hwnd);
+        return result;
     }
     return DefSubclassProc(hwnd, msg, wParam, lParam);
 }
 
 void EnableEditShortcuts(HWND hwnd) {
     SetWindowSubclass(hwnd, EditShortcutProc, 1, 0);
+    ConfigureEditMetrics(hwnd);
 }
 
 LRESULT CALLBACK WheelForwardProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
@@ -328,12 +673,254 @@ void EnableMouseWheelForward(HWND hwnd) {
     SetWindowSubclass(hwnd, WheelForwardProc, 2, 0);
 }
 
+void RedrawAnimatedControl(HWND hwnd) {
+    RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_UPDATENOW);
+}
+
+void DrawAnimatedEditFrame(HWND hwnd) {
+    wchar_t className[32]{};
+    GetClassNameW(hwnd, className, 32);
+    if (lstrcmpiW(className, L"Edit") != 0) return;
+
+    HDC hdc = GetWindowDC(hwnd);
+    if (!hdc) return;
+    RECT rc{};
+    GetWindowRect(hwnd, &rc);
+    OffsetRect(&rc, -rc.left, -rc.top);
+
+    double hover = GetAnimationValue(hwnd, AnimChannel::Hover, GetFocus() == hwnd ? 1.0 : 0.0);
+    COLORREF border = BlendColor(RGB(58, 58, 58), COLOR_ACCENT, hover);
+    HPEN pen = CreatePen(PS_SOLID, 1, border);
+    HGDIOBJ oldPen = SelectObject(hdc, pen);
+    HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
+    Rectangle(hdc, rc.left, rc.top, rc.right, rc.bottom);
+    SelectObject(hdc, oldBrush);
+    SelectObject(hdc, oldPen);
+    DeleteObject(pen);
+    ReleaseDC(hwnd, hdc);
+}
+
+LRESULT CALLBACK InteractiveControlProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
+    switch (msg) {
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(hwnd, InteractiveControlProc, 7);
+        RemoveAnimationState(hwnd);
+        g_buttonEffects.erase(hwnd);
+        return DefSubclassProc(hwnd, msg, wParam, lParam);
+    case WM_MOUSEMOVE: {
+        TRACKMOUSEEVENT track{};
+        track.cbSize = sizeof(track);
+        track.dwFlags = TME_LEAVE;
+        track.hwndTrack = hwnd;
+        TrackMouseEvent(&track);
+        StartAnimation(hwnd, AnimChannel::Hover, 1.0, 140);
+        return DefSubclassProc(hwnd, msg, wParam, lParam);
+    }
+    case WM_MOUSELEAVE:
+        StartAnimation(hwnd, AnimChannel::Hover, GetFocus() == hwnd ? 1.0 : 0.0, 180);
+        return DefSubclassProc(hwnd, msg, wParam, lParam);
+    case WM_LBUTTONDOWN: {
+        CancelMainWindowClose();
+        POINT origin{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        TriggerButtonFeedback(hwnd, origin);
+        StartAnimation(hwnd, AnimChannel::Press, 1.0, 70);
+        return DefSubclassProc(hwnd, msg, wParam, lParam);
+    }
+    case WM_LBUTTONUP:
+    case WM_CANCELMODE:
+    case WM_CAPTURECHANGED:
+        StartAnimation(hwnd, AnimChannel::Press, 0.0, 180);
+        return DefSubclassProc(hwnd, msg, wParam, lParam);
+    case WM_SETFOCUS:
+        StartAnimation(hwnd, AnimChannel::Hover, 1.0, 150);
+        return DefSubclassProc(hwnd, msg, wParam, lParam);
+    case WM_KILLFOCUS:
+        StartAnimation(hwnd, AnimChannel::Hover, 0.0, 180);
+        return DefSubclassProc(hwnd, msg, wParam, lParam);
+    case WM_NCPAINT: {
+        LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
+        DrawAnimatedEditFrame(hwnd);
+        return result;
+    }
+    case WM_APP_ANIMATION_TICK:
+        RedrawAnimatedControl(hwnd);
+        return 0;
+    }
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+void EnableInteractiveAnimation(HWND hwnd) {
+    if (!hwnd) return;
+    SetWindowSubclass(hwnd, InteractiveControlProc, 7, 0);
+}
+
+void ResizeMessageDialog(HWND hwnd) {
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    int w = rc.right - rc.left;
+    int h = rc.bottom - rc.top;
+    int pad = 24;
+    MoveWindow(GetDlgItem(hwnd, IDC_MESSAGE_TEXT), pad, pad, std::max(120, w - pad * 2), std::max(48, h - 96), TRUE);
+
+    HWND ok = GetDlgItem(hwnd, IDC_MESSAGE_OK);
+    HWND yes = GetDlgItem(hwnd, IDC_MESSAGE_YES);
+    HWND no = GetDlgItem(hwnd, IDC_MESSAGE_NO);
+    int buttonW = 94;
+    int buttonH = 36;
+    int y = h - pad - buttonH;
+    if (ok) {
+        MoveWindow(ok, w - pad - buttonW, y, buttonW, buttonH, TRUE);
+    } else {
+        MoveWindow(no, w - pad - buttonW, y, buttonW, buttonH, TRUE);
+        MoveWindow(yes, w - pad - buttonW * 2 - 12, y, buttonW, buttonH, TRUE);
+    }
+}
+
+LRESULT CALLBACK MessageDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    auto* state = reinterpret_cast<MessageDialogState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    switch (msg) {
+    case WM_CREATE: {
+        auto* create = reinterpret_cast<CREATESTRUCTW*>(lParam);
+        state = reinterpret_cast<MessageDialogState*>(create->lpCreateParams);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)state);
+        MakeSettingsControl(hwnd, L"STATIC", state->message.c_str(), SS_LEFT | SS_NOPREFIX, IDC_MESSAGE_TEXT);
+        if (state->yesNo) {
+            MakeSettingsControl(hwnd, L"BUTTON", Tr(L"Yes", L"\u662f").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_MESSAGE_YES);
+            MakeSettingsControl(hwnd, L"BUTTON", Tr(L"No", L"\u5426").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_MESSAGE_NO);
+        } else {
+            MakeSettingsControl(hwnd, L"BUTTON", Tr(L"OK", L"\u786e\u5b9a").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_MESSAGE_OK);
+        }
+        ApplyThemedControls(hwnd);
+        ResizeMessageDialog(hwnd);
+        return 0;
+    }
+    case WM_SIZE:
+        ResizeMessageDialog(hwnd);
+        return 0;
+    case WM_COMMAND:
+        switch (LOWORD(wParam)) {
+        case IDC_MESSAGE_YES:
+            state->result = IDYES;
+            BeginAnimatedClose(hwnd);
+            return 0;
+        case IDC_MESSAGE_NO:
+            state->result = IDNO;
+            BeginAnimatedClose(hwnd);
+            return 0;
+        case IDC_MESSAGE_OK:
+            state->result = IDOK;
+            BeginAnimatedClose(hwnd);
+            return 0;
+        }
+        break;
+    case WM_KEYDOWN:
+        if (wParam == VK_ESCAPE) {
+            state->result = state->yesNo ? IDNO : IDOK;
+            BeginAnimatedClose(hwnd);
+            return 0;
+        }
+        if (wParam == VK_RETURN) {
+            state->result = state->yesNo ? IDYES : IDOK;
+            BeginAnimatedClose(hwnd);
+            return 0;
+        }
+        break;
+    case WM_DRAWITEM: {
+        auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
+        if (DrawButtonItem(draw)) return TRUE;
+        break;
+    }
+    case WM_CTLCOLORSTATIC: {
+        HDC hdc = (HDC)wParam;
+        SetTextColor(hdc, COLOR_TEXT);
+        SetBkMode(hdc, TRANSPARENT);
+        return (LRESULT)GetStockObject(HOLLOW_BRUSH);
+    }
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(hwnd, &ps);
+        PaintAppBackground(hwnd, hdc);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_APP_ANIMATION_TICK:
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    case WM_APP_ANIMATION_DONE:
+        DestroyWindow(hwnd);
+        return 0;
+    case WM_CLOSE:
+        state->result = state->yesNo ? IDNO : IDOK;
+        BeginAnimatedClose(hwnd);
+        return 0;
+    case WM_DESTROY:
+        RemoveAnimationState(hwnd);
+        if (state) state->done = true;
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+int ThemedMessageBox(HWND owner, const std::wstring& message, const std::wstring& title, bool yesNo) {
+    HINSTANCE instance = GetModuleHandleW(nullptr);
+    const wchar_t* className = L"AttendanceMessageDialog";
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSW wc{};
+        wc.style = CS_DROPSHADOW;
+        wc.lpfnWndProc = MessageDialogProc;
+        wc.hInstance = instance;
+        wc.lpszClassName = className;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_APP_ICON));
+        wc.hbrBackground = nullptr;
+        RegisterClassW(&wc);
+        registered = true;
+    }
+
+    MessageDialogState state{title, message, yesNo, yesNo ? IDNO : IDOK, false};
+    HWND parent = owner ? owner : g_hwnd;
+    if (parent) EnableWindow(parent, FALSE);
+    HWND dialog = CreateWindowExW(
+        WS_EX_DLGMODALFRAME,
+        className,
+        title.c_str(),
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+        CW_USEDEFAULT, CW_USEDEFAULT, 470, 230,
+        parent, nullptr, instance, &state
+    );
+    if (!dialog) {
+        if (parent) EnableWindow(parent, TRUE);
+        return state.result;
+    }
+
+    BOOL dark = TRUE;
+    DwmSetWindowAttribute(dialog, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+    ApplyGlassTitleBar(dialog);
+    ShowWindow(dialog, SW_SHOW);
+    UpdateWindow(dialog);
+
+    MSG msg{};
+    while (!state.done && IsWindow(dialog) && GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+    if (IsWindow(dialog)) DestroyWindow(dialog);
+    if (parent) {
+        EnableWindow(parent, TRUE);
+        SetForegroundWindow(parent);
+    }
+    return state.result;
+}
+
 bool ConfirmDiscardUnsaved(const std::wstring& actionText) {
     if (!g_dirty) return true;
     std::wstring msg = Tr(L"You have unsaved changes. Continue and discard them?", L"\u5f53\u524d\u6709\u672a\u4fdd\u5b58\u7684\u4fee\u6539\u3002\u662f\u5426\u7ee7\u7eed\u5e76\u653e\u5f03\u8fd9\u4e9b\u4fee\u6539\uff1f");
     if (!actionText.empty()) msg += L"\n\n" + actionText;
     std::wstring title = Tr(L"Unsaved Changes", L"\u672a\u4fdd\u5b58\u7684\u4fee\u6539");
-    return MessageBoxW(g_hwnd, msg.c_str(), title.c_str(), MB_YESNO | MB_ICONWARNING) == IDYES;
+    return ThemedMessageBox(g_hwnd, msg, title, true) == IDYES;
 }
 
 LRESULT CALLBACK InputDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -369,11 +956,11 @@ LRESULT CALLBACK InputDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         if (LOWORD(wParam) == IDC_INPUT_OK) {
             state->value = GetText(GetDlgItem(hwnd, IDC_INPUT_EDIT));
             state->accepted = true;
-            DestroyWindow(hwnd);
+            BeginAnimatedClose(hwnd);
             return 0;
         }
         if (LOWORD(wParam) == IDC_INPUT_CANCEL) {
-            DestroyWindow(hwnd);
+            BeginAnimatedClose(hwnd);
             return 0;
         }
         break;
@@ -387,12 +974,15 @@ LRESULT CALLBACK InputDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             return 0;
         }
         break;
-    case WM_ERASEBKGND: {
-        RECT rc{};
-        GetClientRect(hwnd, &rc);
-        FillRect((HDC)wParam, &rc, g_bgBrush);
-        return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(hwnd, &ps);
+        PaintAppBackground(hwnd, hdc);
+        EndPaint(hwnd, &ps);
+        return 0;
     }
+    case WM_ERASEBKGND:
+        return 1;
     case WM_DRAWITEM: {
         auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
         if (DrawButtonItem(draw)) return TRUE;
@@ -410,8 +1000,14 @@ LRESULT CALLBACK InputDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         SetBkColor(hdc, COLOR_INPUT);
         return (LRESULT)g_inputBrush;
     }
-    case WM_CLOSE:
+    case WM_APP_ANIMATION_TICK:
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    case WM_APP_ANIMATION_DONE:
         DestroyWindow(hwnd);
+        return 0;
+    case WM_CLOSE:
+        BeginAnimatedClose(hwnd);
         return 0;
     }
     return DefWindowProcW(hwnd, msg, wParam, lParam);
@@ -423,6 +1019,7 @@ bool PromptText(const std::wstring& title, const std::wstring& prompt, std::wstr
     static bool registered = false;
     if (!registered) {
         WNDCLASSW wc{};
+        wc.style = CS_DROPSHADOW;
         wc.lpfnWndProc = InputDialogProc;
         wc.hInstance = instance;
         wc.lpszClassName = className;
@@ -517,8 +1114,6 @@ bool TranslateAdditionalLanguage(const std::wstring& key, std::wstring& out) {
             {L"Language", L"Spr\u00e5k", L"Ng\u00f4n ng\u1eef", L"\u8a9e\u8a00"},
             {L"Style", L"Stil", L"Giao di\u1ec7n", L"\u98a8\u683c"},
             {L"Interface Font", L"Grensesnittskrift", L"Ph\u00f4ng giao di\u1ec7n", L"\u4ecb\u9762\u5b57\u578b"},
-            {L"Dark", L"M\u00f8rk", L"T\u1ed1i", L"\u6df1\u8272"},
-            {L"Light", L"Lys", L"S\u00e1ng", L"\u6dfa\u8272"},
             {L"Apply", L"Bruk", L"\u00c1p d\u1ee5ng", L"\u5957\u7528"},
             {L"Close", L"Lukk", L"\u0110\u00f3ng", L"\u95dc\u9589"},
             {L"OK", L"OK", L"OK", L"\u78ba\u5b9a"},
@@ -651,8 +1246,6 @@ bool TranslateAdditionalLanguage(const std::wstring& key, std::wstring& out) {
             {L"Apply", L"\u884c\u4e4b"},
             {L"Close", L"\u9589"},
             {L"Reset All Settings", L"\u76e1\u5fa9\u521d\u8a2d"},
-            {L"Dark", L"\u7384"},
-            {L"Light", L"\u7d20"},
             {L"Imported successfully.", L"\u5999\u54c9\uff0c\u8f09\u5165\u5df2\u6210\uff01"},
             {L"Saved successfully.", L"\u5584\u54c9\uff0c\u6a94\u5df2\u85cf\uff01"},
             {L"CSV exported successfully.", L"\u5999\u54c9\uff0cCSV \u5df2\u532f\u51fa\uff01"},
@@ -733,8 +1326,6 @@ bool TranslateAdditionalLanguage(const std::wstring& key, std::wstring& out) {
         {L"Apply", L"Applica", L"\u0425\u044d\u0440\u044d\u0433\u0436\u04af\u04af\u043b\u044d\u0445", L"Apliki", L"\u5957\u7528", L"\u0e19\u0e33\u0e44\u0e1b\u0e43\u0e0a\u0e49", L"Ilapat", L"Uygula", L"Taikyti"},
         {L"Close", L"Chiudi", L"\u0425\u0430\u0430\u0445", L"Fermi", L"\u95dc\u9589", L"\u0e1b\u0e34\u0e14", L"Isara", L"Kapat", L"U\u017edaryti"},
         {L"Reset All Settings", L"Ripristina tutto", L"\u0411\u04af\u0445 \u0442\u043e\u0445\u0438\u0440\u0433\u043e\u043e\u0433 \u0441\u044d\u0440\u0433\u044d\u044d\u0445", L"Restarigi \u0109iujn agordojn", L"\u91cd\u8a2d\u8af8\u8a2d", L"\u0e23\u0e35\u0e40\u0e0b\u0e47\u0e15\u0e17\u0e31\u0e49\u0e07\u0e2b\u0e21\u0e14", L"I-reset lahat ng settings", L"T\u00fcm ayarlar\u0131 s\u0131f\u0131rla", L"Atkurti visus nustatymus"},
-        {L"Dark", L"Scuro", L"\u0425\u0430\u0440", L"Malhela", L"\u6df1\u8272", L"\u0e21\u0e37\u0e14", L"Madilim", L"Koyu", L"Tamsi"},
-        {L"Light", L"Chiaro", L"\u0413\u044d\u0440\u044d\u043b\u0442\u044d\u0439", L"Hela", L"\u6dfa\u8272", L"\u0e2a\u0e27\u0e48\u0e32\u0e07", L"Maliwanag", L"A\u00e7\u0131k", L"\u0160viesi"},
         {L"OK", L"OK", L"OK", L"Bone", L"\u53ef", L"OK", L"OK", L"Tamam", L"Gerai"},
         {L"Cancel", L"Annulla", L"\u0426\u0443\u0446\u043b\u0430\u0445", L"Nuligi", L"\u53d6\u6d88", L"\u0e22\u0e01\u0e40\u0e25\u0e34\u0e01", L"Kanselahin", L"\u0130ptal", L"At\u0161aukti"},
         {L"Imported successfully.", L"Importazione riuscita.", L"\u0410\u043c\u0436\u0438\u043b\u0442\u0442\u0430\u0439 \u0438\u043c\u043f\u043e\u0440\u0442\u043b\u043e\u043e.", L"Sukcese importita.", L"\u532f\u5165\u5df2\u6210\u3002", L"\u0e19\u0e33\u0e40\u0e02\u0e49\u0e32\u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08", L"Matagumpay na na-import.", L"Ba\u015far\u0131yla i\u00e7e aktar\u0131ld\u0131.", L"S\u0117kmingai importuota."},
@@ -950,8 +1541,6 @@ std::wstring Tr(const wchar_t* english, const wchar_t*) {
         {L"Apply", L"\u5e94\u7528", L"Applika", L"\u9069\u7528", L"Appliquer", L"Anwenden", L"\u041f\u0440\u0438\u043c\u0435\u043d\u0438\u0442\u044c", L"\u5957\u7528", L"Aplicar"},
         {L"Close", L"\u5173\u95ed", L"Ag\u0127laq", L"\u9589\u3058\u308b", L"Fermer", L"Schlie\u00dfen", L"\u0417\u0430\u043a\u0440\u044b\u0442\u044c", L"\u95dc\u9589", L"Cerrar"},
         {L"Reset All Settings", L"\u91cd\u7f6e\u6240\u6709\u8bbe\u7f6e", L"Irrisettja kollox", L"\u3059\u3079\u3066\u30ea\u30bb\u30c3\u30c8", L"Tout r\u00e9initialiser", L"Alles zur\u00fccksetzen", L"\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c \u0432\u0441\u0451", L"\u91cd\u8a2d\u6240\u6709\u8a2d\u5b9a", L"Restablecer todo"},
-        {L"Dark", L"\u6df1\u8272", L"Skur", L"\u30c0\u30fc\u30af", L"Sombre", L"Dunkel", L"\u0422\u0451\u043c\u043d\u0430\u044f", L"\u6df1\u8272", L"Oscuro"},
-        {L"Light", L"\u6d45\u8272", L"\u010aar", L"\u30e9\u30a4\u30c8", L"Clair", L"Hell", L"\u0421\u0432\u0435\u0442\u043b\u0430\u044f", L"\u6dfa\u8272", L"Claro"},
     };
     for (const auto& entry : entries) {
         if (key == entry.key) {
@@ -974,6 +1563,52 @@ std::wstring Tr(const wchar_t* english, const wchar_t*) {
 HFONT CreateUiFont(int height, int weight) {
     return CreateFontW(height, 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, g_fontFamily.c_str());
+}
+
+int CALLBACK EnumFontFamilyProc(const LOGFONTW* logFont, const TEXTMETRICW*, DWORD, LPARAM lParam) {
+    auto* fonts = reinterpret_cast<std::set<std::wstring>*>(lParam);
+    if (logFont && logFont->lfFaceName[0]) {
+        fonts->insert(logFont->lfFaceName);
+    }
+    return 1;
+}
+
+void FillInstalledFontFamilies() {
+    std::set<std::wstring> fonts;
+    HDC hdc = GetDC(nullptr);
+    if (hdc) {
+        LOGFONTW lf{};
+        lf.lfCharSet = DEFAULT_CHARSET;
+        EnumFontFamiliesExW(hdc, &lf, EnumFontFamilyProc, reinterpret_cast<LPARAM>(&fonts), 0);
+        ReleaseDC(nullptr, hdc);
+    }
+    if (fonts.empty()) {
+        fonts.insert(L"Segoe UI");
+        fonts.insert(L"Microsoft YaHei UI");
+    }
+    fonts.insert(g_fontFamily);
+    g_availableFonts.assign(fonts.begin(), fonts.end());
+}
+
+std::wstring GetComboSelectedText(HWND combo) {
+    int index = (int)SendMessageW(combo, CB_GETCURSEL, 0, 0);
+    if (index < 0) return {};
+    int len = (int)SendMessageW(combo, CB_GETLBTEXTLEN, index, 0);
+    if (len < 0) return {};
+    std::wstring text(len + 1, L'\0');
+    SendMessageW(combo, CB_GETLBTEXT, index, (LPARAM)text.data());
+    text.resize(len);
+    return text;
+}
+
+void CommitComboSelectionNow(HWND combo) {
+    if (!combo) return;
+    RedrawWindow(combo, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+    COMBOBOXINFO info{};
+    info.cbSize = sizeof(info);
+    if (GetComboBoxInfo(combo, &info) && info.hwndList) {
+        RedrawWindow(info.hwndList, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+    }
 }
 
 std::filesystem::path SettingsFilePath() {
@@ -1041,9 +1676,9 @@ void SaveSettings() {
     std::ofstream file(path, std::ios::binary);
     if (!file) return;
     file << "language=" << LanguageToString(g_language) << "\n";
-    file << "theme=" << (g_theme == UiTheme::Light ? "light" : "dark") << "\n";
     file << "font=" << WideToUtf8(g_fontFamily) << "\n";
     file << "default_save_dir=" << WideToUtf8(g_defaultSaveDir) << "\n";
+    file << "particles=" << (g_particlesEnabled ? "1" : "0") << "\n";
 }
 
 void LoadSettings() {
@@ -1060,10 +1695,12 @@ void LoadSettings() {
         std::string key = line.substr(0, pos);
         std::string value = line.substr(pos + 1);
         if (key == "language") g_language = LanguageFromString(value);
-        else if (key == "theme") g_theme = value == "light" ? UiTheme::Light : UiTheme::Dark;
+        else if (key == "theme") g_theme = UiTheme::Dark;
         else if (key == "font" && !value.empty()) g_fontFamily = Utf8ToWide(value);
         else if (key == "default_save_dir") g_defaultSaveDir = Utf8ToWide(value);
+        else if (key == "particles") g_particlesEnabled = value != "0";
     }
+    g_theme = UiTheme::Dark;
 }
 
 void ResetSettings() {
@@ -1076,6 +1713,7 @@ void ResetSettings() {
     g_theme = UiTheme::Dark;
     g_fontFamily = L"Segoe UI";
     g_defaultSaveDir.clear();
+    g_particlesEnabled = true;
 }
 
 std::string WideToUtf8(const std::wstring& input) {
@@ -1412,7 +2050,7 @@ std::wstring CurrentDateTimeText() {
 }
 
 void ShowMessage(const std::wstring& text, const std::wstring& title = L"AttendanceApp") {
-    MessageBoxW(g_hwnd, text.c_str(), title.c_str(), MB_OK | MB_ICONINFORMATION);
+    ThemedMessageBox(g_hwnd, text, title, false);
 }
 
 void UpdateStats() {
@@ -1441,6 +2079,22 @@ void UpdateStats() {
         ss << L"  |  " << Tr(L"Showing", L"\u663e\u793a") << L" " << g_visibleRows.size() << L"/" << g_records.size();
     }
     SetStaticTextClean(GetDlgItem(g_hwnd, IDC_STATS), ss.str());
+
+    std::wstringstream totalCard;
+    totalCard << Tr(L"Total", L"\u603b\u6570") << L"\n" << g_records.size();
+    SetStaticTextClean(GetDlgItem(g_hwnd, IDC_STAT_TOTAL), totalCard.str());
+
+    std::wstringstream attendanceCard;
+    attendanceCard << Tr(L"Attendance", L"\u51fa\u52e4\u7387") << L"\n" << std::fixed << std::setprecision(1) << attendanceRate << L"%";
+    SetStaticTextClean(GetDlgItem(g_hwnd, IDC_STAT_ATTENDANCE), attendanceCard.str());
+
+    std::wstringstream issuesCard;
+    issuesCard << Tr(L"Absent/Late", L"\u7f3a\u5e2d/\u8fdf\u5230") << L"\n" << std::fixed << std::setprecision(1) << issueRate << L"%";
+    SetStaticTextClean(GetDlgItem(g_hwnd, IDC_STAT_ISSUES), issuesCard.str());
+
+    std::wstringstream visibleCard;
+    visibleCard << Tr(L"Showing", L"\u663e\u793a") << L"\n" << g_visibleRows.size() << L" / " << g_records.size();
+    SetStaticTextClean(GetDlgItem(g_hwnd, IDC_STAT_VISIBLE), visibleCard.str());
 }
 
 void RefreshList() {
@@ -1461,6 +2115,7 @@ void RefreshList() {
         ListView_SetItemText(g_list, visibleIndex, 3, const_cast<wchar_t*>(g_records[i].other.c_str()));
     }
     UpdateStats();
+    StartListTransition();
 }
 
 void RefreshCourseCombo() {
@@ -1471,7 +2126,7 @@ void RefreshCourseCombo() {
         SendMessageW(g_courseCombo, CB_ADDSTRING, 0, (LPARAM)sheet.name.c_str());
     }
     SendMessageW(g_courseCombo, CB_SETCURSEL, g_activeSheet, 0);
-    RedrawWindow(g_courseCombo, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+    RedrawWindow(g_courseCombo, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
 }
 
 void SwitchCourse(int index) {
@@ -1517,7 +2172,7 @@ void DeleteCurrentCourse() {
     }
     std::wstring deleteCourseMsg = Tr(L"Delete the current course and its records?", L"\u5220\u9664\u5f53\u524d\u8bfe\u7a0b\u53ca\u5176\u8bb0\u5f55\uff1f");
     std::wstring deleteCourseTitle = Tr(L"Delete Course", L"\u5220\u9664\u8bfe\u7a0b");
-    if (MessageBoxW(g_hwnd, deleteCourseMsg.c_str(), deleteCourseTitle.c_str(), MB_YESNO | MB_ICONWARNING) != IDYES) {
+    if (ThemedMessageBox(g_hwnd, deleteCourseMsg, deleteCourseTitle, true) != IDYES) {
         return;
     }
     PushUndo();
@@ -1556,6 +2211,25 @@ int ThemedMenuHitTest(ThemedMenuState* state, int y) {
     return -1;
 }
 
+void DrawSoftDivider(HDC hdc, int left, int right, int y) {
+    if (right <= left) return;
+    int mid = left + (right - left) / 2;
+
+    TRIVERTEX leftVerts[2] = {
+        {(LONG)left, (LONG)y, 0, 0, 0, 0},
+        {(LONG)mid, (LONG)(y + 1), 0x3f00, 0x3f00, 0x3f00, 0}
+    };
+    GRADIENT_RECT leftRect{0, 1};
+    GradientFill(hdc, leftVerts, 2, &leftRect, 1, GRADIENT_FILL_RECT_H);
+
+    TRIVERTEX rightVerts[2] = {
+        {(LONG)mid, (LONG)y, 0x3f00, 0x3f00, 0x3f00, 0},
+        {(LONG)right, (LONG)(y + 1), 0, 0, 0, 0}
+    };
+    GRADIENT_RECT rightRect{0, 1};
+    GradientFill(hdc, rightVerts, 2, &rightRect, 1, GRADIENT_FILL_RECT_H);
+}
+
 RECT ThemedMenuItemRect(HWND hwnd, const ThemedMenuState* state, int index) {
     RECT rc{};
     GetClientRect(hwnd, &rc);
@@ -1569,33 +2243,42 @@ RECT ThemedMenuItemRect(HWND hwnd, const ThemedMenuState* state, int index) {
 void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState* state) {
     RECT rc{};
     GetClientRect(hwnd, &rc);
-    COLORREF fill = g_theme == UiTheme::Dark ? RGB(31, 35, 44) : RGB(248, 252, 248);
-    COLORREF border = g_theme == UiTheme::Dark ? RGB(78, 87, 106) : RGB(180, 205, 186);
-    COLORREF hover = g_theme == UiTheme::Dark ? RGB(48, 82, 126) : RGB(224, 246, 232);
-    COLORREF separator = g_theme == UiTheme::Dark ? RGB(72, 78, 94) : RGB(209, 222, 212);
+    double reveal = GetAnimationValue(hwnd, AnimChannel::Reveal, 1.0);
+    COLORREF fill = BlendColor(RGB(0, 0, 0), RGB(14, 14, 14), reveal);
+    COLORREF border = BlendColor(RGB(28, 28, 28), RGB(68, 68, 68), reveal);
+    COLORREF hover = RGB(36, 36, 36);
+    int blurRadius = (int)std::lround(reveal * 10.0);
 
     HBRUSH bg = CreateSolidBrush(fill);
     FillRect(hdc, &rc, bg);
     DeleteObject(bg);
 
+    for (int i = 0; i < blurRadius; i += 3) {
+        RECT glow{rc.left + i, rc.top + i, rc.right - i, rc.bottom - i};
+        HPEN glowPen = CreatePen(PS_SOLID, 1, BlendColor(RGB(10, 10, 10), RGB(42, 42, 42), reveal * (1.0 - i / 12.0)));
+        HGDIOBJ oldGlowPen = SelectObject(hdc, glowPen);
+        HGDIOBJ oldGlowBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
+        Rectangle(hdc, glow.left, glow.top, glow.right, glow.bottom);
+        SelectObject(hdc, oldGlowBrush);
+        SelectObject(hdc, oldGlowPen);
+        DeleteObject(glowPen);
+    }
+
     HGDIOBJ oldFont = SelectObject(hdc, g_font);
     SetBkMode(hdc, TRANSPARENT);
 
     for (int i = 0; i < (int)state->items.size(); ++i) {
+        double itemProgress = ElasticOut(std::clamp((reveal - i * 0.085) / 0.55, 0.0, 1.0));
         int top = ThemedMenuItemTop(state, i);
         if (state->items[i].separator) {
-            HPEN sepPen = CreatePen(PS_SOLID, 1, separator);
-            HGDIOBJ oldPen = SelectObject(hdc, sepPen);
-            MoveToEx(hdc, 12, top + 6, nullptr);
-            LineTo(hdc, rc.right - 12, top + 6);
-            SelectObject(hdc, oldPen);
-            DeleteObject(sepPen);
+            DrawSoftDivider(hdc, 12, rc.right - 12, top + 6);
             continue;
         }
 
-        RECT itemRc{6, top, rc.right - 6, top + 34};
+        RECT itemRc{0, top, rc.right, top + 34};
         if (i == state->hover) {
-            HBRUSH hoverBrush = CreateSolidBrush(hover);
+            double hot = GetAnimationValue(hwnd, AnimChannel::Hover, 1.0);
+            HBRUSH hoverBrush = CreateSolidBrush(BlendColor(fill, hover, hot));
             FillRect(hdc, &itemRc, hoverBrush);
             DeleteObject(hoverBrush);
         }
@@ -1603,7 +2286,7 @@ void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState* state) {
         RECT textRc = itemRc;
         textRc.left += 16;
         textRc.right -= 16;
-        SetTextColor(hdc, COLOR_TEXT);
+        SetTextColor(hdc, BlendColor(COLOR_MUTED, COLOR_TEXT, itemProgress));
         DrawTextW(hdc, state->items[i].text.c_str(), -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
 
@@ -1634,6 +2317,14 @@ void PaintThemedPopupMenu(HWND hwnd, HDC hdc, ThemedMenuState* state) {
     DeleteDC(memDc);
 }
 
+void CloseThemedPopupMenu(HWND hwnd, ThemedMenuState* state, int selected) {
+    if (!state || state->closing) return;
+    state->selected = selected;
+    state->closing = true;
+    ReleaseCapture();
+    BeginAnimatedClose(hwnd, 160);
+}
+
 LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     auto* state = reinterpret_cast<ThemedMenuState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     switch (msg) {
@@ -1652,11 +2343,12 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     case WM_ERASEBKGND:
         return 1;
     case WM_MOUSEMOVE:
-        if (state) {
+        if (state && !state->closing) {
             int next = ThemedMenuHitTest(state, GET_Y_LPARAM(lParam));
             if (next != state->hover) {
                 RECT oldRc = ThemedMenuItemRect(hwnd, state, state->hover);
                 state->hover = next;
+                StartAnimation(hwnd, AnimChannel::Hover, next >= 0 ? 1.0 : 0.0, 110);
                 RECT newRc = ThemedMenuItemRect(hwnd, state, state->hover);
                 InvalidateRect(hwnd, &oldRc, FALSE);
                 InvalidateRect(hwnd, &newRc, FALSE);
@@ -1664,53 +2356,50 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
         return 0;
     case WM_LBUTTONDOWN:
-        if (state) {
+        if (state && !state->closing) {
             POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             RECT rc{};
             GetClientRect(hwnd, &rc);
             if (!PtInRect(&rc, pt)) {
-                state->selected = 0;
-                state->done = true;
-                DestroyWindow(hwnd);
+                CloseThemedPopupMenu(hwnd, state, 0);
                 return 0;
             }
         }
         return 0;
     case WM_LBUTTONUP:
-        if (state) {
+        if (state && !state->closing) {
             int hit = ThemedMenuHitTest(state, GET_Y_LPARAM(lParam));
-            state->selected = hit >= 0 ? state->items[hit].command : 0;
-            state->done = true;
-            DestroyWindow(hwnd);
+            CloseThemedPopupMenu(hwnd, state, hit >= 0 ? state->items[hit].command : 0);
         }
         return 0;
     case WM_KEYDOWN:
-        if (wParam == VK_ESCAPE && state) {
-            state->selected = 0;
-            state->done = true;
-            DestroyWindow(hwnd);
+        if (wParam == VK_ESCAPE && state && !state->closing) {
+            CloseThemedPopupMenu(hwnd, state, 0);
             return 0;
         }
         break;
     case WM_ACTIVATE:
-        if (LOWORD(wParam) == WA_INACTIVE && state && !state->done) {
-            state->selected = 0;
-            state->done = true;
-            DestroyWindow(hwnd);
+        if (LOWORD(wParam) == WA_INACTIVE && state && !state->done && !state->closing) {
+            CloseThemedPopupMenu(hwnd, state, 0);
             return 0;
         }
         break;
     case WM_CAPTURECHANGED:
-        if (state && !state->done && (HWND)lParam != hwnd) {
-            state->selected = 0;
-            state->done = true;
-            DestroyWindow(hwnd);
+        if (state && !state->done && !state->closing && (HWND)lParam != hwnd) {
+            CloseThemedPopupMenu(hwnd, state, 0);
             return 0;
         }
         break;
+    case WM_APP_ANIMATION_TICK:
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    case WM_APP_ANIMATION_DONE:
+        DestroyWindow(hwnd);
+        return 0;
     case WM_DESTROY:
         ReleaseCapture();
         if (state) state->done = true;
+        RemoveAnimationState(hwnd);
         return 0;
     }
     return DefWindowProcW(hwnd, msg, wParam, lParam);
@@ -1721,6 +2410,7 @@ void RegisterThemedMenuClass() {
     if (registered) return;
 
     WNDCLASSW wc{};
+    wc.style = CS_DROPSHADOW;
     wc.lpfnWndProc = ThemedMenuProc;
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.lpszClassName = L"AttendanceThemedPopupMenu";
@@ -1781,8 +2471,9 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem>& items) {
     );
     if (!popup) return 0;
 
-    BOOL dark = g_theme == UiTheme::Dark;
+    BOOL dark = TRUE;
     DwmSetWindowAttribute(popup, 20, &dark, sizeof(dark));
+    StartWindowReveal(popup, 260);
     ShowWindow(popup, SW_SHOW);
     SetWindowPos(popup, HWND_TOPMOST, x, y, width, height, SWP_SHOWWINDOW);
     SetForegroundWindow(popup);
@@ -1822,99 +2513,28 @@ void ResetBrushes() {
 }
 
 void ApplyThemePalette() {
-    if (g_theme == UiTheme::Dark) {
-        COLOR_BG = RGB(24, 26, 32);
-        COLOR_PANEL = RGB(34, 37, 45);
-        COLOR_INPUT = RGB(44, 48, 58);
-        COLOR_TEXT = RGB(235, 238, 245);
-        COLOR_MUTED = RGB(168, 174, 190);
-        COLOR_ACCENT = RGB(64, 156, 255);
-        COLOR_DANGER = RGB(238, 91, 91);
-    } else {
-        COLOR_BG = RGB(245, 247, 251);
-        COLOR_PANEL = RGB(255, 255, 255);
-        COLOR_INPUT = RGB(255, 255, 255);
-        COLOR_TEXT = RGB(24, 28, 36);
-        COLOR_MUTED = RGB(91, 99, 118);
-        COLOR_ACCENT = RGB(24, 119, 242);
-        COLOR_DANGER = RGB(196, 54, 54);
-    }
+    g_theme = UiTheme::Dark;
+    COLOR_BG = RGB(0, 0, 0);
+    COLOR_PANEL = RGB(18, 18, 18);
+    COLOR_INPUT = RGB(26, 26, 26);
+    COLOR_TEXT = RGB(255, 255, 255);
+    COLOR_MUTED = RGB(224, 224, 224);
+    COLOR_ACCENT = RGB(188, 188, 188);
+    COLOR_DANGER = RGB(176, 112, 112);
     ResetBrushes();
 }
 
-void PaintGradientBackground(HWND hwnd, HDC hdc) {
+void PaintAppBackground(HWND hwnd, HDC hdc) {
     RECT rc{};
     GetClientRect(hwnd, &rc);
     if (rc.right <= rc.left || rc.bottom <= rc.top) return;
-
-    COLORREF top = g_theme == UiTheme::Dark ? RGB(18, 22, 31) : RGB(238, 250, 245);
-    COLORREF bottom = g_theme == UiTheme::Dark ? RGB(33, 39, 54) : RGB(246, 249, 255);
-
-    TRIVERTEX vertices[2]{};
-    vertices[0].x = rc.left;
-    vertices[0].y = rc.top;
-    vertices[0].Red = GetRValue(top) << 8;
-    vertices[0].Green = GetGValue(top) << 8;
-    vertices[0].Blue = GetBValue(top) << 8;
-    vertices[0].Alpha = 0;
-    vertices[1].x = rc.right;
-    vertices[1].y = rc.bottom;
-    vertices[1].Red = GetRValue(bottom) << 8;
-    vertices[1].Green = GetGValue(bottom) << 8;
-    vertices[1].Blue = GetBValue(bottom) << 8;
-    vertices[1].Alpha = 0;
-
-    GRADIENT_RECT gradient{0, 1};
-    GradientFill(hdc, vertices, 2, &gradient, 1, GRADIENT_FILL_RECT_V);
+    FillRect(hdc, &rc, g_bgBrush);
 }
 
-void PaintGradientBackgroundSlice(HWND child, HDC hdc) {
-    HWND parent = GetParent(child);
-    if (!parent) {
-        PaintGradientBackground(child, hdc);
-        return;
-    }
-
-    RECT parentRc{};
-    RECT childRc{};
-    GetClientRect(parent, &parentRc);
-    GetWindowRect(child, &childRc);
-    MapWindowPoints(nullptr, parent, reinterpret_cast<POINT*>(&childRc), 2);
-    if (parentRc.right <= parentRc.left || parentRc.bottom <= parentRc.top) return;
-
-    COLORREF top = g_theme == UiTheme::Dark ? RGB(18, 22, 31) : RGB(238, 250, 245);
-    COLORREF bottom = g_theme == UiTheme::Dark ? RGB(33, 39, 54) : RGB(246, 249, 255);
-    int parentH = std::max(1, static_cast<int>(parentRc.bottom - parentRc.top));
-    auto channelAt = [&](int topValue, int bottomValue, int y) {
-        y = std::clamp(y, 0, parentH);
-        return topValue + (bottomValue - topValue) * y / parentH;
-    };
-
-    COLORREF sliceTop = RGB(
-        channelAt(GetRValue(top), GetRValue(bottom), childRc.top),
-        channelAt(GetGValue(top), GetGValue(bottom), childRc.top),
-        channelAt(GetBValue(top), GetBValue(bottom), childRc.top));
-    COLORREF sliceBottom = RGB(
-        channelAt(GetRValue(top), GetRValue(bottom), childRc.bottom),
-        channelAt(GetGValue(top), GetGValue(bottom), childRc.bottom),
-        channelAt(GetBValue(top), GetBValue(bottom), childRc.bottom));
-
+void PaintAppBackgroundSlice(HWND child, HDC hdc) {
     RECT rc{};
     GetClientRect(child, &rc);
-    TRIVERTEX vertices[2]{};
-    vertices[0].x = rc.left;
-    vertices[0].y = rc.top;
-    vertices[0].Red = GetRValue(sliceTop) << 8;
-    vertices[0].Green = GetGValue(sliceTop) << 8;
-    vertices[0].Blue = GetBValue(sliceTop) << 8;
-    vertices[1].x = rc.right;
-    vertices[1].y = rc.bottom;
-    vertices[1].Red = GetRValue(sliceBottom) << 8;
-    vertices[1].Green = GetGValue(sliceBottom) << 8;
-    vertices[1].Blue = GetBValue(sliceBottom) << 8;
-
-    GRADIENT_RECT gradient{0, 1};
-    GradientFill(hdc, vertices, 2, &gradient, 1, GRADIENT_FILL_RECT_V);
+    FillRect(hdc, &rc, g_bgBrush);
 }
 
 BOOL CALLBACK ApplyFontToChild(HWND child, LPARAM) {
@@ -1937,11 +2557,15 @@ void RecreateFonts() {
         SendMessageW(GetDlgItem(g_hwnd, IDC_SUBTITLE), WM_SETFONT, (WPARAM)g_smallFont, TRUE);
         SendMessageW(GetDlgItem(g_hwnd, IDC_STATS), WM_SETFONT, (WPARAM)g_smallFont, TRUE);
         SendMessageW(GetDlgItem(g_hwnd, IDC_HINT), WM_SETFONT, (WPARAM)g_smallFont, TRUE);
+        SendMessageW(GetDlgItem(g_hwnd, IDC_STAT_TOTAL), WM_SETFONT, (WPARAM)g_smallFont, TRUE);
+        SendMessageW(GetDlgItem(g_hwnd, IDC_STAT_ATTENDANCE), WM_SETFONT, (WPARAM)g_smallFont, TRUE);
+        SendMessageW(GetDlgItem(g_hwnd, IDC_STAT_ISSUES), WM_SETFONT, (WPARAM)g_smallFont, TRUE);
+        SendMessageW(GetDlgItem(g_hwnd, IDC_STAT_VISIBLE), WM_SETFONT, (WPARAM)g_smallFont, TRUE);
     }
 }
 
 BOOL CALLBACK ApplyThemeToChild(HWND child, LPARAM) {
-    SetWindowTheme(child, g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+    SetWindowTheme(child, L"DarkMode_Explorer", nullptr);
     wchar_t className[32]{};
     GetClassNameW(child, className, 32);
     if (lstrcmpiW(className, L"ComboBox") == 0) ApplyComboDropDownTheme(child);
@@ -1951,7 +2575,7 @@ BOOL CALLBACK ApplyThemeToChild(HWND child, LPARAM) {
 
 void ApplyThemedControls(HWND root) {
     if (!root) return;
-    SetWindowTheme(root, g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+    SetWindowTheme(root, L"DarkMode_Explorer", nullptr);
     EnumChildWindows(root, ApplyThemeToChild, 0);
 }
 
@@ -2008,10 +2632,11 @@ void ApplyVisualSettings() {
     if (g_list) {
         ApplyDarkMode(g_hwnd);
     }
-    BOOL dark = g_theme == UiTheme::Dark;
+    BOOL dark = TRUE;
     if (g_hwnd) DwmSetWindowAttribute(g_hwnd, 20, &dark, sizeof(dark));
     if (g_settingsWindow) DwmSetWindowAttribute(g_settingsWindow, 20, &dark, sizeof(dark));
     if (g_chartWindow) DwmSetWindowAttribute(g_chartWindow, 20, &dark, sizeof(dark));
+    ApplyGlassTitleBar(g_hwnd);
     ApplyThemedControls(g_hwnd);
     ApplyThemedControls(g_settingsWindow);
     if (g_hwnd) {
@@ -2106,7 +2731,7 @@ void MarkAllPresent() {
     }
     std::wstring allPresentMsg = Tr(L"Mark every record as Present?", L"\u5c06\u6240\u6709\u8bb0\u5f55\u6807\u8bb0\u4e3a\u51fa\u5e2d\uff1f");
     std::wstring allPresentTitle = Tr(L"All Present", L"\u5168\u5458\u51fa\u5e2d");
-    if (MessageBoxW(g_hwnd, allPresentMsg.c_str(), allPresentTitle.c_str(), MB_YESNO | MB_ICONQUESTION) == IDYES) {
+    if (ThemedMessageBox(g_hwnd, allPresentMsg, allPresentTitle, true) == IDYES) {
         PushUndo();
         MarkDirty();
         for (auto& record : g_records) {
@@ -2149,7 +2774,7 @@ void DeleteSelectedRecords() {
     ss << Tr(L"Delete", L"\u5220\u9664") << L" " << rows.size() << L" "
        << Tr(L"selected record(s)?", L"\u6761\u9009\u4e2d\u8bb0\u5f55\uff1f");
     std::wstring deleteTitle = Tr(L"Delete Selected", L"\u5220\u9664\u9009\u4e2d");
-    if (MessageBoxW(g_hwnd, ss.str().c_str(), deleteTitle.c_str(), MB_YESNO | MB_ICONWARNING) == IDYES) {
+    if (ThemedMessageBox(g_hwnd, ss.str(), deleteTitle, true) == IDYES) {
         EraseRows(rows);
     }
 }
@@ -2169,7 +2794,7 @@ void DeleteRecordsByStatus(const std::wstring& status) {
     ss << Tr(L"Delete all", L"\u5220\u9664\u6240\u6709") << L" " << status << L" "
        << Tr(L"records?", L"\u8bb0\u5f55\uff1f") << L" (" << rows.size() << L")";
     std::wstring batchTitle = Tr(L"Batch Delete", L"\u6279\u91cf\u5220\u9664");
-    if (MessageBoxW(g_hwnd, ss.str().c_str(), batchTitle.c_str(), MB_YESNO | MB_ICONWARNING) == IDYES) {
+    if (ThemedMessageBox(g_hwnd, ss.str(), batchTitle, true) == IDYES) {
         EraseRows(rows);
     }
 }
@@ -2181,7 +2806,7 @@ void ClearAllRecords() {
     }
     std::wstring clearMsg = Tr(L"Clear every attendance record in this sheet?", L"\u6e05\u7a7a\u5f53\u524d\u8868\u5185\u7684\u6240\u6709\u70b9\u540d\u8bb0\u5f55\uff1f");
     std::wstring clearTitle = Tr(L"Clear All", L"\u5168\u90e8\u6e05\u7a7a");
-    if (MessageBoxW(g_hwnd, clearMsg.c_str(), clearTitle.c_str(), MB_YESNO | MB_ICONWARNING) == IDYES) {
+    if (ThemedMessageBox(g_hwnd, clearMsg, clearTitle, true) == IDYES) {
         PushUndo();
         MarkDirty();
         g_records.clear();
@@ -2631,9 +3256,9 @@ std::string EllipseShape(int id, int x, int y, int cx, int cy, const char* fill,
 
 void AddPieShape(std::ostringstream& ss, int& id, const PptStats& stats, int cx, int cy, int radius) {
     int values[] = {stats.present, stats.absent, stats.late, stats.other};
-    const char* colors[] = {"45D483", "FF6B6B", "FFB84D", "6CA8FF"};
+    const char* colors[] = {"8CA39A", "A67575", "A89876", "9A9A9A"};
     if (stats.total <= 0) {
-        ss << EllipseShape(id++, cx - radius, cy - radius, radius * 2, radius * 2, "2E456F", "D9E7FF", 100000);
+        ss << EllipseShape(id++, cx - radius, cy - radius, radius * 2, radius * 2, "1A1A1A", "E0E0E0", 100000);
         return;
     }
 
@@ -2655,15 +3280,13 @@ void AddPieShape(std::ostringstream& ss, int& id, const PptStats& stats, int cx,
         }
         angle += sweep;
     }
-    ss << EllipseShape(id++, cx - radius, cy - radius, radius * 2, radius * 2, "FFFFFF", "D9E7FF", 0);
+    ss << EllipseShape(id++, cx - radius, cy - radius, radius * 2, radius * 2, "FFFFFF", "E0E0E0", 0);
 }
 
 std::string SlideBackground() {
     return "<p:sp><p:nvSpPr><p:cNvPr id=\"2\" name=\"Background\"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>"
            "<p:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"12192000\" cy=\"6858000\"/></a:xfrm>"
-           "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:gradFill flip=\"none\" rotWithShape=\"1\">"
-           "<a:gsLst><a:gs pos=\"0\"><a:srgbClr val=\"172033\"/></a:gs><a:gs pos=\"100000\"><a:srgbClr val=\"243B68\"/></a:gs></a:gsLst>"
-           "<a:lin ang=\"5400000\" scaled=\"1\"/></a:gradFill><a:ln><a:noFill/></a:ln></p:spPr></p:sp>";
+           "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val=\"000000\"/></a:solidFill><a:ln><a:noFill/></a:ln></p:spPr></p:sp>";
 }
 
 std::string SlideXml(const std::string& body) {
@@ -2683,28 +3306,28 @@ std::string BuildPptSlide1(const std::wstring& course, const PptStats& stats) {
     rateText << rate << L"%";
     std::ostringstream ss;
     ss << SlideBackground();
-    ss << ShapeText(id++, 760000, 520000, 8000000, 340000, Tr(L"Attendance", L"\u51fa\u52e4\u7387") + L" Report", 1300, "6CA8FF", true);
+    ss << ShapeText(id++, 760000, 520000, 8000000, 340000, Tr(L"Attendance", L"\u51fa\u52e4\u7387") + L" Report", 1300, "BDBDBD", true);
     ss << ShapeText(id++, 740000, 900000, 8400000, 700000, Tr(L"Attendance Manager", L"\u70b9\u540d\u7ba1\u7406\u5668"), 3400, "FFFFFF", true);
-    ss << ShapeText(id++, 760000, 1600000, 7600000, 420000, course, 1600, "D9E7FF");
-    ss << RectShape(id++, 760000, 2180000, 10670000, 22000, "6CA8FF", "6CA8FF", 100000);
+    ss << ShapeText(id++, 760000, 1600000, 7600000, 420000, course, 1600, "E0E0E0");
+    ss << RectShape(id++, 760000, 2180000, 10670000, 22000, "BDBDBD", "BDBDBD", 100000);
 
-    ss << RectShape(id++, 800000, 2680000, 4650000, 2450000, "1C2C4A", "3E5F95", 93000);
-    ss << ShapeText(id++, 1160000, 3020000, 3600000, 360000, Tr(L"Attendance", L"\u51fa\u52e4\u7387"), 1550, "45D483", true);
+    ss << RectShape(id++, 800000, 2680000, 4650000, 2450000, "121212", "444444", 93000);
+    ss << ShapeText(id++, 1160000, 3020000, 3600000, 360000, Tr(L"Attendance", L"\u51fa\u52e4\u7387"), 1550, "8CA39A", true);
     ss << ShapeText(id++, 1120000, 3420000, 3400000, 920000, rateText.str(), 4400, "FFFFFF", true);
-    ss << ShapeText(id++, 1160000, 4520000, 3600000, 340000, Tr(L"Present", L"\u51fa\u5e2d") + L" " + std::to_wstring(stats.present) + L" / " + Tr(L"Total", L"\u603b\u6570") + L" " + std::to_wstring(stats.total), 1250, "BFD0EA", true);
+    ss << ShapeText(id++, 1160000, 4520000, 3600000, 340000, Tr(L"Present", L"\u51fa\u5e2d") + L" " + std::to_wstring(stats.present) + L" / " + Tr(L"Total", L"\u603b\u6570") + L" " + std::to_wstring(stats.total), 1250, "B8B8B8", true);
 
     const wchar_t* labels[] = {L"Total", L"Present", L"Absent", L"Late"};
     int values[] = {stats.total, stats.present, stats.absent, stats.late};
-    const char* fills[] = {"243B68", "1F6B4D", "743D45", "735829"};
+    const char* fills[] = {"1A1A1A", "18221E", "2A1F1F", "292515"};
     for (int i = 0; i < 4; ++i) {
         int x = 5850000 + (i % 2) * 2550000;
         int y = 2680000 + (i / 2) * 1250000;
-        ss << RectShape(id++, x, y, 2300000, 960000, fills[i], "3E5F95", 94000);
-        ss << ShapeText(id++, x + 240000, y + 170000, 1700000, 280000, Tr(labels[i], labels[i]), 1150, "C7D4EA", true);
+        ss << RectShape(id++, x, y, 2300000, 960000, fills[i], "444444", 94000);
+        ss << ShapeText(id++, x + 240000, y + 170000, 1700000, 280000, Tr(labels[i], labels[i]), 1150, "E0E0E0", true);
         ss << ShapeText(id++, x + 240000, y + 460000, 1700000, 380000, std::to_wstring(values[i]), 2500, "FFFFFF", true);
     }
 
-    ss << ShapeText(id++, 760000, 5950000, 10400000, 340000, Tr(L"Create, edit, export, save, import, and batch clean .attd roll calls.", L""), 1050, "BFD0EA");
+    ss << ShapeText(id++, 760000, 5950000, 10400000, 340000, Tr(L"Create, edit, export, save, import, and batch clean .attd roll calls.", L""), 1050, "B8B8B8");
     return SlideXml(ss.str());
 }
 
@@ -2713,23 +3336,23 @@ std::string BuildPptSlide2(const PptStats& stats) {
     std::ostringstream ss;
     ss << SlideBackground();
     ss << ShapeText(id++, 760000, 520000, 9000000, 520000, Tr(L"Statistics Chart", L"\u7edf\u8ba1\u56fe\u8868"), 2900, "FFFFFF", true);
-    ss << ShapeText(id++, 780000, 1050000, 9000000, 300000, Tr(L"Status", L"\u72b6\u6001") + L" " + Tr(L"Statistics chart", L"\u7edf\u8ba1\u56fe\u8868"), 1150, "BFD0EA");
-    ss << RectShape(id++, 760000, 1420000, 10670000, 22000, "6CA8FF", "6CA8FF", 100000);
+    ss << ShapeText(id++, 780000, 1050000, 9000000, 300000, Tr(L"Status", L"\u72b6\u6001") + L" " + Tr(L"Statistics chart", L"\u7edf\u8ba1\u56fe\u8868"), 1150, "B8B8B8");
+    ss << RectShape(id++, 760000, 1420000, 10670000, 22000, "BDBDBD", "BDBDBD", 100000);
     const wchar_t* labels[] = {L"Present", L"Absent", L"Late", L"Other"};
     int values[] = {stats.present, stats.absent, stats.late, stats.other};
-    const char* colors[] = {"45D483", "FF6B6B", "FFB84D", "6CA8FF"};
+    const char* colors[] = {"8CA39A", "A67575", "A89876", "9A9A9A"};
 
-    ss << RectShape(id++, 760000, 1750000, 4550000, 3900000, "1C2C4A", "3E5F95", 93000);
-    ss << ShapeText(id++, 1080000, 2020000, 3400000, 330000, Tr(L"Attendance Sheet", L"\u70b9\u540d\u8868"), 1350, "E7F0FF", true);
-    ss << EllipseShape(id++, 2000000, 2600000, 1800000, 1800000, "172033", "3E5F95", 100000);
+    ss << RectShape(id++, 760000, 1750000, 4550000, 3900000, "121212", "444444", 93000);
+    ss << ShapeText(id++, 1080000, 2020000, 3400000, 330000, Tr(L"Attendance Sheet", L"\u70b9\u540d\u8868"), 1350, "FFFFFF", true);
+    ss << EllipseShape(id++, 2000000, 2600000, 1800000, 1800000, "000000", "444444", 100000);
     AddPieShape(ss, id, stats, 2900000, 3500000, 850000);
-    ss << RectShape(id++, 4050000, 3050000, 850000, 900000, "243B68", "3E5F95", 86000);
-    ss << ShapeText(id++, 4210000, 3220000, 560000, 240000, Tr(L"Total", L"\u603b\u6570"), 850, "BFD0EA", true);
+    ss << RectShape(id++, 4050000, 3050000, 850000, 900000, "1A1A1A", "444444", 86000);
+    ss << ShapeText(id++, 4210000, 3220000, 560000, 240000, Tr(L"Total", L"\u603b\u6570"), 850, "B8B8B8", true);
     ss << ShapeText(id++, 4210000, 3500000, 560000, 350000, std::to_wstring(stats.total), 1800, "FFFFFF", true);
 
-    ss << RectShape(id++, 5600000, 1750000, 5830000, 3900000, "1C2C4A", "3E5F95", 93000);
-    ss << ShapeText(id++, 5920000, 2020000, 2400000, 330000, Tr(L"Total", L"\u603b\u6570") + L" " + std::to_wstring(stats.total), 1350, "E7F0FF", true);
-    ss << ShapeText(id++, 9100000, 2020000, 1900000, 330000, Tr(L"Attendance", L"\u51fa\u52e4\u7387"), 1200, "45D483", true);
+    ss << RectShape(id++, 5600000, 1750000, 5830000, 3900000, "121212", "444444", 93000);
+    ss << ShapeText(id++, 5920000, 2020000, 2400000, 330000, Tr(L"Total", L"\u603b\u6570") + L" " + std::to_wstring(stats.total), 1350, "FFFFFF", true);
+    ss << ShapeText(id++, 9100000, 2020000, 1900000, 330000, Tr(L"Attendance", L"\u51fa\u52e4\u7387"), 1200, "8CA39A", true);
     int attendancePct = stats.total ? (int)std::round(stats.present * 100.0 / stats.total) : 0;
     ss << ShapeText(id++, 10180000, 1940000, 850000, 460000, std::to_wstring(attendancePct) + L"%", 2050, "FFFFFF", true);
 
@@ -2738,18 +3361,18 @@ std::string BuildPptSlide2(const PptStats& stats) {
         int x = 5920000 + (i % 2) * 2650000;
         int y = pctY + (i / 2) * 600000;
         int pct = stats.total ? (int)std::round(values[i] * 100.0 / stats.total) : 0;
-        ss << RectShape(id++, x, y, 2350000, 460000, "243B68", "3E5F95", 88000);
+        ss << RectShape(id++, x, y, 2350000, 460000, "1A1A1A", "444444", 88000);
         ss << RectShape(id++, x + 180000, y + 115000, 220000, 220000, colors[i], colors[i], 100000);
-        ss << ShapeText(id++, x + 500000, y + 70000, 1000000, 240000, Tr(labels[i], labels[i]), 900, "D9E7FF", true);
+        ss << ShapeText(id++, x + 500000, y + 70000, 1000000, 240000, Tr(labels[i], labels[i]), 900, "E0E0E0", true);
         ss << ShapeText(id++, x + 500000, y + 270000, 1200000, 240000, std::to_wstring(values[i]) + L" | " + std::to_wstring(pct) + L"%", 1050, "FFFFFF", true);
     }
 
     int maxVal = std::max(1, std::max(std::max(values[0], values[1]), std::max(values[2], values[3])));
-    ss << ShapeText(id++, 5920000, 3930000, 2500000, 310000, Tr(L"Statistics chart", L"\u7edf\u8ba1\u56fe\u8868"), 1200, "E7F0FF", true);
+    ss << ShapeText(id++, 5920000, 3930000, 2500000, 310000, Tr(L"Statistics chart", L"\u7edf\u8ba1\u56fe\u8868"), 1200, "FFFFFF", true);
     for (int i = 0; i < 4; ++i) {
         int y = 4300000 + i * 280000;
-        ss << ShapeText(id++, 5920000, y - 50000, 950000, 240000, Tr(labels[i], labels[i]), 780, "BFD0EA", true);
-        ss << RectShape(id++, 6920000, y, 3000000, 120000, "283C62", "283C62", 100000);
+        ss << ShapeText(id++, 5920000, y - 50000, 950000, 240000, Tr(labels[i], labels[i]), 780, "B8B8B8", true);
+        ss << RectShape(id++, 6920000, y, 3000000, 120000, "242424", "242424", 100000);
         ss << RectShape(id++, 6920000, y, values[i] * 3000000 / maxVal + 1000, 120000, colors[i], colors[i], 100000);
         ss << ShapeText(id++, 10120000, y - 60000, 600000, 230000, std::to_wstring(values[i]), 780, "FFFFFF", true);
     }
@@ -2784,10 +3407,10 @@ std::string BuildPptSlide3(const std::vector<AttendanceRecord>& records) {
     std::ostringstream ss;
     ss << SlideBackground();
     ss << ShapeText(id++, 760000, 520000, 8800000, 520000, Tr(L"Attendance", L"\u51fa\u52e4\u7387") + L" " + Tr(L"Statistics chart", L"\u7edf\u8ba1\u56fe\u8868"), 2800, "FFFFFF", true);
-    ss << ShapeText(id++, 780000, 1050000, 7200000, 300000, Tr(L"Attendance", L"\u51fa\u52e4\u7387") + L" trend by date", 1150, "BFD0EA");
-    ss << RectShape(id++, 760000, 1420000, 10670000, 22000, "6CA8FF", "6CA8FF", 100000);
+    ss << ShapeText(id++, 780000, 1050000, 7200000, 300000, Tr(L"Attendance", L"\u51fa\u52e4\u7387") + L" trend by date", 1150, "B8B8B8");
+    ss << RectShape(id++, 760000, 1420000, 10670000, 22000, "BDBDBD", "BDBDBD", 100000);
     const wchar_t* labels[] = {L"Present", L"Absent", L"Late", L"Other"};
-    const char* colors[] = {"45D483", "FF6B6B", "FFB84D", "6CA8FF"};
+    const char* colors[] = {"8CA39A", "A67575", "A89876", "9A9A9A"};
 
     double latestRate = 0.0;
     if (!days.empty()) {
@@ -2799,21 +3422,21 @@ std::string BuildPptSlide3(const std::vector<AttendanceRecord>& records) {
     pct.precision(0);
     pct << latestRate << L"%";
 
-    ss << RectShape(id++, 9000000, 520000, 2140000, 700000, "1C2C4A", "3E5F95", 93000);
-    ss << ShapeText(id++, 9250000, 650000, 1100000, 260000, Tr(L"Attendance", L"\u51fa\u52e4\u7387"), 900, "45D483", true);
+    ss << RectShape(id++, 9000000, 520000, 2140000, 700000, "121212", "444444", 93000);
+    ss << ShapeText(id++, 9250000, 650000, 1100000, 260000, Tr(L"Attendance", L"\u51fa\u52e4\u7387"), 900, "8CA39A", true);
     ss << ShapeText(id++, 10200000, 600000, 800000, 400000, pct.str(), 1800, "FFFFFF", true);
 
-    ss << RectShape(id++, 760000, 1700000, 10670000, 3950000, "1C2C4A", "3E5F95", 93000);
+    ss << RectShape(id++, 760000, 1700000, 10670000, 3950000, "121212", "444444", 93000);
     for (int i = 0; i < 4; ++i) {
         int x = 1180000 + i * 1750000;
         ss << RectShape(id++, x, 1950000, 210000, 210000, colors[i], colors[i], 100000);
-        ss << ShapeText(id++, x + 280000, 1895000, 1180000, 300000, Tr(labels[i], labels[i]), 900, "D9E7FF", true);
+        ss << ShapeText(id++, x + 280000, 1895000, 1180000, 300000, Tr(labels[i], labels[i]), 900, "E0E0E0", true);
     }
 
     int x0 = 1180000, y0 = 5300000, w = 9650000, h = 2800000;
-    ss << RectShape(id++, x0, y0, w, 18000, "AFC5E8", "AFC5E8", 100000);
-    ss << RectShape(id++, x0, y0 - h, 18000, h, "AFC5E8", "AFC5E8", 100000);
-    ss << LineShape(id++, x0, y0 - h / 2, x0 + w, y0 - h / 2, "3E5F95", 14000);
+    ss << RectShape(id++, x0, y0, w, 18000, "BDBDBD", "BDBDBD", 100000);
+    ss << RectShape(id++, x0, y0 - h, 18000, h, "BDBDBD", "BDBDBD", 100000);
+    ss << LineShape(id++, x0, y0 - h / 2, x0 + w, y0 - h / 2, "444444", 14000);
     if (days.empty()) {
         ss << ShapeText(id++, x0 + 600000, y0 - 1900000, 6000000, 500000, Tr(L"There are no records to export.", L"\u6ca1\u6709\u53ef\u5bfc\u51fa\u7684\u8bb0\u5f55\u3002"), 1800, "FFFFFF", true);
     } else {
@@ -2839,7 +3462,7 @@ std::string BuildPptSlide3(const std::vector<AttendanceRecord>& records) {
             int tx = x0 + i * slot + slot / 2;
             int ty = y0 - (int)(rate * h);
             trend.push_back({tx, ty});
-            ss << ShapeText(id++, x0 + i * slot, y0 + 110000, slot, 260000, days[i].first, 650, "C7D4EA");
+            ss << ShapeText(id++, x0 + i * slot, y0 + 110000, slot, 260000, days[i].first, 650, "E0E0E0");
         }
         for (int i = 1; i < (int)trend.size(); ++i) {
             ss << LineShape(id++, trend[i - 1].x, trend[i - 1].y, trend[i].x, trend[i].y, "FFFFFF", 30000);
@@ -2896,7 +3519,7 @@ std::string PptTableStylesXml() {
 std::string PptThemeXml() {
     return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
            "<a:theme xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" name=\"AttendanceApp\">"
-           "<a:themeElements><a:clrScheme name=\"AttendanceApp\"><a:dk1><a:srgbClr val=\"172033\"/></a:dk1><a:lt1><a:srgbClr val=\"FFFFFF\"/></a:lt1><a:dk2><a:srgbClr val=\"243B68\"/></a:dk2><a:lt2><a:srgbClr val=\"D9E7FF\"/></a:lt2><a:accent1><a:srgbClr val=\"45D483\"/></a:accent1><a:accent2><a:srgbClr val=\"FF6B6B\"/></a:accent2><a:accent3><a:srgbClr val=\"FFB84D\"/></a:accent3><a:accent4><a:srgbClr val=\"6CA8FF\"/></a:accent4><a:accent5><a:srgbClr val=\"BFD0EA\"/></a:accent5><a:accent6><a:srgbClr val=\"FFFFFF\"/></a:accent6><a:hlink><a:srgbClr val=\"6CA8FF\"/></a:hlink><a:folHlink><a:srgbClr val=\"BFD0EA\"/></a:folHlink></a:clrScheme>"
+           "<a:themeElements><a:clrScheme name=\"AttendanceApp\"><a:dk1><a:srgbClr val=\"000000\"/></a:dk1><a:lt1><a:srgbClr val=\"FFFFFF\"/></a:lt1><a:dk2><a:srgbClr val=\"121212\"/></a:dk2><a:lt2><a:srgbClr val=\"E0E0E0\"/></a:lt2><a:accent1><a:srgbClr val=\"8CA39A\"/></a:accent1><a:accent2><a:srgbClr val=\"A67575\"/></a:accent2><a:accent3><a:srgbClr val=\"A89876\"/></a:accent3><a:accent4><a:srgbClr val=\"9A9A9A\"/></a:accent4><a:accent5><a:srgbClr val=\"B8B8B8\"/></a:accent5><a:accent6><a:srgbClr val=\"FFFFFF\"/></a:accent6><a:hlink><a:srgbClr val=\"E0E0E0\"/></a:hlink><a:folHlink><a:srgbClr val=\"B8B8B8\"/></a:folHlink></a:clrScheme>"
            "<a:fontScheme name=\"AttendanceApp\"><a:majorFont><a:latin typeface=\"Segoe UI\"/><a:ea typeface=\"\"/><a:cs typeface=\"\"/></a:majorFont><a:minorFont><a:latin typeface=\"Segoe UI\"/><a:ea typeface=\"\"/><a:cs typeface=\"\"/></a:minorFont></a:fontScheme>"
            "<a:fmtScheme name=\"AttendanceApp\"><a:fillStyleLst>"
            "<a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill>"
@@ -3268,12 +3891,7 @@ void PromptRestoreAutosave() {
     if (path.empty() || !std::filesystem::exists(path)) return;
     std::wstring restoreMsg = Tr(L"An autosaved attendance file was found. Restore it now?", L"\u627e\u5230\u81ea\u52a8\u4fdd\u5b58\u7684\u70b9\u540d\u6587\u4ef6\u3002\u662f\u5426\u73b0\u5728\u6062\u590d\uff1f");
     std::wstring restoreTitle = Tr(L"Restore Autosave", L"\u6062\u590d\u81ea\u52a8\u4fdd\u5b58");
-    if (MessageBoxW(
-        g_hwnd,
-        restoreMsg.c_str(),
-        restoreTitle.c_str(),
-        MB_YESNO | MB_ICONQUESTION
-    ) == IDYES) {
+    if (ThemedMessageBox(g_hwnd, restoreMsg, restoreTitle, true) == IDYES) {
         LoadAttendanceFile(path.wstring(), false);
     } else {
         g_allowAutosaveOverwrite = false;
@@ -3311,8 +3929,9 @@ void PaintStatsChart(HWND hwnd, HDC hdc) {
     CountStatuses(present, absent, late, other);
     int values[] = {present, absent, late, other};
     const wchar_t* labels[] = {L"Present", L"Absent", L"Late", L"Other"};
-    COLORREF colors[] = {RGB(40, 167, 119), RGB(222, 78, 78), RGB(230, 168, 47), RGB(108, 117, 125)};
+    COLORREF colors[] = {RGB(126, 154, 142), RGB(170, 112, 112), RGB(164, 146, 104), RGB(126, 126, 126)};
     int maxValue = std::max(1, std::max(std::max(present, absent), std::max(late, other)));
+    double reveal = GetAnimationValue(hwnd, AnimChannel::Reveal, 1.0);
 
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, COLOR_TEXT);
@@ -3329,11 +3948,12 @@ void PaintStatsChart(HWND hwnd, HDC hdc) {
         std::wstring label = Tr(labels[i], labels[i]);
         TextOutW(hdc, labelX, y + 6, label.c_str(), (int)label.size());
         RECT barBg{barX, y, barX + barMaxW, y + 30};
-        HBRUSH bg = CreateSolidBrush(g_theme == UiTheme::Dark ? RGB(45, 49, 60) : RGB(224, 229, 238));
+        HBRUSH bg = CreateSolidBrush(RGB(24, 24, 24));
         FillRect(hdc, &barBg, bg);
         DeleteObject(bg);
 
-        int width = (int)(barMaxW * (values[i] / (double)maxValue));
+        double rowProgress = std::clamp(reveal * 1.25 - i * 0.1, 0.0, 1.0);
+        int width = (int)(barMaxW * (values[i] / (double)maxValue) * rowProgress);
         RECT bar{barX, y, barX + width, y + 30};
         HBRUSH fill = CreateSolidBrush(colors[i]);
         FillRect(hdc, &bar, fill);
@@ -3356,10 +3976,17 @@ LRESULT CALLBACK ChartProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
     case WM_ERASEBKGND:
         return 1;
-    case WM_CLOSE:
+    case WM_APP_ANIMATION_TICK:
+        InvalidateRect(hwnd, nullptr, TRUE);
+        return 0;
+    case WM_APP_ANIMATION_DONE:
         DestroyWindow(hwnd);
         return 0;
+    case WM_CLOSE:
+        BeginAnimatedClose(hwnd);
+        return 0;
     case WM_DESTROY:
+        RemoveAnimationState(hwnd);
         g_chartWindow = nullptr;
         return 0;
     }
@@ -3378,6 +4005,7 @@ void ShowStatsChart() {
     static bool registered = false;
     if (!registered) {
         WNDCLASSW wc{};
+        wc.style = CS_DROPSHADOW;
         wc.lpfnWndProc = ChartProc;
         wc.hInstance = instance;
         wc.lpszClassName = className;
@@ -3393,6 +4021,9 @@ void ShowStatsChart() {
         CW_USEDEFAULT, CW_USEDEFAULT, 760, 420,
         g_hwnd, nullptr, instance, nullptr
     );
+    BOOL dark = TRUE;
+    DwmSetWindowAttribute(g_chartWindow, 20, &dark, sizeof(dark));
+    StartWindowReveal(g_chartWindow, 190);
     ShowWindow(g_chartWindow, SW_SHOW);
     UpdateWindow(g_chartWindow);
 }
@@ -3515,13 +4146,16 @@ void ImportAttendance() {
 }
 
 HWND MakeControl(const wchar_t* cls, const wchar_t* text, DWORD style, int id) {
+    DWORD finalStyle = WS_CHILD | WS_VISIBLE | style;
+    if (lstrcmpiW(cls, L"EDIT") == 0) finalStyle |= WS_BORDER | ES_LEFT | ES_MULTILINE | ES_AUTOHSCROLL | ES_NOHIDESEL;
     HWND hwnd = CreateWindowExW(
         0, cls, text,
-        WS_CHILD | WS_VISIBLE | style,
+        finalStyle,
         0, 0, 100, 30,
         g_hwnd, (HMENU)(intptr_t)id, GetModuleHandleW(nullptr), nullptr
     );
     SendMessageW(hwnd, WM_SETFONT, (WPARAM)g_font, TRUE);
+    if (lstrcmpiW(cls, L"STATIC") != 0) EnableInteractiveAnimation(hwnd);
     if (lstrcmpiW(cls, L"EDIT") == 0) EnableEditShortcuts(hwnd);
     if (lstrcmpiW(cls, L"COMBOBOX") == 0 && (style & CBS_OWNERDRAWFIXED)) {
         SendMessageW(hwnd, CB_SETITEMHEIGHT, (WPARAM)-1, 30);
@@ -3537,13 +4171,16 @@ HWND MakeButton(const wchar_t* text, int id) {
 }
 
 HWND MakeSettingsControl(HWND parent, const wchar_t* cls, const wchar_t* text, DWORD style, int id) {
+    DWORD finalStyle = WS_CHILD | WS_VISIBLE | style;
+    if (lstrcmpiW(cls, L"EDIT") == 0) finalStyle |= WS_BORDER | ES_LEFT | ES_MULTILINE | ES_AUTOHSCROLL | ES_NOHIDESEL;
     HWND hwnd = CreateWindowExW(
         0, cls, text,
-        WS_CHILD | WS_VISIBLE | style,
+        finalStyle,
         0, 0, 100, 30,
         parent, (HMENU)(intptr_t)id, GetModuleHandleW(nullptr), nullptr
     );
     SendMessageW(hwnd, WM_SETFONT, (WPARAM)g_font, TRUE);
+    if (lstrcmpiW(cls, L"STATIC") != 0) EnableInteractiveAnimation(hwnd);
     if (lstrcmpiW(cls, L"EDIT") == 0) EnableEditShortcuts(hwnd);
     if (lstrcmpiW(cls, L"COMBOBOX") == 0 && (style & CBS_OWNERDRAWFIXED)) {
         SendMessageW(hwnd, CB_SETITEMHEIGHT, (WPARAM)-1, 30);
@@ -3556,7 +4193,6 @@ HWND MakeSettingsControl(HWND parent, const wchar_t* cls, const wchar_t* text, D
 
 void FillSettingsCombos(HWND hwnd) {
     HWND language = GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE);
-    HWND theme = GetDlgItem(hwnd, IDC_SETTINGS_THEME);
     HWND font = GetDlgItem(hwnd, IDC_SETTINGS_FONT);
 
     SendMessageW(language, CB_RESETCONTENT, 0, 0);
@@ -3565,23 +4201,15 @@ void FillSettingsCombos(HWND hwnd) {
     }
     SendMessageW(language, CB_SETCURSEL, (WPARAM)g_language, 0);
 
-    SendMessageW(theme, CB_RESETCONTENT, 0, 0);
-    std::wstring dark = Tr(L"Dark", L"\u6df1\u8272");
-    std::wstring light = Tr(L"Light", L"\u6d45\u8272");
-    SendMessageW(theme, CB_ADDSTRING, 0, (LPARAM)dark.c_str());
-    SendMessageW(theme, CB_ADDSTRING, 0, (LPARAM)light.c_str());
-    SendMessageW(theme, CB_SETCURSEL, g_theme == UiTheme::Light ? 1 : 0, 0);
-
     SendMessageW(font, CB_RESETCONTENT, 0, 0);
-    const wchar_t* fonts[] = {L"Segoe UI", L"Microsoft YaHei UI", L"Arial", L"Calibri", L"Consolas"};
+    FillInstalledFontFamilies();
     int selected = 0;
-    for (int i = 0; i < 5; ++i) {
-        SendMessageW(font, CB_ADDSTRING, 0, (LPARAM)fonts[i]);
-        if (g_fontFamily == fonts[i]) selected = i;
+    for (int i = 0; i < (int)g_availableFonts.size(); ++i) {
+        SendMessageW(font, CB_ADDSTRING, 0, (LPARAM)g_availableFonts[i].c_str());
+        if (g_fontFamily == g_availableFonts[i]) selected = i;
     }
     SendMessageW(font, CB_SETCURSEL, selected, 0);
     RedrawWindow(language, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
-    RedrawWindow(theme, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
     RedrawWindow(font, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
 }
 
@@ -3590,29 +4218,27 @@ void ApplySettingsLanguage(HWND hwnd) {
     SetWindowTextW(hwnd, settingsTitle.c_str());
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), Tr(L"Interface Settings", L"\u754c\u9762\u8bbe\u7f6e"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_LANG_LABEL), Tr(L"Language", L"\u8bed\u8a00"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_THEME_LABEL), Tr(L"Style", L"\u98ce\u683c"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_FONT_LABEL), Tr(L"Interface Font", L"\u754c\u9762\u5b57\u4f53"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLES), Tr(L"Enable particle effects", L"\u542f\u7528\u7c92\u5b50\u7279\u6548"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_APPLY), Tr(L"Apply", L"\u5e94\u7528"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_CLOSE), Tr(L"Close", L"\u5173\u95ed"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_RESET), Tr(L"Reset All Settings", L"\u91cd\u7f6e\u6240\u6709\u8bbe\u7f6e"));
+    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLES), BM_SETCHECK, g_particlesEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
     FillSettingsCombos(hwnd);
 }
 
 void ApplySettingsFromWindow(HWND hwnd) {
     int language = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE), CB_GETCURSEL, 0, 0);
-    int theme = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_THEME), CB_GETCURSEL, 0, 0);
     int fontIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_FONT), CB_GETCURSEL, 0, 0);
 
     if (language < 0 || language > (int)UiLanguage::ChineseTraditionalHongKong) language = 0;
     g_language = (UiLanguage)language;
-    g_theme = theme == 1 ? UiTheme::Light : UiTheme::Dark;
+    g_theme = UiTheme::Dark;
 
-    wchar_t fontName[128]{};
     if (fontIndex >= 0) {
-        SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_FONT), CB_GETLBTEXT, fontIndex, (LPARAM)fontName);
-        if (fontName[0]) g_fontFamily = fontName;
+        std::wstring fontName = GetComboSelectedText(GetDlgItem(hwnd, IDC_SETTINGS_FONT));
+        if (!fontName.empty()) g_fontFamily = fontName;
     }
-
     ApplyVisualSettings();
     EnumChildWindows(hwnd, ApplyFontToChild, 0);
     SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), WM_SETFONT, (WPARAM)g_titleFont, TRUE);
@@ -3635,12 +4261,11 @@ void ResizeSettingsLayout(HWND hwnd) {
     MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_LANG_LABEL), x, y + 6, labelW, rowH, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE), comboX, y, comboW, 430, TRUE);
     y += 48;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_THEME_LABEL), x, y + 6, labelW, rowH, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_THEME), comboX, y, comboW, 260, TRUE);
-    y += 48;
     MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_FONT_LABEL), x, y + 6, labelW, rowH, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_FONT), comboX, y, comboW, 300, TRUE);
-    y += 56;
+    y += 48;
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLES), comboX, y, labelW + comboW, 30, TRUE);
+    y += 46;
     MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_RESET), x, y, labelW + comboW, 36, TRUE);
     y += 48;
     MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_APPLY), comboX - 4, y, 110, 38, TRUE);
@@ -3652,11 +4277,10 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_CREATE: {
         MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_TITLE);
         MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_LANG_LABEL);
-        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_THEME_LABEL);
         MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_FONT_LABEL);
         MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_LANGUAGE);
-        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_THEME);
         MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_FONT);
+        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW, IDC_SETTINGS_PARTICLES);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_RESET);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_APPLY);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_CLOSE);
@@ -3670,7 +4294,25 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         return 0;
     case WM_COMMAND:
         if (HIWORD(wParam) == CBN_DROPDOWN) {
+            StartAnimation((HWND)lParam, AnimChannel::ComboOpen, 1.0, 340);
             ApplyComboDropDownTheme((HWND)lParam);
+            return 0;
+        }
+        if (HIWORD(wParam) == CBN_CLOSEUP) {
+            StartAnimation((HWND)lParam, AnimChannel::ComboOpen, 0.0, 220);
+            return 0;
+        }
+        if (LOWORD(wParam) == IDC_SETTINGS_FONT && HIWORD(wParam) == CBN_SELCHANGE) {
+            CommitComboSelectionNow((HWND)lParam);
+            ApplySettingsFromWindow(hwnd);
+            return 0;
+        }
+        if (LOWORD(wParam) == IDC_SETTINGS_PARTICLES && HIWORD(wParam) == BN_CLICKED) {
+            HWND toggle = GetDlgItem(hwnd, IDC_SETTINGS_PARTICLES);
+            g_particlesEnabled = !g_particlesEnabled;
+            SendMessageW(toggle, BM_SETCHECK, g_particlesEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+            SaveSettings();
+            InvalidateRect(toggle, nullptr, FALSE);
             return 0;
         }
         if (LOWORD(wParam) == IDC_SETTINGS_APPLY) {
@@ -3678,13 +4320,13 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
         }
         if (LOWORD(wParam) == IDC_SETTINGS_CLOSE) {
-            DestroyWindow(hwnd);
+            BeginAnimatedClose(hwnd);
             return 0;
         }
         if (LOWORD(wParam) == IDC_SETTINGS_RESET) {
             std::wstring resetMsg = Tr(L"Reset all settings and delete the AppData configuration file?", L"\u91cd\u7f6e\u6240\u6709\u8bbe\u7f6e\u5e76\u5220\u9664 AppData \u914d\u7f6e\u6587\u4ef6\uff1f");
             std::wstring resetTitle = Tr(L"Reset Settings", L"\u91cd\u7f6e\u8bbe\u7f6e");
-            if (MessageBoxW(hwnd, resetMsg.c_str(), resetTitle.c_str(), MB_YESNO | MB_ICONWARNING) == IDYES) {
+            if (ThemedMessageBox(hwnd, resetMsg, resetTitle, true) == IDYES) {
                 ResetSettings();
                 ApplyVisualSettings();
                 EnumChildWindows(hwnd, ApplyFontToChild, 0);
@@ -3706,8 +4348,16 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_DRAWITEM: {
         auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
         if (DrawComboItem(draw)) return TRUE;
+        if (DrawParticleToggleItem(draw)) return TRUE;
         if (DrawButtonItem(draw)) return TRUE;
         break;
+    }
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(hwnd, &ps);
+        PaintAppBackground(hwnd, hdc);
+        EndPaint(hwnd, &ps);
+        return 0;
     }
     case WM_CTLCOLORSTATIC: {
         HDC hdc = (HDC)wParam;
@@ -3716,6 +4366,12 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         SetBkMode(hdc, TRANSPARENT);
         return (LRESULT)GetStockObject(HOLLOW_BRUSH);
     }
+    case WM_CTLCOLORBTN: {
+        HDC hdc = (HDC)wParam;
+        SetTextColor(hdc, COLOR_TEXT);
+        SetBkMode(hdc, TRANSPARENT);
+        return (LRESULT)g_bgBrush;
+    }
     case WM_CTLCOLOREDIT:
     case WM_CTLCOLORLISTBOX: {
         HDC hdc = (HDC)wParam;
@@ -3723,14 +4379,19 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         SetBkColor(hdc, COLOR_INPUT);
         return (LRESULT)g_inputBrush;
     }
-    case WM_ERASEBKGND: {
-        PaintGradientBackground(hwnd, (HDC)wParam);
+    case WM_ERASEBKGND:
         return 1;
-    }
-    case WM_CLOSE:
+    case WM_APP_ANIMATION_TICK:
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    case WM_APP_ANIMATION_DONE:
         DestroyWindow(hwnd);
         return 0;
+    case WM_CLOSE:
+        BeginAnimatedClose(hwnd);
+        return 0;
     case WM_DESTROY:
+        RemoveAnimationState(hwnd);
         g_settingsWindow = nullptr;
         return 0;
     }
@@ -3749,6 +4410,7 @@ void ShowSettingsWindow() {
     static bool registered = false;
     if (!registered) {
         WNDCLASSW wc{};
+        wc.style = CS_DROPSHADOW;
         wc.lpfnWndProc = SettingsProc;
         wc.hInstance = instance;
         wc.lpszClassName = className;
@@ -3767,7 +4429,7 @@ void ShowSettingsWindow() {
         CW_USEDEFAULT, CW_USEDEFAULT, 470, 370,
         g_hwnd, nullptr, instance, nullptr
     );
-    BOOL dark = g_theme == UiTheme::Dark;
+    BOOL dark = TRUE;
     DwmSetWindowAttribute(g_settingsWindow, 20, &dark, sizeof(dark));
     ApplyThemedControls(g_settingsWindow);
     ShowWindow(g_settingsWindow, SW_SHOW);
@@ -3820,71 +4482,94 @@ void ResizeLayout(HWND hwnd) {
     g_scrollX = std::clamp(g_scrollX, 0, std::max(0, g_contentW - w));
     g_scrollY = std::clamp(g_scrollY, 0, std::max(0, g_contentH - h));
 
-    int pad = 24;
-    int top = 22;
-    int labelW = 92;
-    int editH = 36;
-    int buttonH = 42;
-    int leftW = std::min(460, std::max(380, layoutW / 3));
-    int x = pad - g_scrollX;
-    int yOffset = -g_scrollY;
+    int pad = 28;
+    auto move = [&](int id, int x, int y, int width, int height) {
+        HWND child = GetDlgItem(hwnd, id);
+        if (child) MoveWindow(child, x - g_scrollX, y - g_scrollY, width, height, FALSE);
+    };
+    auto moveHwnd = [&](HWND child, int x, int y, int width, int height) {
+        if (child) MoveWindow(child, x - g_scrollX, y - g_scrollY, width, height, FALSE);
+    };
 
-    MoveWindow(GetDlgItem(hwnd, IDC_TITLE), x, top + yOffset, leftW, 38, FALSE);
-    int rightX = pad + leftW + 24;
-    MoveWindow(g_courseCombo, rightX - g_scrollX, top + yOffset, 260, 430, FALSE);
-    MoveWindow(GetDlgItem(hwnd, IDC_COURSE_OPTIONS), rightX + 272 - g_scrollX, top + yOffset, 128, 34, FALSE);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATS), rightX + 416 - g_scrollX, top + 2 + yOffset, std::max(360, layoutW - (rightX + 440)), 34, FALSE);
-    top += 48;
-    MoveWindow(GetDlgItem(hwnd, IDC_SUBTITLE), x, top + yOffset, leftW, 26, FALSE);
-    top += 44;
+    int titleY = 20;
+    move(IDC_TITLE, pad, titleY, 430, 38);
+    move(IDC_SUBTITLE, pad, titleY + 42, std::min(720, layoutW - pad * 2), 26);
 
-    MoveWindow(GetDlgItem(hwnd, 2001), x, top + 6 + yOffset, labelW, 24, FALSE);
-    MoveWindow(g_dateEdit, x + labelW, top + yOffset, leftW - labelW, editH, FALSE);
-    top += 52;
-    MoveWindow(GetDlgItem(hwnd, 2002), x, top + 6 + yOffset, labelW, 24, FALSE);
-    MoveWindow(g_nameEdit, x + labelW, top + yOffset, leftW - labelW, editH, FALSE);
-    top += 52;
-    MoveWindow(GetDlgItem(hwnd, 2003), x, top + 6 + yOffset, labelW, 24, FALSE);
-    MoveWindow(g_otherEdit, x + labelW, top + yOffset, leftW - labelW, editH, FALSE);
-    top += 64;
+    int courseW = 300;
+    int courseBtnW = 124;
+    int courseX = std::max(pad + 520, layoutW - pad - courseW - courseBtnW - 12);
+    moveHwnd(g_courseCombo, courseX, titleY + 6, courseW, 430);
+    move(IDC_COURSE_OPTIONS, courseX + courseW + 12, titleY + 6, courseBtnW, 38);
 
-    int half = (leftW - 12) / 2;
-    MoveWindow(GetDlgItem(hwnd, IDC_PRESENT), x, top + yOffset, half, buttonH, FALSE);
-    MoveWindow(GetDlgItem(hwnd, IDC_ABSENT), x + half + 12, top + yOffset, half, buttonH, FALSE);
-    top += 50;
-    MoveWindow(GetDlgItem(hwnd, IDC_LATE), x, top + yOffset, half, buttonH, FALSE);
-    MoveWindow(GetDlgItem(hwnd, IDC_OTHER_STATUS), x + half + 12, top + yOffset, half, buttonH, FALSE);
-    top += 60;
-    MoveWindow(GetDlgItem(hwnd, IDC_ADD_UPDATE), x, top + yOffset, half, buttonH + 2, FALSE);
-    MoveWindow(GetDlgItem(hwnd, IDC_EDIT_SELECTED), x + half + 12, top + yOffset, half, buttonH + 2, FALSE);
-    top += 58;
-    MoveWindow(GetDlgItem(hwnd, IDC_ALL_PRESENT), x, top + yOffset, leftW, buttonH, FALSE);
-    top += 52;
-    MoveWindow(GetDlgItem(hwnd, IDC_NEW), x, top + yOffset, half, buttonH, FALSE);
-    MoveWindow(GetDlgItem(hwnd, IDC_DELETE), x + half + 12, top + yOffset, half, buttonH, FALSE);
-    top += 52;
-    MoveWindow(GetDlgItem(hwnd, IDC_SAVE), x, top + yOffset, half, buttonH, FALSE);
-    MoveWindow(GetDlgItem(hwnd, IDC_IMPORT), x + half + 12, top + yOffset, half, buttonH, FALSE);
-    top += 52;
-    MoveWindow(GetDlgItem(hwnd, IDC_EXPORT_CSV), x, top + yOffset, leftW, buttonH, FALSE);
+    int statsY = 104;
+    int statsGap = 16;
+    int statsH = 92;
+    int statW = std::max(180, (layoutW - pad * 2 - statsGap * 3) / 4);
+    int statX = pad;
+    move(IDC_STAT_TOTAL, statX, statsY, statW, statsH);
+    move(IDC_STAT_ATTENDANCE, statX + (statW + statsGap), statsY, statW, statsH);
+    move(IDC_STAT_ISSUES, statX + (statW + statsGap) * 2, statsY, statW, statsH);
+    move(IDC_STAT_VISIBLE, statX + (statW + statsGap) * 3, statsY, statW, statsH);
 
-    int bottomBarY = std::max(top + 56, layoutH - 56);
-    MoveWindow(GetDlgItem(hwnd, IDC_HINT), x, bottomBarY + 10 + yOffset, std::max(260, layoutW - 230), 26, FALSE);
-    MoveWindow(GetDlgItem(hwnd, IDC_TOOLS), std::max(pad, layoutW - 326) - g_scrollX, bottomBarY + 4 + yOffset, 146, 38, FALSE);
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS), std::max(pad, layoutW - 170) - g_scrollX, bottomBarY + 4 + yOffset, 146, 38, FALSE);
-
-    int listX = pad + leftW + 24;
-    int listW = std::max(300, layoutW - listX - pad);
-    int filterY = pad + 52;
+    int filterY = statsY + statsH + 18;
+    int listX = pad;
+    int listW = std::max(720, layoutW - pad * 2);
     int clearW = 136;
-    int filterLabelW = 76;
-    MoveWindow(GetDlgItem(hwnd, IDC_FILTER_LABEL), listX - g_scrollX, filterY + 8 + yOffset, filterLabelW, 24, FALSE);
-    MoveWindow(g_filterEdit, listX + filterLabelW - g_scrollX, filterY + yOffset, std::max(180, listW - filterLabelW - clearW - 12), 34, FALSE);
-    MoveWindow(GetDlgItem(hwnd, IDC_CLEAR_FILTER), listX + listW - clearW - g_scrollX, filterY - 1 + yOffset, clearW, 36, FALSE);
+    int filterLabelW = 74;
+    int filterW = std::min(460, std::max(240, listW / 3));
+    move(IDC_FILTER_LABEL, listX, filterY + 8, filterLabelW, 24);
+    moveHwnd(g_filterEdit, listX + filterLabelW, filterY, filterW, 36);
+    move(IDC_CLEAR_FILTER, listX + filterLabelW + filterW + 12, filterY - 1, clearW, 38);
 
-    int listY = pad + 96;
-    int listH = std::max(300, bottomBarY - listY - 14);
-    MoveWindow(g_list, listX - g_scrollX, listY + yOffset, listW, listH, FALSE);
+    int dockPrimaryH = 56;
+    int drawerH = 40;
+    int drawerY = std::max(filterY + 430, layoutH - 68);
+    int dockY = drawerY - 72;
+    int composerY = dockY - 66;
+    int listY = filterY + 52;
+    int listH = std::max(260, composerY - listY - 20);
+    moveHwnd(g_list, listX, listY, listW, listH);
+
+    int composerW = std::min(1060, layoutW - pad * 2);
+    int composerX = pad + (layoutW - pad * 2 - composerW) / 2;
+    int labelY = composerY - 18;
+    int dateW = std::max(210, composerW / 4);
+    int nameW = std::max(240, composerW / 4);
+    int otherW = composerW - dateW - nameW - 32;
+    move(2001, composerX, labelY, dateW, 18);
+    moveHwnd(g_dateEdit, composerX, composerY, dateW, 38);
+    move(2002, composerX + dateW + 16, labelY, nameW, 18);
+    moveHwnd(g_nameEdit, composerX + dateW + 16, composerY, nameW, 38);
+    move(2003, composerX + dateW + nameW + 32, labelY, otherW, 18);
+    moveHwnd(g_otherEdit, composerX + dateW + nameW + 32, composerY, otherW, 38);
+
+    int primaryGap = 12;
+    int primaryW = std::clamp((layoutW - pad * 2 - primaryGap * 5) / 6, 128, 168);
+    int primaryTotalW = primaryW * 6 + primaryGap * 5;
+    int primaryX = pad + (layoutW - pad * 2 - primaryTotalW) / 2;
+    move(IDC_PRESENT, primaryX, dockY, primaryW, dockPrimaryH);
+    move(IDC_ABSENT, primaryX + (primaryW + primaryGap), dockY, primaryW, dockPrimaryH);
+    move(IDC_LATE, primaryX + (primaryW + primaryGap) * 2, dockY, primaryW, dockPrimaryH);
+    move(IDC_OTHER_STATUS, primaryX + (primaryW + primaryGap) * 3, dockY, primaryW, dockPrimaryH);
+    move(IDC_SAVE, primaryX + (primaryW + primaryGap) * 4, dockY, primaryW, dockPrimaryH);
+    move(IDC_EXPORT_CSV, primaryX + (primaryW + primaryGap) * 5, dockY, primaryW, dockPrimaryH);
+
+    int drawerGap = 10;
+    int drawerW = std::clamp((layoutW - pad * 2 - drawerGap * 7) / 8, 112, 148);
+    int drawerTotalW = drawerW * 8 + drawerGap * 7;
+    int drawerX = pad + (layoutW - pad * 2 - drawerTotalW) / 2;
+    move(IDC_ADD_UPDATE, drawerX, drawerY, drawerW, drawerH);
+    move(IDC_EDIT_SELECTED, drawerX + (drawerW + drawerGap), drawerY, drawerW, drawerH);
+    move(IDC_ALL_PRESENT, drawerX + (drawerW + drawerGap) * 2, drawerY, drawerW, drawerH);
+    move(IDC_NEW, drawerX + (drawerW + drawerGap) * 3, drawerY, drawerW, drawerH);
+    move(IDC_IMPORT, drawerX + (drawerW + drawerGap) * 4, drawerY, drawerW, drawerH);
+    move(IDC_DELETE, drawerX + (drawerW + drawerGap) * 5, drawerY, drawerW, drawerH);
+    move(IDC_TOOLS, drawerX + (drawerW + drawerGap) * 6, drawerY, drawerW, drawerH);
+    move(IDC_SETTINGS, drawerX + (drawerW + drawerGap) * 7, drawerY, drawerW, drawerH);
+
+    move(IDC_HINT, pad, layoutH - 24, std::max(260, layoutW / 2), 22);
+    int footerStatsW = std::min(720, std::max(420, layoutW - pad * 2));
+    move(IDC_STATS, std::max(pad, layoutW - footerStatsW - 12), layoutH - 22, footerStatsW, 20);
 
     int widths[4] = {
         std::max(210, listW / 5),
@@ -3896,7 +4581,7 @@ void ResizeLayout(HWND hwnd) {
 
     SCROLLINFO si{};
     si.cbSize = sizeof(si);
-    si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS | SIF_DISABLENOSCROLL;
+    si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
     si.nMin = 0;
     si.nMax = std::max(0, g_contentW - 1);
     si.nPage = std::max(1, w);
@@ -3972,14 +4657,15 @@ void ScrollMainWindow(HWND hwnd, int bar, int code, int wheelDelta) {
 }
 
 void ApplyDarkMode(HWND hwnd) {
-    BOOL value = g_theme == UiTheme::Dark;
+    BOOL value = TRUE;
     if (hwnd) DwmSetWindowAttribute(hwnd, 20, &value, sizeof(value));
+    if (hwnd == g_hwnd) ApplyGlassTitleBar(hwnd);
     ApplyThemedControls(hwnd);
     if (g_list) {
-        SetWindowTheme(g_list, g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+        SetWindowTheme(g_list, L"DarkMode_Explorer", nullptr);
         HWND header = ListView_GetHeader(g_list);
         if (header) {
-            SetWindowTheme(header, g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+            SetWindowTheme(header, L"DarkMode_Explorer", nullptr);
             InvalidateRect(header, nullptr, TRUE);
         }
         ListView_SetBkColor(g_list, COLOR_PANEL);
@@ -4001,71 +4687,260 @@ void InitListColumns() {
     }
 }
 
+bool IsCoreParticleButton(int id) {
+    switch (id) {
+    case IDC_PRESENT:
+    case IDC_ABSENT:
+    case IDC_LATE:
+    case IDC_OTHER_STATUS:
+    case IDC_ADD_UPDATE:
+    case IDC_ALL_PRESENT:
+    case IDC_SAVE:
+    case IDC_EXPORT_CSV:
+    case IDC_IMPORT:
+    case IDC_NEW:
+    case IDC_CLEAR_FILTER:
+    case IDC_COURSE_OPTIONS:
+    case IDC_TOOLS:
+    case IDC_SETTINGS:
+        return true;
+    default:
+        return false;
+    }
+}
+
+double RandomRange(double minValue, double maxValue) {
+    std::uniform_real_distribution<double> dist(minValue, maxValue);
+    return dist(g_effectRng);
+}
+
+int RandomInt(int minValue, int maxValue) {
+    std::uniform_int_distribution<int> dist(minValue, maxValue);
+    return dist(g_effectRng);
+}
+
+void TriggerButtonFeedback(HWND hwnd, POINT origin) {
+    if (!hwnd) return;
+    wchar_t className[32]{};
+    GetClassNameW(hwnd, className, 32);
+    if (lstrcmpiW(className, L"Button") != 0) return;
+    if ((GetWindowLongPtrW(hwnd, GWL_STYLE) & BS_OWNERDRAW) == 0) return;
+
+    int id = GetDlgCtrlID(hwnd);
+    if (id == IDC_SETTINGS_PARTICLES) return;
+    ButtonEffectState state;
+    state.origin = origin;
+    state.startMs = AnimationNowMs();
+
+    if (g_particlesEnabled && IsCoreParticleButton(id)) {
+        int count = RandomInt(30, 50);
+        state.particles.reserve(count);
+        for (int i = 0; i < count; ++i) {
+            double angle = RandomRange(0.0, 6.28318530717958647692);
+            double speed = RandomRange(95.0, 250.0);
+            ButtonParticle particle;
+            particle.x = (double)origin.x;
+            particle.y = (double)origin.y;
+            particle.vx = std::cos(angle) * speed;
+            particle.vy = std::sin(angle) * speed - RandomRange(40.0, 110.0);
+            particle.radius = RandomRange(1.0, 3.0);
+            particle.lifetimeMs = (uint32_t)RandomInt(800, 1200);
+            particle.star = RandomInt(0, 5) == 0;
+            particle.color = RandomInt(0, 12) == 0 ? RGB(102, 204, 255) : RGB(255, 255, 255);
+            state.particles.push_back(particle);
+        }
+    }
+
+    g_buttonEffects[hwnd] = std::move(state);
+    RestartAnimation(hwnd, AnimChannel::Effect, 1.0, 1250);
+    RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+}
+
+void DrawButtonEffects(const DRAWITEMSTRUCT* draw, const RECT& buttonRc, COLORREF baseFill) {
+    auto it = g_buttonEffects.find(draw->hwndItem);
+    if (it == g_buttonEffects.end()) return;
+
+    uint64_t now = AnimationNowMs();
+    ButtonEffectState& state = it->second;
+    uint64_t elapsedMs = now > state.startMs ? now - state.startMs : 0;
+    if (elapsedMs > 1300) {
+        g_buttonEffects.erase(it);
+        return;
+    }
+
+    HRGN clip = CreateRoundRectRgn(buttonRc.left, buttonRc.top, buttonRc.right + 1, buttonRc.bottom + 1, 6, 6);
+    SelectClipRgn(draw->hDC, clip);
+
+    double rippleProgress = std::clamp(elapsedMs / 400.0, 0.0, 1.0);
+    if (rippleProgress < 1.0) {
+        double eased = EaseOut(rippleProgress);
+        int radius = (int)std::lround(80.0 * eased);
+        double strength = 0.30 * (1.0 - rippleProgress);
+        COLORREF rippleColor = BlendColor(baseFill, RGB(255, 255, 255), strength);
+        HPEN ripplePen = CreatePen(PS_SOLID, 2, rippleColor);
+        HGDIOBJ oldPen = SelectObject(draw->hDC, ripplePen);
+        HGDIOBJ oldBrush = SelectObject(draw->hDC, GetStockObject(HOLLOW_BRUSH));
+        Ellipse(draw->hDC, state.origin.x - radius, state.origin.y - radius,
+            state.origin.x + radius, state.origin.y + radius);
+        SelectObject(draw->hDC, oldBrush);
+        SelectObject(draw->hDC, oldPen);
+        DeleteObject(ripplePen);
+    }
+
+    for (const auto& particle : state.particles) {
+        double progress = std::clamp(elapsedMs / (double)particle.lifetimeMs, 0.0, 1.0);
+        if (progress >= 1.0) continue;
+        double seconds = elapsedMs / 1000.0;
+        double gravity = 260.0 * 0.3;
+        int x = (int)std::lround(particle.x + particle.vx * seconds);
+        int y = (int)std::lround(particle.y + particle.vy * seconds + 0.5 * gravity * seconds * seconds);
+        double size = particle.radius * (1.0 + 0.5 * progress);
+        int r = std::max(1, (int)std::lround(size));
+        double opacity = std::pow(1.0 - progress, 1.35);
+        COLORREF color = BlendColor(particle.color, RGB(136, 136, 136), progress);
+        color = BlendColor(baseFill, color, opacity);
+
+        HBRUSH brush = CreateSolidBrush(color);
+        HPEN pen = CreatePen(PS_SOLID, 1, color);
+        HGDIOBJ oldBrush = SelectObject(draw->hDC, brush);
+        HGDIOBJ oldPen = SelectObject(draw->hDC, pen);
+        if (particle.star) {
+            POINT pts[8] = {
+                {x, y - r * 2}, {x + r / 2, y - r / 2}, {x + r * 2, y},
+                {x + r / 2, y + r / 2}, {x, y + r * 2}, {x - r / 2, y + r / 2},
+                {x - r * 2, y}, {x - r / 2, y - r / 2}
+            };
+            Polygon(draw->hDC, pts, 8);
+        } else {
+            Ellipse(draw->hDC, x - r, y - r, x + r, y + r);
+        }
+        SelectObject(draw->hDC, oldPen);
+        SelectObject(draw->hDC, oldBrush);
+        DeleteObject(pen);
+        DeleteObject(brush);
+    }
+
+    SelectClipRgn(draw->hDC, nullptr);
+    DeleteObject(clip);
+}
+
+bool DrawParticleToggleItem(const DRAWITEMSTRUCT* draw) {
+    if (!draw || draw->CtlType != ODT_BUTTON || draw->CtlID != IDC_SETTINGS_PARTICLES) return false;
+
+    wchar_t text[160]{};
+    GetWindowTextW(draw->hwndItem, text, 160);
+
+    RECT rc = draw->rcItem;
+    HBRUSH bg = CreateSolidBrush(COLOR_BG);
+    FillRect(draw->hDC, &rc, bg);
+    DeleteObject(bg);
+
+    bool checked = g_particlesEnabled;
+    double hover = GetAnimationValue(draw->hwndItem, AnimChannel::Hover, 0.0);
+    COLORREF border = BlendColor(RGB(51, 51, 51), RGB(85, 85, 85), hover);
+
+    int box = 18;
+    int boxTop = (int)rc.top + std::max(0, ((int)(rc.bottom - rc.top) - box) / 2);
+    RECT boxRc{
+        rc.left + 2,
+        boxTop,
+        rc.left + 2 + box,
+        boxTop + box
+    };
+
+    HBRUSH fill = CreateSolidBrush(RGB(0, 0, 0));
+    HPEN borderPen = CreatePen(PS_SOLID, 1, border);
+    HGDIOBJ oldBrush = SelectObject(draw->hDC, fill);
+    HGDIOBJ oldPen = SelectObject(draw->hDC, borderPen);
+    Rectangle(draw->hDC, boxRc.left, boxRc.top, boxRc.right, boxRc.bottom);
+    SelectObject(draw->hDC, oldPen);
+    SelectObject(draw->hDC, oldBrush);
+    DeleteObject(borderPen);
+    DeleteObject(fill);
+
+    if (checked) {
+        HPEN checkPen = CreatePen(PS_SOLID, 2, COLOR_TEXT);
+        oldPen = SelectObject(draw->hDC, checkPen);
+        MoveToEx(draw->hDC, boxRc.left + 4, boxRc.top + 9, nullptr);
+        LineTo(draw->hDC, boxRc.left + 8, boxRc.top + 13);
+        LineTo(draw->hDC, boxRc.left + 15, boxRc.top + 5);
+        SelectObject(draw->hDC, oldPen);
+        DeleteObject(checkPen);
+    }
+
+    RECT textRc = rc;
+    textRc.left = boxRc.right + 10;
+    textRc.right -= 4;
+    SetBkMode(draw->hDC, TRANSPARENT);
+    SetTextColor(draw->hDC, COLOR_TEXT);
+    HGDIOBJ oldFont = SelectObject(draw->hDC, g_font);
+    DrawTextW(draw->hDC, text, -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    SelectObject(draw->hDC, oldFont);
+    return true;
+}
+
 bool DrawButtonItem(const DRAWITEMSTRUCT* draw) {
     if (!draw || draw->CtlType != ODT_BUTTON) return false;
 
     wchar_t text[128]{};
     GetWindowTextW(draw->hwndItem, text, 128);
-    bool pressed = (draw->itemState & ODS_SELECTED) != 0;
+    bool pressedState = (draw->itemState & ODS_SELECTED) != 0;
     bool focused = (draw->itemState & ODS_FOCUS) != 0;
+    double hover = GetAnimationValue(draw->hwndItem, AnimChannel::Hover, focused ? 1.0 : 0.0);
+    double press = std::max(pressedState ? 1.0 : 0.0, GetAnimationValue(draw->hwndItem, AnimChannel::Press, 0.0));
 
-    COLORREF fill = COLOR_INPUT;
-    COLORREF border = focused ? COLOR_ACCENT : (g_theme == UiTheme::Dark ? RGB(76, 82, 96) : RGB(197, 204, 218));
-    COLORREF buttonText = COLOR_TEXT;
+    COLORREF fill = BlendColor(COLOR_INPUT, RGB(38, 38, 38), hover);
+    COLORREF border = BlendColor(RGB(64, 64, 64), COLOR_ACCENT, focused ? 1.0 : hover);
+    COLORREF buttonText = BlendColor(COLOR_MUTED, COLOR_TEXT, std::clamp(0.45 + hover * 0.55, 0.0, 1.0));
 
     bool isDanger = draw->CtlID == IDC_DELETE || draw->CtlID == IDC_SETTINGS_RESET;
     bool isGreen = draw->CtlID == IDC_PRESENT || draw->CtlID == IDC_SAVE || draw->CtlID == IDC_ALL_PRESENT || draw->CtlID == IDC_SETTINGS_APPLY;
     bool isBlue = draw->CtlID == IDC_IMPORT || draw->CtlID == IDC_NEW || draw->CtlID == IDC_EXPORT_CSV;
 
-    if (g_theme == UiTheme::Dark) {
-        if (isDanger) {
-            fill = pressed ? RGB(128, 51, 57) : RGB(88, 48, 55);
-            border = focused ? COLOR_DANGER : RGB(140, 74, 82);
-            buttonText = RGB(255, 245, 245);
-        } else if (isGreen) {
-            fill = pressed ? RGB(36, 103, 86) : RGB(35, 79, 72);
-            border = focused ? RGB(90, 220, 176) : RGB(64, 135, 120);
-            buttonText = RGB(242, 255, 250);
-        } else if (isBlue) {
-            fill = pressed ? RGB(45, 87, 143) : RGB(44, 70, 116);
-            border = focused ? COLOR_ACCENT : RGB(77, 117, 180);
-            buttonText = RGB(245, 249, 255);
-        } else {
-            fill = pressed ? RGB(52, 92, 140) : COLOR_INPUT;
-        }
-    } else {
-        if (isDanger) {
-            fill = pressed ? RGB(255, 208, 214) : RGB(255, 235, 238);
-            border = focused ? COLOR_DANGER : RGB(236, 145, 154);
-            buttonText = RGB(128, 36, 44);
-        } else if (isGreen) {
-            fill = pressed ? RGB(194, 240, 218) : RGB(224, 248, 235);
-            border = focused ? RGB(34, 145, 95) : RGB(117, 198, 157);
-            buttonText = RGB(24, 105, 72);
-        } else if (isBlue) {
-            fill = pressed ? RGB(207, 228, 255) : RGB(232, 242, 255);
-            border = focused ? COLOR_ACCENT : RGB(139, 185, 244);
-            buttonText = RGB(29, 86, 158);
-        } else {
-            fill = pressed ? RGB(226, 235, 249) : RGB(255, 255, 255);
-        }
+    if (isDanger) {
+        fill = BlendColor(RGB(36, 24, 24), RGB(58, 38, 38), hover);
+        border = BlendColor(RGB(92, 64, 64), COLOR_DANGER, focused ? 1.0 : hover);
+        buttonText = RGB(255, 238, 238);
+    } else if (isGreen) {
+        fill = BlendColor(RGB(24, 30, 28), RGB(38, 48, 44), hover);
+        border = BlendColor(RGB(68, 78, 74), RGB(146, 166, 156), focused ? 1.0 : hover);
+    } else if (isBlue) {
+        fill = BlendColor(RGB(25, 25, 25), RGB(44, 44, 44), hover);
+        border = BlendColor(RGB(72, 72, 72), COLOR_ACCENT, focused ? 1.0 : hover);
     }
 
-    HBRUSH brush = CreateSolidBrush(fill);
-    FillRect(draw->hDC, &draw->rcItem, brush);
-    DeleteObject(brush);
+    fill = BlendColor(fill, RGB(50, 50, 50), press * 0.45);
 
+    HBRUSH outerBrush = CreateSolidBrush(COLOR_BG);
+    FillRect(draw->hDC, &draw->rcItem, outerBrush);
+    DeleteObject(outerBrush);
+
+    RECT buttonRc = draw->rcItem;
+    int inset = (int)std::lround(press * 2.0);
+    InflateRect(&buttonRc, -inset, -inset);
+    OffsetRect(&buttonRc, 0, (int)std::lround(press * 1.0));
+    HBRUSH brush = CreateSolidBrush(fill);
     HPEN pen = CreatePen(PS_SOLID, 1, border);
     HGDIOBJ oldPen = SelectObject(draw->hDC, pen);
-    HGDIOBJ oldBrush = SelectObject(draw->hDC, GetStockObject(HOLLOW_BRUSH));
-    Rectangle(draw->hDC, draw->rcItem.left, draw->rcItem.top, draw->rcItem.right, draw->rcItem.bottom);
+    HGDIOBJ oldBrush = SelectObject(draw->hDC, brush);
+    RoundRect(draw->hDC, buttonRc.left, buttonRc.top, buttonRc.right, buttonRc.bottom, 6, 6);
     SelectObject(draw->hDC, oldBrush);
     SelectObject(draw->hDC, oldPen);
     DeleteObject(pen);
+    DeleteObject(brush);
+
+    int r = std::max(buttonRc.left, buttonRc.right - 1);
+    int b = std::max(buttonRc.top, buttonRc.bottom - 1);
+    SetPixel(draw->hDC, buttonRc.left, buttonRc.top, border);
+    SetPixel(draw->hDC, r, buttonRc.top, border);
+    SetPixel(draw->hDC, buttonRc.left, b, border);
+    SetPixel(draw->hDC, r, b, border);
+
+    DrawButtonEffects(draw, buttonRc, fill);
 
     SetBkMode(draw->hDC, TRANSPARENT);
     SetTextColor(draw->hDC, buttonText);
-    DrawTextW(draw->hDC, text, -1, const_cast<RECT*>(&draw->rcItem), DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    DrawTextW(draw->hDC, text, -1, &buttonRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     return true;
 }
 
@@ -4079,10 +4954,11 @@ bool DrawComboItem(const DRAWITEMSTRUCT* draw) {
         return true;
     }
     bool selected = (draw->itemState & ODS_SELECTED) != 0;
-    COLORREF fill = selected
-        ? (g_theme == UiTheme::Dark ? RGB(50, 86, 132) : RGB(218, 237, 255))
-        : COLOR_INPUT;
-    COLORREF textColor = COLOR_TEXT;
+    double open = GetAnimationValue(draw->hwndItem, AnimChannel::ComboOpen, 1.0);
+    double itemProgress = ElasticOut(std::clamp((open - (double)std::min<UINT>(draw->itemID, 10) * 0.075) / 0.55, 0.0, 1.0));
+    COLORREF rowFill = selected ? RGB(42, 42, 42) : COLOR_INPUT;
+    COLORREF fill = BlendColor(COLOR_BG, rowFill, itemProgress);
+    COLORREF textColor = BlendColor(COLOR_MUTED, COLOR_TEXT, itemProgress);
 
     HBRUSH brush = CreateSolidBrush(fill);
     FillRect(draw->hDC, &rc, brush);
@@ -4100,7 +4976,7 @@ bool DrawComboItem(const DRAWITEMSTRUCT* draw) {
         text = GetText(draw->hwndItem);
     }
 
-    rc.left += 10;
+    rc.left += 10 + (int)std::lround((1.0 - itemProgress) * 12.0);
     rc.right -= 8;
     SetBkMode(draw->hDC, TRANSPARENT);
     SetTextColor(draw->hDC, textColor);
@@ -4113,10 +4989,13 @@ void PaintComboClosed(HWND hwnd, HDC hdc) {
     GetClientRect(hwnd, &rc);
     bool enabled = IsWindowEnabled(hwnd) != FALSE;
     bool focused = GetFocus() == hwnd;
+    double hover = GetAnimationValue(hwnd, AnimChannel::Hover, focused ? 1.0 : 0.0);
+    double open = GetAnimationValue(hwnd, AnimChannel::ComboOpen, 0.0);
 
-    COLORREF fill = enabled ? COLOR_INPUT : (g_theme == UiTheme::Dark ? RGB(36, 39, 47) : RGB(232, 236, 243));
-    COLORREF border = focused ? COLOR_ACCENT : (g_theme == UiTheme::Dark ? RGB(76, 82, 96) : RGB(197, 204, 218));
-    COLORREF arrowFill = g_theme == UiTheme::Dark ? RGB(38, 43, 54) : RGB(237, 244, 252);
+    double active = std::clamp(std::max(hover, open), 0.0, 1.0);
+    COLORREF fill = enabled ? BlendColor(COLOR_INPUT, RGB(36, 36, 36), active) : RGB(18, 18, 18);
+    COLORREF border = BlendColor(RGB(64, 64, 64), COLOR_ACCENT, focused ? 1.0 : active);
+    COLORREF arrowFill = BlendColor(RGB(20, 20, 20), RGB(42, 42, 42), active);
     COLORREF textColor = enabled ? COLOR_TEXT : COLOR_MUTED;
 
     HBRUSH bg = CreateSolidBrush(fill);
@@ -4163,7 +5042,20 @@ void PaintComboClosed(HWND hwnd, HDC hdc) {
 
     int cx = arrowRc.left + (arrowRc.right - arrowRc.left) / 2;
     int cy = arrowRc.top + (arrowRc.bottom - arrowRc.top) / 2 + 1;
-    POINT pts[3] = {{cx - 5, cy - 3}, {cx + 5, cy - 3}, {cx, cy + 4}};
+    double angle = open * 3.14159265358979323846;
+    double pulse = 1.0 + std::sin(open * 3.14159265358979323846) * 0.16;
+    POINT base[3] = {{-5, -3}, {5, -3}, {0, 4}};
+    POINT pts[3]{};
+    double c = std::cos(angle);
+    double s = std::sin(angle);
+    for (int i = 0; i < 3; ++i) {
+        double x = base[i].x * pulse;
+        double y = base[i].y * pulse;
+        pts[i] = {
+            cx + (int)std::lround(x * c - y * s),
+            cy + (int)std::lround(x * s + y * c)
+        };
+    }
     HBRUSH arrowBrush = CreateSolidBrush(textColor);
     HPEN arrowPen = CreatePen(PS_SOLID, 1, textColor);
     oldBrush = SelectObject(hdc, arrowBrush);
@@ -4191,7 +5083,7 @@ LRESULT CALLBACK ComboPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 1;
     case CB_SETCURSEL: {
         LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
-        RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+        RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
         return result;
     }
     case WM_SETFOCUS:
@@ -4201,6 +5093,15 @@ LRESULT CALLBACK ComboPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
         InvalidateRect(hwnd, nullptr, TRUE);
         return result;
+    }
+    case WM_APP_ANIMATION_TICK: {
+        RedrawAnimatedControl(hwnd);
+        COMBOBOXINFO info{};
+        info.cbSize = sizeof(info);
+        if (GetComboBoxInfo(hwnd, &info) && info.hwndList) {
+            RedrawWindow(info.hwndList, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+        }
+        return 0;
     }
     }
     return DefSubclassProc(hwnd, msg, wParam, lParam);
@@ -4212,7 +5113,7 @@ void ApplyComboDropDownTheme(HWND combo) {
     info.cbSize = sizeof(info);
     if (!GetComboBoxInfo(combo, &info)) return;
 
-    const wchar_t* themeName = g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer";
+    const wchar_t* themeName = L"DarkMode_Explorer";
     SetWindowTheme(combo, themeName, nullptr);
     if (info.hwndItem) SetWindowTheme(info.hwndItem, themeName, nullptr);
     if (info.hwndList) {
@@ -4231,8 +5132,8 @@ void EnableComboPaint(HWND combo) {
 void PaintHeaderControl(HWND hwnd, HDC hdc) {
     RECT full{};
     GetClientRect(hwnd, &full);
-    COLORREF fill = g_theme == UiTheme::Dark ? RGB(38, 42, 51) : RGB(236, 242, 250);
-    COLORREF border = g_theme == UiTheme::Dark ? RGB(74, 82, 98) : RGB(196, 207, 222);
+    COLORREF fill = RGB(18, 18, 18);
+    COLORREF border = RGB(68, 68, 68);
     HBRUSH bg = CreateSolidBrush(fill);
     FillRect(hdc, &full, bg);
     DeleteObject(bg);
@@ -4248,8 +5149,7 @@ void PaintHeaderControl(HWND hwnd, HDC hdc) {
         RECT rc{};
         Header_GetItemRect(hwnd, i, &rc);
 
-        MoveToEx(hdc, rc.left, rc.bottom - 1, nullptr);
-        LineTo(hdc, rc.right, rc.bottom - 1);
+        DrawSoftDivider(hdc, rc.left, rc.right, rc.bottom - 1);
         MoveToEx(hdc, rc.right - 1, rc.top, nullptr);
         LineTo(hdc, rc.right - 1, rc.bottom);
 
@@ -4299,20 +5199,81 @@ LRESULT CALLBACK StatsPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     case WM_PAINT: {
         PAINTSTRUCT ps{};
         HDC hdc = BeginPaint(hwnd, &ps);
-        PaintGradientBackgroundSlice(hwnd, hdc);
 
         RECT rc{};
         GetClientRect(hwnd, &rc);
-        rc.left += 2;
-        rc.right -= 4;
-
         wchar_t text[1024]{};
         GetWindowTextW(hwnd, text, 1024);
+        int id = GetDlgCtrlID(hwnd);
+        bool card = id == IDC_STAT_TOTAL || id == IDC_STAT_ATTENDANCE || id == IDC_STAT_ISSUES || id == IDC_STAT_VISIBLE;
+
+        if (card) {
+            HBRUSH outer = CreateSolidBrush(COLOR_BG);
+            FillRect(hdc, &rc, outer);
+            DeleteObject(outer);
+
+            RECT cardRc = rc;
+            InflateRect(&cardRc, -1, -1);
+            HBRUSH fill = CreateSolidBrush(RGB(16, 16, 16));
+            HPEN pen = CreatePen(PS_SOLID, 1, RGB(16, 16, 16));
+            HGDIOBJ oldBrush = SelectObject(hdc, fill);
+            HGDIOBJ oldPen = SelectObject(hdc, pen);
+            RoundRect(hdc, cardRc.left, cardRc.top, cardRc.right, cardRc.bottom, 8, 8);
+            SelectObject(hdc, oldPen);
+            SelectObject(hdc, oldBrush);
+            DeleteObject(pen);
+            DeleteObject(fill);
+
+            for (int glow = 0; glow < 8; ++glow) {
+                double amount = 0.050 * (1.0 - glow / 8.0);
+                COLORREF glowColor = BlendColor(RGB(16, 16, 16), RGB(255, 255, 255), amount);
+                HPEN glowPen = CreatePen(PS_SOLID, 1, glowColor);
+                HGDIOBJ oldGlowPen = SelectObject(hdc, glowPen);
+                HGDIOBJ oldGlowBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
+                RECT glowRc = cardRc;
+                InflateRect(&glowRc, -glow - 1, -glow - 1);
+                RoundRect(hdc, glowRc.left, glowRc.top, glowRc.right, glowRc.bottom, 8, 8);
+                SelectObject(hdc, oldGlowBrush);
+                SelectObject(hdc, oldGlowPen);
+                DeleteObject(glowPen);
+            }
+
+            std::wstring content = text;
+            size_t split = content.find(L'\n');
+            std::wstring label = split == std::wstring::npos ? content : content.substr(0, split);
+            std::wstring value = split == std::wstring::npos ? L"" : content.substr(split + 1);
+
+            HGDIOBJ oldFont = SelectObject(hdc, g_smallFont ? g_smallFont : g_font);
+            SetBkMode(hdc, TRANSPARENT);
+            RECT labelRc = cardRc;
+            labelRc.left += 18;
+            labelRc.top += 14;
+            labelRc.right -= 18;
+            labelRc.bottom = labelRc.top + 24;
+            SetTextColor(hdc, COLOR_MUTED);
+            DrawTextW(hdc, label.c_str(), -1, &labelRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+            RECT valueRc = cardRc;
+            valueRc.left += 18;
+            valueRc.top += 40;
+            valueRc.right -= 18;
+            valueRc.bottom -= 10;
+            SetTextColor(hdc, COLOR_TEXT);
+            DrawTextW(hdc, value.c_str(), -1, &valueRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            SelectObject(hdc, oldFont);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+
+        PaintAppBackgroundSlice(hwnd, hdc);
+        rc.left += 2;
+        rc.right -= 4;
 
         HGDIOBJ oldFont = SelectObject(hdc, g_smallFont ? g_smallFont : g_font);
         SetBkMode(hdc, TRANSPARENT);
         SetTextColor(hdc, COLOR_ACCENT);
-        DrawTextW(hdc, text, -1, &rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        UINT align = GetDlgCtrlID(hwnd) == IDC_STATS ? DT_RIGHT : DT_LEFT;
+        DrawTextW(hdc, text, -1, &rc, align | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         SelectObject(hdc, oldFont);
         EndPaint(hwnd, &ps);
         return 0;
@@ -4332,17 +5293,30 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_CREATE: {
         g_hwnd = hwnd;
         ApplyThemePalette();
+        ApplyGlassTitleBar(hwnd);
         RecreateFonts();
 
         HWND title = MakeControl(L"STATIC", L"Attendance Manager", 0, IDC_TITLE);
         HWND subtitle = MakeControl(L"STATIC", L"Create, edit, export, save, import, and batch clean .attd roll calls.", 0, IDC_SUBTITLE);
         HWND stats = MakeControl(L"STATIC", L"Total 0    Present 0    Absent 0    Late 0    Other 0", SS_LEFTNOWORDWRAP | SS_ENDELLIPSIS, IDC_STATS);
         HWND hint = MakeControl(L"STATIC", L"Tip: double-click a row to edit. Ctrl/Shift supports multi-select.", 0, IDC_HINT);
+        HWND statTotal = MakeControl(L"STATIC", L"Total\n0", SS_LEFT | SS_NOPREFIX, IDC_STAT_TOTAL);
+        HWND statAttendance = MakeControl(L"STATIC", L"Attendance\n0%", SS_LEFT | SS_NOPREFIX, IDC_STAT_ATTENDANCE);
+        HWND statIssues = MakeControl(L"STATIC", L"Absent/Late\n0%", SS_LEFT | SS_NOPREFIX, IDC_STAT_ISSUES);
+        HWND statVisible = MakeControl(L"STATIC", L"Showing\n0 / 0", SS_LEFT | SS_NOPREFIX, IDC_STAT_VISIBLE);
         SendMessageW(title, WM_SETFONT, (WPARAM)g_titleFont, TRUE);
         SendMessageW(subtitle, WM_SETFONT, (WPARAM)g_smallFont, TRUE);
         SendMessageW(stats, WM_SETFONT, (WPARAM)g_smallFont, TRUE);
         SendMessageW(hint, WM_SETFONT, (WPARAM)g_smallFont, TRUE);
+        SendMessageW(statTotal, WM_SETFONT, (WPARAM)g_smallFont, TRUE);
+        SendMessageW(statAttendance, WM_SETFONT, (WPARAM)g_smallFont, TRUE);
+        SendMessageW(statIssues, WM_SETFONT, (WPARAM)g_smallFont, TRUE);
+        SendMessageW(statVisible, WM_SETFONT, (WPARAM)g_smallFont, TRUE);
         EnableStatsPaint(stats);
+        EnableStatsPaint(statTotal);
+        EnableStatsPaint(statAttendance);
+        EnableStatsPaint(statIssues);
+        EnableStatsPaint(statVisible);
         g_courseCombo = MakeControl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_COURSE_COMBO);
         MakeButton(L"Courses", IDC_COURSE_OPTIONS);
         MakeControl(L"STATIC", L"Date/Time", 0, 2001);
@@ -4392,7 +5366,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_EXITSIZEMOVE:
         g_liveResizing = false;
         ResizeLayout(hwnd);
+        InvalidateRect(hwnd, nullptr, FALSE);
+        UpdateWindow(hwnd);
         return 0;
+    case WM_LBUTTONDOWN:
+        CancelMainWindowClose();
+        break;
     case WM_VSCROLL:
         ScrollMainWindow(hwnd, SB_VERT, LOWORD(wParam), 0);
         return 0;
@@ -4407,10 +5386,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     case WM_COMMAND: {
         if (HIWORD(wParam) == CBN_DROPDOWN) {
+            StartAnimation((HWND)lParam, AnimChannel::ComboOpen, 1.0, 340);
             ApplyComboDropDownTheme((HWND)lParam);
             return 0;
         }
+        if (HIWORD(wParam) == CBN_CLOSEUP) {
+            StartAnimation((HWND)lParam, AnimChannel::ComboOpen, 0.0, 220);
+            return 0;
+        }
         if (LOWORD(wParam) == IDC_COURSE_COMBO && HIWORD(wParam) == CBN_SELCHANGE) {
+            CommitComboSelectionNow((HWND)lParam);
             int index = (int)SendMessageW(g_courseCombo, CB_GETCURSEL, 0, 0);
             SwitchCourse(index);
             return 0;
@@ -4466,6 +5451,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         break;
     }
     case WM_KEYDOWN:
+        CancelMainWindowClose();
         if ((GetKeyState(VK_CONTROL) & 0x8000) && wParam == 'S') {
             SaveAttendance();
             return 0;
@@ -4504,8 +5490,18 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (DrawButtonItem(draw)) return TRUE;
         break;
     }
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(hwnd, &ps);
+        PaintAppBackground(hwnd, hdc);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
     case WM_NOTIFY: {
         auto* hdr = reinterpret_cast<NMHDR*>(lParam);
+        if (hdr->idFrom == IDC_LIST && hdr->code == NM_CUSTOMDRAW) {
+            return HandleListCustomDraw(lParam);
+        }
         if (hdr->idFrom == IDC_LIST && hdr->code == LVN_ITEMCHANGED) {
             auto* item = reinterpret_cast<NMLISTVIEW*>(lParam);
             int recordIndex = VisibleToRecordIndex(item->iItem);
@@ -4539,13 +5535,21 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         SetBkColor(hdc, COLOR_INPUT);
         return (LRESULT)g_inputBrush;
     }
-    case WM_ERASEBKGND: {
-        PaintGradientBackground(hwnd, (HDC)wParam);
+    case WM_ERASEBKGND:
         return 1;
-    }
+    case WM_APP_ANIMATION_TICK:
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    case WM_APP_ANIMATION_DONE:
+        return 0;
+    case WM_CLOSE:
+        DestroyWindow(hwnd);
+        return 0;
     case WM_DESTROY:
         KillTimer(hwnd, 1);
         AutoSaveNow();
+        RemoveAnimationState(hwnd);
+        StopAnimationThread();
         if (g_font) DeleteObject(g_font);
         if (g_titleFont) DeleteObject(g_titleFont);
         if (g_smallFont) DeleteObject(g_smallFont);
@@ -4588,6 +5592,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCm
     if (!hwnd) return 1;
     SendMessageW(hwnd, WM_SETICON, ICON_BIG, (LPARAM)LoadIconW(instance, MAKEINTRESOURCEW(IDI_APP_ICON)));
     SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)LoadIconW(instance, MAKEINTRESOURCEW(IDI_APP_ICON)));
+    ApplyGlassTitleBar(hwnd);
     ShowWindow(hwnd, showCmd);
     UpdateWindow(hwnd);
 
