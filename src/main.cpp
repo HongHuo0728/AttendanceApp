@@ -333,9 +333,18 @@ struct ThemedMenuState {
     std::vector<ThemedMenuItem> items;
     int hover = -1;
     int selected = 0;
+    int finalX = 0;
+    int finalY = 0;
+    int width = 0;
+    int height = 0;
     bool done = false;
     bool closing = false;
 };
+
+static constexpr int THEMED_MENU_PAD_Y = 8;
+static constexpr int THEMED_MENU_ITEM_H = 34;
+static constexpr int THEMED_MENU_SEPARATOR_H = 13;
+static constexpr int THEMED_MENU_SLIDE_PX = 5;
 
 int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem>& items);
 
@@ -754,6 +763,48 @@ void EnableInteractiveAnimation(HWND hwnd) {
     SetWindowSubclass(hwnd, InteractiveControlProc, 7, 0);
 }
 
+int MeasureLongestTextLinePx(HWND owner, const std::wstring& text) {
+    HDC hdc = GetDC(owner ? owner : GetDesktopWindow());
+    HGDIOBJ oldFont = g_font ? SelectObject(hdc, g_font) : nullptr;
+    int longest = 0;
+    size_t start = 0;
+    while (start <= text.size()) {
+        size_t end = text.find(L'\n', start);
+        std::wstring line = text.substr(start, end == std::wstring::npos ? std::wstring::npos : end - start);
+        if (!line.empty() && line.back() == L'\r') line.pop_back();
+        SIZE size{};
+        GetTextExtentPoint32W(hdc, line.c_str(), (int)line.size(), &size);
+        longest = std::max(longest, (int)size.cx);
+        if (end == std::wstring::npos) break;
+        start = end + 1;
+    }
+    if (oldFont) SelectObject(hdc, oldFont);
+    ReleaseDC(owner ? owner : GetDesktopWindow(), hdc);
+    return longest;
+}
+
+SIZE MeasureWrappedTextPx(HWND owner, const std::wstring& text, int width) {
+    HDC hdc = GetDC(owner ? owner : GetDesktopWindow());
+    HGDIOBJ oldFont = g_font ? SelectObject(hdc, g_font) : nullptr;
+    RECT rc{0, 0, width, 0};
+    DrawTextW(hdc, text.c_str(), -1, &rc, DT_LEFT | DT_NOPREFIX | DT_WORDBREAK | DT_CALCRECT);
+    if (oldFont) SelectObject(hdc, oldFont);
+    ReleaseDC(owner ? owner : GetDesktopWindow(), hdc);
+    return SIZE{std::max(1, (int)(rc.right - rc.left)), std::max(1, (int)(rc.bottom - rc.top))};
+}
+
+SIZE CalculateMessageDialogWindowSize(HWND owner, const std::wstring& message) {
+    int longest = MeasureLongestTextLinePx(owner, message);
+    int textW = std::clamp(longest + 12, 360, 760);
+    SIZE textSize = MeasureWrappedTextPx(owner, message, textW);
+    int clientW = std::clamp(textW + 48, 470, 840);
+    int clientH = std::clamp((int)textSize.cy + 108, 230, 620);
+
+    RECT windowRc{0, 0, clientW, clientH};
+    AdjustWindowRectEx(&windowRc, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_DLGMODALFRAME);
+    return SIZE{(LONG)(windowRc.right - windowRc.left), (LONG)(windowRc.bottom - windowRc.top)};
+}
+
 void ResizeMessageDialog(HWND hwnd) {
     RECT rc{};
     GetClientRect(hwnd, &rc);
@@ -783,7 +834,7 @@ LRESULT CALLBACK MessageDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         auto* create = reinterpret_cast<CREATESTRUCTW*>(lParam);
         state = reinterpret_cast<MessageDialogState*>(create->lpCreateParams);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)state);
-        MakeSettingsControl(hwnd, L"STATIC", state->message.c_str(), SS_LEFT | SS_NOPREFIX, IDC_MESSAGE_TEXT);
+        MakeSettingsControl(hwnd, L"STATIC", state->message.c_str(), SS_LEFT | SS_NOPREFIX | SS_EDITCONTROL, IDC_MESSAGE_TEXT);
         if (state->yesNo) {
             MakeSettingsControl(hwnd, L"BUTTON", Tr(L"Yes", L"\u662f").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_MESSAGE_YES);
             MakeSettingsControl(hwnd, L"BUTTON", Tr(L"No", L"\u5426").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_MESSAGE_NO);
@@ -883,12 +934,13 @@ int ThemedMessageBox(HWND owner, const std::wstring& message, const std::wstring
     MessageDialogState state{title, message, yesNo, yesNo ? IDNO : IDOK, false};
     HWND parent = owner ? owner : g_hwnd;
     if (parent) EnableWindow(parent, FALSE);
+    SIZE dialogSize = CalculateMessageDialogWindowSize(parent, message);
     HWND dialog = CreateWindowExW(
         WS_EX_DLGMODALFRAME,
         className,
         title.c_str(),
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-        CW_USEDEFAULT, CW_USEDEFAULT, 470, 230,
+        CW_USEDEFAULT, CW_USEDEFAULT, dialogSize.cx, dialogSize.cy,
         parent, nullptr, instance, &state
     );
     if (!dialog) {
@@ -2185,17 +2237,17 @@ void DeleteCurrentCourse() {
 }
 
 int ThemedMenuItemTop(const ThemedMenuState* state, int index) {
-    int y = 8;
+    int y = THEMED_MENU_PAD_Y;
     for (int i = 0; i < index; ++i) {
-        y += state->items[i].separator ? 13 : 34;
+        y += state->items[i].separator ? THEMED_MENU_SEPARATOR_H : THEMED_MENU_ITEM_H;
     }
     return y;
 }
 
 int ThemedMenuTotalHeight(const ThemedMenuState* state) {
-    int height = 16;
+    int height = THEMED_MENU_PAD_Y * 2;
     for (const auto& item : state->items) {
-        height += item.separator ? 13 : 34;
+        height += item.separator ? THEMED_MENU_SEPARATOR_H : THEMED_MENU_ITEM_H;
     }
     return height;
 }
@@ -2203,7 +2255,7 @@ int ThemedMenuTotalHeight(const ThemedMenuState* state) {
 int ThemedMenuHitTest(ThemedMenuState* state, int y) {
     for (int i = 0; i < (int)state->items.size(); ++i) {
         int top = ThemedMenuItemTop(state, i);
-        int height = state->items[i].separator ? 13 : 34;
+        int height = state->items[i].separator ? THEMED_MENU_SEPARATOR_H : THEMED_MENU_ITEM_H;
         if (y >= top && y < top + height) {
             return state->items[i].separator ? -1 : i;
         }
@@ -2237,7 +2289,17 @@ RECT ThemedMenuItemRect(HWND hwnd, const ThemedMenuState* state, int index) {
         return rc;
     }
     int top = ThemedMenuItemTop(state, index);
-    return RECT{6, top, rc.right - 6, top + 34};
+    return RECT{6, top, rc.right - 6, top + THEMED_MENU_ITEM_H};
+}
+
+void ApplyThemedMenuReveal(HWND hwnd, ThemedMenuState* state) {
+    if (!hwnd || !state) return;
+    double reveal = GetAnimationValue(hwnd, AnimChannel::Reveal, 1.0);
+    int y = state->finalY - (int)std::lround((1.0 - reveal) * THEMED_MENU_SLIDE_PX);
+    BYTE alpha = (BYTE)std::clamp((int)std::lround(255.0 * reveal), 1, 255);
+    SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA);
+    SetWindowPos(hwnd, HWND_TOPMOST, state->finalX, y, state->width, state->height,
+        SWP_NOACTIVATE | SWP_NOOWNERZORDER);
 }
 
 void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState* state) {
@@ -2268,14 +2330,14 @@ void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState* state) {
     SetBkMode(hdc, TRANSPARENT);
 
     for (int i = 0; i < (int)state->items.size(); ++i) {
-        double itemProgress = ElasticOut(std::clamp((reveal - i * 0.085) / 0.55, 0.0, 1.0));
+        double itemProgress = EaseOut(reveal);
         int top = ThemedMenuItemTop(state, i);
         if (state->items[i].separator) {
             DrawSoftDivider(hdc, 12, rc.right - 12, top + 6);
             continue;
         }
 
-        RECT itemRc{0, top, rc.right, top + 34};
+        RECT itemRc{0, top, rc.right, top + THEMED_MENU_ITEM_H};
         if (i == state->hover) {
             double hot = GetAnimationValue(hwnd, AnimChannel::Hover, 1.0);
             HBRUSH hoverBrush = CreateSolidBrush(BlendColor(fill, hover, hot));
@@ -2391,6 +2453,7 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
         break;
     case WM_APP_ANIMATION_TICK:
+        if (state && !state->closing) ApplyThemedMenuReveal(hwnd, state);
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     case WM_APP_ANIMATION_DONE:
@@ -2461,21 +2524,26 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem>& items) {
         if (y + height > (int)mi.rcWork.bottom) y = (int)buttonRc.top - height - 4;
         y = std::clamp(y, minY, maxY);
     }
+    state.finalX = x;
+    state.finalY = y;
+    state.width = width;
+    state.height = height;
 
     HWND popup = CreateWindowExW(
-        WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED,
         L"AttendanceThemedPopupMenu", L"",
         WS_POPUP,
-        x, y, width, height,
+        x, y - THEMED_MENU_SLIDE_PX, width, height,
         g_hwnd, nullptr, GetModuleHandleW(nullptr), &state
     );
     if (!popup) return 0;
 
     BOOL dark = TRUE;
     DwmSetWindowAttribute(popup, 20, &dark, sizeof(dark));
-    StartWindowReveal(popup, 260);
+    SetLayeredWindowAttributes(popup, 0, 1, LWA_ALPHA);
+    StartWindowReveal(popup, 180);
     ShowWindow(popup, SW_SHOW);
-    SetWindowPos(popup, HWND_TOPMOST, x, y, width, height, SWP_SHOWWINDOW);
+    ApplyThemedMenuReveal(popup, &state);
     SetForegroundWindow(popup);
     SetFocus(popup);
     SetCapture(popup);
@@ -3766,8 +3834,8 @@ void ShowStatisticsSummary() {
     std::wstringstream ss;
     ss << Tr(L"Statistics summary", L"\u7edf\u8ba1\u6458\u8981") << L"\n\n";
     ss << Tr(L"Courses", L"\u8bfe\u7a0b") << L": " << g_sheets[g_activeSheet].name << L"\n";
-    ss << Tr(L"Total", L"\u603b\u6570") << L": " << g_records.size() << L"\n";
-    ss << Tr(L"Present", L"\u51fa\u5e2d") << L": " << present << L"\n";
+    ss << Tr(L"Total", L"\u603b\u6570") << L": " << g_records.size()
+       << L"    " << Tr(L"Present", L"\u51fa\u5e2d") << L": " << present << L"\n";
     ss << Tr(L"Absent", L"\u7f3a\u5e2d") << L": " << absent << L"\n";
     ss << Tr(L"Late", L"\u8fdf\u5230") << L": " << late << L"\n";
     ss << Tr(L"Other", L"\u5176\u4ed6") << L": " << other << L"\n";
@@ -3903,8 +3971,8 @@ void ShowShortcuts() {
         L"F11: " + Tr(L"Fullscreen", L"\u5168\u5c4f") + L"\n" +
         L"Ctrl+S: " + Tr(L"Save .attd", L"\u4fdd\u5b58 .attd") + L"\n" +
         L"Ctrl+O: " + Tr(L"Import .attd", L"\u5bfc\u5165 .attd") + L"\n" +
-        L"Ctrl+Z: " + Tr(L"Undo", L"\u64a4\u9500") + L"\n" +
-        L"Ctrl+Y: " + Tr(L"Redo", L"\u91cd\u505a") + L"\n" +
+        L"Ctrl+Z  " + Tr(L"Undo", L"\u64a4\u9500") + L"\n" +
+        L"Ctrl+Y  " + Tr(L"Redo", L"\u91cd\u505a") + L"\n" +
         Tr(L"Double-click row: Edit selected record", L"\u53cc\u51fb\u884c\uff1a\u7f16\u8f91\u9009\u4e2d\u8bb0\u5f55") + L"\n" +
         Tr(L"Ctrl/Shift click: Multi-select rows", L"Ctrl/Shift \u70b9\u51fb\uff1a\u591a\u9009\u884c");
     ShowMessage(text, Tr(L"Keyboard Shortcuts", L"\u5feb\u6377\u952e"));
