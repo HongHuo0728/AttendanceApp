@@ -119,6 +119,16 @@ static constexpr int IDM_BACKUP_NOW = 3034;
 static constexpr int IDM_RESTORE_BACKUP = 3035;
 static constexpr int IDM_OPEN_RECENT = 3036;
 static constexpr int IDM_SET_SAVE_DIR = 3037;
+static constexpr int IDM_LESSON_CREATE_TODAY = 3038;
+static constexpr int IDM_LESSON_SWITCH = 3039;
+static constexpr int IDM_STUDENT_PROFILE = 3040;
+static constexpr int IDM_ADVANCED_FILTER = 3041;
+static constexpr int IDM_STATS_RANGE = 3042;
+static constexpr int IDM_RISK_STUDENTS = 3043;
+static constexpr int IDM_BACKUP_MANAGER = 3044;
+static constexpr int IDM_REPORT_TEMPLATE = 3045;
+static constexpr int IDM_COMMAND_PALETTE = 3046;
+static constexpr int IDM_SHORTCUT_CENTER = 3047;
 
 static constexpr int IDC_SETTINGS_LANGUAGE = 4001;
 static constexpr int IDC_SETTINGS_THEME = 4002;
@@ -131,6 +141,16 @@ static constexpr int IDC_SETTINGS_FONT_LABEL = 4008;
 static constexpr int IDC_SETTINGS_TITLE = 4009;
 static constexpr int IDC_SETTINGS_RESET = 4010;
 static constexpr int IDC_SETTINGS_PARTICLES = 4011;
+static constexpr int IDC_SETTINGS_ANIMATION_LABEL = 4012;
+static constexpr int IDC_SETTINGS_ANIMATION_LEVEL = 4013;
+static constexpr int IDC_SETTINGS_PARTICLE_LABEL = 4014;
+static constexpr int IDC_SETTINGS_PARTICLE_LEVEL = 4015;
+static constexpr int IDC_SETTINGS_RISK_ALERTS = 4016;
+static constexpr int IDC_SETTINGS_AUTOSAVE_PROMPT = 4017;
+static constexpr int IDC_SETTINGS_COMMAND_PALETTE = 4018;
+static constexpr int IDC_SETTINGS_REPORT_LABEL = 4019;
+static constexpr int IDC_SETTINGS_REPORT_TEMPLATE = 4020;
+static constexpr int IDC_SETTINGS_ADVANCED_FILTER = 4021;
 static constexpr int IDC_INPUT_EDIT = 5001;
 static constexpr int IDC_INPUT_OK = 5002;
 static constexpr int IDC_INPUT_CANCEL = 5003;
@@ -216,12 +236,30 @@ enum class UiLanguage {
     ChineseTraditionalHongKong
 };
 enum class UiTheme { Dark };
+enum class AnimationLevel { Off, Standard, Advanced };
+enum class ParticleLevel { Low, Medium, High };
+enum class ReportTemplate { Simple, Teacher, Parent, Complete };
+enum class StatsRange { All, ThisWeek, ThisMonth };
 
 static UiLanguage g_language = UiLanguage::English;
 static UiTheme g_theme = UiTheme::Dark;
 static std::wstring g_fontFamily = L"Segoe UI";
 static std::wstring g_defaultSaveDir;
 static std::vector<std::wstring> g_availableFonts;
+static AnimationLevel g_animationLevel = AnimationLevel::Advanced;
+static ParticleLevel g_particleLevel = ParticleLevel::Medium;
+static ReportTemplate g_reportTemplate = ReportTemplate::Complete;
+static StatsRange g_statsRange = StatsRange::All;
+static bool g_riskAlertsEnabled = true;
+static bool g_autosavePromptEnabled = true;
+static bool g_commandPaletteEnabled = true;
+static bool g_advancedFilterEnabled = true;
+static std::wstring g_shortcutSave = L"Ctrl+S";
+static std::wstring g_shortcutImport = L"Ctrl+O";
+static std::wstring g_shortcutUndo = L"Ctrl+Z";
+static std::wstring g_shortcutRedo = L"Ctrl+Y";
+static std::wstring g_shortcutCommand = L"Ctrl+K";
+static std::wstring g_shortcutFullscreen = L"F11";
 
 static COLORREF COLOR_BG = RGB(0, 0, 0);
 static COLORREF COLOR_PANEL = RGB(18, 18, 18);
@@ -298,6 +336,11 @@ void EnableEditShortcuts(HWND hwnd);
 void EnableMouseWheelForward(HWND hwnd);
 void CountStatuses(int& present, int& absent, int& late, int& other);
 void EnableInteractiveAnimation(HWND hwnd);
+void SaveAttendance();
+void ImportAttendance();
+void ExportCsv();
+void BackupNow();
+void ShowSettingsWindow();
 void StartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t durationMs = 160, bool closeOnDone = false);
 void RestartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t durationMs = 220);
 double GetAnimationValue(HWND hwnd, AnimChannel channel, double fallback = 0.0);
@@ -322,6 +365,14 @@ void DrawButtonEffects(const DRAWITEMSTRUCT* draw, const RECT& buttonRc, COLORRE
 void DrawSoftDivider(HDC hdc, int left, int right, int y);
 int ThemedMessageBox(HWND owner, const std::wstring& message, const std::wstring& title, bool yesNo);
 bool DrawParticleToggleItem(const DRAWITEMSTRUCT* draw);
+std::wstring ParticleEffectsLabel();
+std::wstring AnimationLevelName(AnimationLevel level);
+std::wstring ParticleLevelName(ParticleLevel level);
+std::wstring ReportTemplateName(ReportTemplate templateType);
+std::wstring StatsRangeName(StatsRange range);
+void RunCommandPalette();
+std::wstring NormalizeShortcut(const std::wstring& value, const std::wstring& fallback);
+bool ShortcutMatches(const std::wstring& shortcut, WPARAM key);
 
 struct ThemedMenuItem {
     int command = 0;
@@ -476,8 +527,15 @@ void StopAnimationThread() {
     if (g_animationThread.joinable()) g_animationThread.join();
 }
 
+uint32_t EffectiveAnimationDuration(uint32_t durationMs) {
+    if (g_animationLevel == AnimationLevel::Off) return 0;
+    if (g_animationLevel == AnimationLevel::Standard) return std::min<uint32_t>(durationMs, 160);
+    return durationMs;
+}
+
 void StartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t durationMs, bool closeOnDone) {
     if (!hwnd) return;
+    durationMs = EffectiveAnimationDuration(durationMs);
     EnsureAnimationThread();
     std::lock_guard<std::mutex> lock(g_animMutex);
     AnimValue& anim = g_animations[hwnd][(int)channel];
@@ -496,6 +554,7 @@ void StartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t dura
 
 void RestartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t durationMs) {
     if (!hwnd) return;
+    durationMs = EffectiveAnimationDuration(durationMs);
     EnsureAnimationThread();
     std::lock_guard<std::mutex> lock(g_animMutex);
     AnimValue& anim = g_animations[hwnd][(int)channel];
@@ -608,12 +667,265 @@ bool ContainsText(const std::wstring& haystack, const std::wstring& needle) {
     return LowerText(haystack).find(needle) != std::wstring::npos;
 }
 
+std::wstring TrimWide(std::wstring value) {
+    auto isSpace = [](wchar_t ch) { return iswspace(ch) != 0; };
+    value.erase(value.begin(), std::find_if(value.begin(), value.end(), [&](wchar_t ch) { return !isSpace(ch); }));
+    value.erase(std::find_if(value.rbegin(), value.rend(), [&](wchar_t ch) { return !isSpace(ch); }).base(), value.end());
+    return value;
+}
+
+std::wstring UpperText(std::wstring value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](wchar_t ch) {
+        return (wchar_t)towupper(ch);
+    });
+    return value;
+}
+
+std::wstring NormalizeShortcut(const std::wstring& value, const std::wstring& fallback) {
+    std::wstring shortcut = TrimWide(value);
+    shortcut.erase(std::remove_if(shortcut.begin(), shortcut.end(), [](wchar_t ch) {
+        return iswspace(ch) != 0;
+    }), shortcut.end());
+    std::replace(shortcut.begin(), shortcut.end(), L'-', L'+');
+    shortcut = UpperText(shortcut);
+
+    if (shortcut.rfind(L"CONTROL+", 0) == 0) {
+        shortcut = L"CTRL+" + shortcut.substr(8);
+    }
+
+    auto normalizeKeyPart = [](const std::wstring& key) -> std::wstring {
+        if (key.size() == 1 && ((key[0] >= L'A' && key[0] <= L'Z') || (key[0] >= L'0' && key[0] <= L'9'))) {
+            return key;
+        }
+        if (key.size() >= 2 && key[0] == L'F') {
+            try {
+                int number = std::stoi(key.substr(1));
+                if (number >= 1 && number <= 24) return L"F" + std::to_wstring(number);
+            } catch (...) {
+            }
+        }
+        return {};
+    };
+
+    if (shortcut.rfind(L"CTRL+", 0) == 0) {
+        std::wstring key = normalizeKeyPart(shortcut.substr(5));
+        if (!key.empty()) return L"Ctrl+" + key;
+    } else {
+        std::wstring key = normalizeKeyPart(shortcut);
+        if (!key.empty()) return key;
+    }
+    return fallback;
+}
+
+bool ShortcutKeyPartMatches(const std::wstring& key, WPARAM wParam) {
+    if (key.size() == 1) {
+        wchar_t ch = key[0];
+        if (ch >= L'a' && ch <= L'z') ch = (wchar_t)towupper(ch);
+        return (wParam == (WPARAM)ch);
+    }
+    if (key.size() >= 2 && key[0] == L'F') {
+        try {
+            int number = std::stoi(key.substr(1));
+            return number >= 1 && number <= 24 && wParam == (WPARAM)(VK_F1 + number - 1);
+        } catch (...) {
+        }
+    }
+    return false;
+}
+
+bool ShortcutMatches(const std::wstring& shortcut, WPARAM key) {
+    std::wstring normalized = NormalizeShortcut(shortcut, L"");
+    if (normalized.empty()) return false;
+    bool ctrlDown = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+    bool altDown = (GetKeyState(VK_MENU) & 0x8000) != 0;
+    if (normalized.rfind(L"Ctrl+", 0) == 0) {
+        return ctrlDown && !altDown && ShortcutKeyPartMatches(normalized.substr(5), key);
+    }
+    return !ctrlDown && !altDown && ShortcutKeyPartMatches(normalized, key);
+}
+
+std::wstring ShortcutConfigText() {
+    return L"save=" + g_shortcutSave
+        + L"; import=" + g_shortcutImport
+        + L"; undo=" + g_shortcutUndo
+        + L"; redo=" + g_shortcutRedo
+        + L"; command=" + g_shortcutCommand
+        + L"; fullscreen=" + g_shortcutFullscreen;
+}
+
+bool ApplyShortcutConfigText(const std::wstring& config) {
+    bool changed = false;
+    std::wstringstream stream(config);
+    std::wstring entry;
+    while (std::getline(stream, entry, L';')) {
+        auto pos = entry.find(L'=');
+        if (pos == std::wstring::npos) continue;
+        std::wstring key = LowerText(TrimWide(entry.substr(0, pos)));
+        std::wstring value = TrimWide(entry.substr(pos + 1));
+        std::wstring* target = nullptr;
+        std::wstring fallback;
+        if (key == L"save" || key == L"s") {
+            target = &g_shortcutSave;
+            fallback = L"Ctrl+S";
+        } else if (key == L"import" || key == L"open" || key == L"o") {
+            target = &g_shortcutImport;
+            fallback = L"Ctrl+O";
+        } else if (key == L"undo" || key == L"z") {
+            target = &g_shortcutUndo;
+            fallback = L"Ctrl+Z";
+        } else if (key == L"redo" || key == L"y") {
+            target = &g_shortcutRedo;
+            fallback = L"Ctrl+Y";
+        } else if (key == L"command" || key == L"palette" || key == L"command_palette" || key == L"commandpalette") {
+            target = &g_shortcutCommand;
+            fallback = L"Ctrl+K";
+        } else if (key == L"fullscreen" || key == L"full" || key == L"f11") {
+            target = &g_shortcutFullscreen;
+            fallback = L"F11";
+        }
+        if (!target) continue;
+        std::wstring normalized = NormalizeShortcut(value, *target);
+        if (!normalized.empty() && normalized != *target) {
+            *target = normalized;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+std::wstring RecordDateKey(const AttendanceRecord& record) {
+    return record.dateTime.size() >= 10 ? record.dateTime.substr(0, 10) : record.dateTime;
+}
+
+std::wstring TodayDateKey() {
+    SYSTEMTIME st{};
+    GetLocalTime(&st);
+    wchar_t buffer[16]{};
+    swprintf_s(buffer, L"%04d-%02d-%02d", st.wYear, st.wMonth, st.wDay);
+    return buffer;
+}
+
+bool DateKeyToFileTime(const std::wstring& date, FILETIME& out) {
+    if (date.size() < 10) return false;
+    SYSTEMTIME st{};
+    try {
+        st.wYear = (WORD)std::stoi(date.substr(0, 4));
+        st.wMonth = (WORD)std::stoi(date.substr(5, 2));
+        st.wDay = (WORD)std::stoi(date.substr(8, 2));
+    } catch (...) {
+        return false;
+    }
+    st.wHour = 12;
+    return SystemTimeToFileTime(&st, &out) != FALSE;
+}
+
+int64_t FileTimeTicks(const FILETIME& ft) {
+    ULARGE_INTEGER value{};
+    value.LowPart = ft.dwLowDateTime;
+    value.HighPart = ft.dwHighDateTime;
+    return (int64_t)value.QuadPart;
+}
+
+bool DateWithinRecentDays(const std::wstring& date, int days) {
+    FILETIME recordFt{};
+    if (!DateKeyToFileTime(date, recordFt)) return true;
+    SYSTEMTIME nowSt{};
+    FILETIME nowFt{};
+    GetLocalTime(&nowSt);
+    nowSt.wHour = 12;
+    nowSt.wMinute = 0;
+    nowSt.wSecond = 0;
+    nowSt.wMilliseconds = 0;
+    SystemTimeToFileTime(&nowSt, &nowFt);
+    constexpr int64_t dayTicks = 864000000000LL;
+    int64_t delta = FileTimeTicks(nowFt) - FileTimeTicks(recordFt);
+    return delta >= 0 && delta <= (int64_t)std::max(1, days) * dayTicks;
+}
+
+bool DateWithinCurrentMonth(const std::wstring& date) {
+    std::wstring today = TodayDateKey();
+    return date.size() >= 7 && today.size() >= 7 && date.substr(0, 7) == today.substr(0, 7);
+}
+
+bool RecordMatchesStatsRange(const AttendanceRecord& record) {
+    std::wstring date = RecordDateKey(record);
+    if (g_statsRange == StatsRange::ThisWeek) return DateWithinRecentDays(date, 7);
+    if (g_statsRange == StatsRange::ThisMonth) return DateWithinCurrentMonth(date);
+    return true;
+}
+
+std::vector<std::wstring> SplitWords(const std::wstring& text) {
+    std::wistringstream ss(text);
+    std::vector<std::wstring> words;
+    std::wstring word;
+    while (ss >> word) words.push_back(word);
+    return words;
+}
+
 bool RecordMatchesFilter(const AttendanceRecord& record) {
     if (g_filterText.empty()) return true;
-    return ContainsText(record.dateTime, g_filterText)
-        || ContainsText(record.name, g_filterText)
-        || ContainsText(record.status, g_filterText)
-        || ContainsText(record.other, g_filterText);
+    if (!g_advancedFilterEnabled) {
+        return ContainsText(record.dateTime, g_filterText)
+            || ContainsText(record.name, g_filterText)
+            || ContainsText(record.status, g_filterText)
+            || ContainsText(record.other, g_filterText);
+    }
+
+    std::wstring nameFilter;
+    std::wstring statusFilter;
+    std::wstring courseFilter;
+    std::wstring exactDate;
+    std::wstring fromDate;
+    std::wstring toDate;
+    std::vector<std::wstring> freeTerms;
+
+    for (const auto& token : SplitWords(g_filterText)) {
+        auto colon = token.find(L':');
+        if (colon == std::wstring::npos) {
+            freeTerms.push_back(token);
+            continue;
+        }
+        std::wstring key = token.substr(0, colon);
+        std::wstring value = token.substr(colon + 1);
+        if (key == L"name") nameFilter = value;
+        else if (key == L"status") statusFilter = value;
+        else if (key == L"course") courseFilter = value;
+        else if (key == L"date") exactDate = value;
+        else if (key == L"from") fromDate = value;
+        else if (key == L"to") toDate = value;
+        else freeTerms.push_back(token);
+    }
+
+    if (std::find(freeTerms.begin(), freeTerms.end(), L"thisweek") != freeTerms.end()
+        || std::find(freeTerms.begin(), freeTerms.end(), L"week") != freeTerms.end()) {
+        if (!DateWithinRecentDays(RecordDateKey(record), 7)) return false;
+    }
+    if (std::find(freeTerms.begin(), freeTerms.end(), L"thismonth") != freeTerms.end()
+        || std::find(freeTerms.begin(), freeTerms.end(), L"month") != freeTerms.end()) {
+        if (!DateWithinCurrentMonth(RecordDateKey(record))) return false;
+    }
+
+    std::wstring date = RecordDateKey(record);
+    if (!exactDate.empty() && !ContainsText(LowerText(record.dateTime), exactDate)) return false;
+    if (!fromDate.empty() && date < fromDate) return false;
+    if (!toDate.empty() && date > toDate) return false;
+    if (!nameFilter.empty() && !ContainsText(record.name, nameFilter)) return false;
+    if (!statusFilter.empty() && !ContainsText(record.status, statusFilter)) return false;
+    if (!courseFilter.empty()) {
+        if (g_activeSheet < 0 || g_activeSheet >= (int)g_sheets.size() || !ContainsText(g_sheets[g_activeSheet].name, courseFilter)) return false;
+    }
+
+    std::wstring joinedFree;
+    for (const auto& term : freeTerms) {
+        if (term == L"thisweek" || term == L"week" || term == L"thismonth" || term == L"month") continue;
+        if (!joinedFree.empty()) joinedFree += L" ";
+        joinedFree += term;
+    }
+    if (joinedFree.empty()) return true;
+    return ContainsText(record.dateTime, joinedFree)
+        || ContainsText(record.name, joinedFree)
+        || ContainsText(record.status, joinedFree)
+        || ContainsText(record.other, joinedFree);
 }
 
 int VisibleToRecordIndex(int visibleIndex) {
@@ -1612,6 +1924,64 @@ std::wstring Tr(const wchar_t* english, const wchar_t*) {
     return key;
 }
 
+std::wstring ParticleEffectsLabel() {
+    switch (g_language) {
+    case UiLanguage::ChineseSimplified: return L"\u542f\u7528\u7c92\u5b50\u7279\u6548";
+    case UiLanguage::Maltese: return L"Ixg\u0127el effetti tal-parti\u010belli";
+    case UiLanguage::Japanese: return L"\u30d1\u30fc\u30c6\u30a3\u30af\u30eb\u52b9\u679c\u3092\u6709\u52b9\u5316";
+    case UiLanguage::French: return L"Activer les effets de particules";
+    case UiLanguage::German: return L"Partikeleffekte aktivieren";
+    case UiLanguage::Russian: return L"\u0412\u043a\u043b\u044e\u0447\u0438\u0442\u044c \u044d\u0444\u0444\u0435\u043a\u0442\u044b \u0447\u0430\u0441\u0442\u0438\u0446";
+    case UiLanguage::ChineseTraditional: return L"\u555f\u7528\u7c92\u5b50\u7279\u6548";
+    case UiLanguage::Spanish: return L"Activar efectos de part\u00edculas";
+    case UiLanguage::Italian: return L"Attiva effetti particellari";
+    case UiLanguage::Mongolian: return L"\u0411\u04e9\u04e9\u043c\u0441\u0438\u0439\u043d \u044d\u0444\u0444\u0435\u043a\u0442\u0438\u0439\u0433 \u0438\u0434\u044d\u0432\u0445\u0436\u04af\u04af\u043b\u044d\u0445";
+    case UiLanguage::Esperanto: return L"\u015calti partiklo-efektojn";
+    case UiLanguage::ClassicalChinese: return L"\u555f\u7c92\u5b50\u4e4b\u6548";
+    case UiLanguage::Thai: return L"\u0e40\u0e1b\u0e34\u0e14\u0e40\u0e2d\u0e1f\u0e40\u0e1f\u0e01\u0e15\u0e4c\u0e2d\u0e19\u0e38\u0e20\u0e32\u0e04";
+    case UiLanguage::Filipino: return L"I-enable ang particle effects";
+    case UiLanguage::Turkish: return L"Par\u00e7ac\u0131k efektlerini etkinle\u015ftir";
+    case UiLanguage::Lithuanian: return L"\u012ejungti daleli\u0173 efektus";
+    case UiLanguage::Norwegian: return L"Sl\u00e5 p\u00e5 partikkeleffekter";
+    case UiLanguage::Vietnamese: return L"B\u1eadt hi\u1ec7u \u1ee9ng h\u1ea1t";
+    case UiLanguage::ChineseTraditionalHongKong: return L"\u555f\u7528\u7c92\u5b50\u7279\u6548";
+    default: return L"Enable particle effects";
+    }
+}
+
+std::wstring AnimationLevelName(AnimationLevel level) {
+    switch (level) {
+    case AnimationLevel::Off: return Tr(L"Off", L"\u5173\u95ed");
+    case AnimationLevel::Standard: return Tr(L"Standard", L"\u6807\u51c6");
+    default: return Tr(L"Advanced", L"\u9ad8\u7ea7");
+    }
+}
+
+std::wstring ParticleLevelName(ParticleLevel level) {
+    switch (level) {
+    case ParticleLevel::Low: return Tr(L"Low", L"\u4f4e");
+    case ParticleLevel::High: return Tr(L"High", L"\u9ad8");
+    default: return Tr(L"Medium", L"\u4e2d");
+    }
+}
+
+std::wstring ReportTemplateName(ReportTemplate templateType) {
+    switch (templateType) {
+    case ReportTemplate::Simple: return Tr(L"Simple", L"\u7b80\u6d01\u7248");
+    case ReportTemplate::Teacher: return Tr(L"Teacher", L"\u6559\u5e08\u7248");
+    case ReportTemplate::Parent: return Tr(L"Parent", L"\u5bb6\u957f\u7248");
+    default: return Tr(L"Complete", L"\u5b8c\u6574\u7248");
+    }
+}
+
+std::wstring StatsRangeName(StatsRange range) {
+    switch (range) {
+    case StatsRange::ThisWeek: return Tr(L"This week", L"\u672c\u5468");
+    case StatsRange::ThisMonth: return Tr(L"This month", L"\u672c\u6708");
+    default: return Tr(L"All time", L"\u5168\u90e8");
+    }
+}
+
 HFONT CreateUiFont(int height, int weight) {
     return CreateFontW(height, 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, g_fontFamily.c_str());
@@ -1721,6 +2091,18 @@ UiLanguage LanguageFromString(const std::string& value) {
     return UiLanguage::English;
 }
 
+int ClampSettingInt(const std::string& value, int fallback, int minValue, int maxValue) {
+    try {
+        return std::clamp(std::stoi(value), minValue, maxValue);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+std::string BoolSetting(bool value) {
+    return value ? "1" : "0";
+}
+
 void SaveSettings() {
     auto path = SettingsFilePath();
     if (path.empty()) return;
@@ -1731,6 +2113,19 @@ void SaveSettings() {
     file << "font=" << WideToUtf8(g_fontFamily) << "\n";
     file << "default_save_dir=" << WideToUtf8(g_defaultSaveDir) << "\n";
     file << "particles=" << (g_particlesEnabled ? "1" : "0") << "\n";
+    file << "animation_level=" << (int)g_animationLevel << "\n";
+    file << "particle_level=" << (int)g_particleLevel << "\n";
+    file << "report_template=" << (int)g_reportTemplate << "\n";
+    file << "risk_alerts=" << BoolSetting(g_riskAlertsEnabled) << "\n";
+    file << "autosave_prompt=" << BoolSetting(g_autosavePromptEnabled) << "\n";
+    file << "command_palette=" << BoolSetting(g_commandPaletteEnabled) << "\n";
+    file << "advanced_filter=" << BoolSetting(g_advancedFilterEnabled) << "\n";
+    file << "shortcut_save=" << WideToUtf8(g_shortcutSave) << "\n";
+    file << "shortcut_import=" << WideToUtf8(g_shortcutImport) << "\n";
+    file << "shortcut_undo=" << WideToUtf8(g_shortcutUndo) << "\n";
+    file << "shortcut_redo=" << WideToUtf8(g_shortcutRedo) << "\n";
+    file << "shortcut_command=" << WideToUtf8(g_shortcutCommand) << "\n";
+    file << "shortcut_fullscreen=" << WideToUtf8(g_shortcutFullscreen) << "\n";
 }
 
 void LoadSettings() {
@@ -1751,6 +2146,19 @@ void LoadSettings() {
         else if (key == "font" && !value.empty()) g_fontFamily = Utf8ToWide(value);
         else if (key == "default_save_dir") g_defaultSaveDir = Utf8ToWide(value);
         else if (key == "particles") g_particlesEnabled = value != "0";
+        else if (key == "animation_level") g_animationLevel = (AnimationLevel)ClampSettingInt(value, (int)AnimationLevel::Advanced, 0, 2);
+        else if (key == "particle_level") g_particleLevel = (ParticleLevel)ClampSettingInt(value, (int)ParticleLevel::Medium, 0, 2);
+        else if (key == "report_template") g_reportTemplate = (ReportTemplate)ClampSettingInt(value, (int)ReportTemplate::Complete, 0, 3);
+        else if (key == "risk_alerts") g_riskAlertsEnabled = value != "0";
+        else if (key == "autosave_prompt") g_autosavePromptEnabled = value != "0";
+        else if (key == "command_palette") g_commandPaletteEnabled = value != "0";
+        else if (key == "advanced_filter") g_advancedFilterEnabled = value != "0";
+        else if (key == "shortcut_save") g_shortcutSave = NormalizeShortcut(Utf8ToWide(value), L"Ctrl+S");
+        else if (key == "shortcut_import") g_shortcutImport = NormalizeShortcut(Utf8ToWide(value), L"Ctrl+O");
+        else if (key == "shortcut_undo") g_shortcutUndo = NormalizeShortcut(Utf8ToWide(value), L"Ctrl+Z");
+        else if (key == "shortcut_redo") g_shortcutRedo = NormalizeShortcut(Utf8ToWide(value), L"Ctrl+Y");
+        else if (key == "shortcut_command") g_shortcutCommand = NormalizeShortcut(Utf8ToWide(value), L"Ctrl+K");
+        else if (key == "shortcut_fullscreen") g_shortcutFullscreen = NormalizeShortcut(Utf8ToWide(value), L"F11");
     }
     g_theme = UiTheme::Dark;
 }
@@ -1766,6 +2174,19 @@ void ResetSettings() {
     g_fontFamily = L"Segoe UI";
     g_defaultSaveDir.clear();
     g_particlesEnabled = true;
+    g_animationLevel = AnimationLevel::Advanced;
+    g_particleLevel = ParticleLevel::Medium;
+    g_reportTemplate = ReportTemplate::Complete;
+    g_riskAlertsEnabled = true;
+    g_autosavePromptEnabled = true;
+    g_commandPaletteEnabled = true;
+    g_advancedFilterEnabled = true;
+    g_shortcutSave = L"Ctrl+S";
+    g_shortcutImport = L"Ctrl+O";
+    g_shortcutUndo = L"Ctrl+Z";
+    g_shortcutRedo = L"Ctrl+Y";
+    g_shortcutCommand = L"Ctrl+K";
+    g_shortcutFullscreen = L"F11";
 }
 
 std::string WideToUtf8(const std::wstring& input) {
@@ -1907,7 +2328,7 @@ void SyncActiveSheet() {
 std::string SerializeWorkbook() {
     SyncActiveSheet();
     std::ostringstream ss;
-    ss << "ATTENDANCE_V4\n";
+    ss << "ATTENDANCE_V5\n";
     ss << g_activeSheet << "\n";
     ss << g_sheets.size() << "\n";
     for (const auto& sheet : g_sheets) {
@@ -1941,10 +2362,10 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
         output = {MakeSheet(L"Default Course", std::move(records))};
         return true;
     }
-    if (header != "ATTENDANCE_V2" && header != "ATTENDANCE_V3" && header != "ATTENDANCE_V4") return false;
+    if (header != "ATTENDANCE_V2" && header != "ATTENDANCE_V3" && header != "ATTENDANCE_V4" && header != "ATTENDANCE_V5") return false;
 
     std::string countLine;
-    if (header == "ATTENDANCE_V3" || header == "ATTENDANCE_V4") {
+    if (header == "ATTENDANCE_V3" || header == "ATTENDANCE_V4" || header == "ATTENDANCE_V5") {
         std::string activeLine;
         std::getline(ss, activeLine);
         try {
@@ -1970,7 +2391,7 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
         AttendanceSheet sheet;
         sheet.name = Utf8ToWide(Unescape(nameLine));
         if (sheet.name.empty()) sheet.name = L"Course";
-        if (header == "ATTENDANCE_V4") {
+        if (header == "ATTENDANCE_V4" || header == "ATTENDANCE_V5") {
             std::string teacherLine;
             std::string locationLine;
             std::string notesLine;
@@ -2110,17 +2531,21 @@ void UpdateStats() {
     int absent = 0;
     int late = 0;
     int other = 0;
+    int totalInRange = 0;
     for (const auto& record : g_records) {
+        if (!RecordMatchesStatsRange(record)) continue;
+        ++totalInRange;
         if (record.status == L"Present") ++present;
         else if (record.status == L"Absent") ++absent;
         else if (record.status == L"Late") ++late;
         else ++other;
     }
 
-    double attendanceRate = g_records.empty() ? 0.0 : (present * 100.0 / g_records.size());
-    double issueRate = g_records.empty() ? 0.0 : ((absent + late) * 100.0 / g_records.size());
+    double attendanceRate = totalInRange == 0 ? 0.0 : (present * 100.0 / totalInRange);
+    double issueRate = totalInRange == 0 ? 0.0 : ((absent + late) * 100.0 / totalInRange);
     std::wstringstream ss;
-    ss << Tr(L"Total", L"\u603b\u6570") << L" " << g_records.size()
+    ss << StatsRangeName(g_statsRange) << L"  |  "
+       << Tr(L"Total", L"\u603b\u6570") << L" " << totalInRange
        << L"  |  " << Tr(L"Attendance", L"\u51fa\u52e4\u7387") << L" " << std::fixed << std::setprecision(1) << attendanceRate << L"%"
        << L"  |  " << Tr(L"Absent/Late", L"\u7f3a\u5e2d/\u8fdf\u5230") << L" " << std::fixed << std::setprecision(1) << issueRate << L"%"
        << L"  |  " << Tr(L"Present", L"\u51fa\u5e2d") << L" " << present
@@ -2133,7 +2558,7 @@ void UpdateStats() {
     SetStaticTextClean(GetDlgItem(g_hwnd, IDC_STATS), ss.str());
 
     std::wstringstream totalCard;
-    totalCard << Tr(L"Total", L"\u603b\u6570") << L"\n" << g_records.size();
+    totalCard << StatsRangeName(g_statsRange) << L"\n" << totalInRange;
     SetStaticTextClean(GetDlgItem(g_hwnd, IDC_STAT_TOTAL), totalCard.str());
 
     std::wstringstream attendanceCard;
@@ -3254,8 +3679,9 @@ struct PptStats {
 
 PptStats CountRecords(const std::vector<AttendanceRecord>& records) {
     PptStats stats{};
-    stats.total = (int)records.size();
     for (const auto& r : records) {
+        if (!RecordMatchesStatsRange(r)) continue;
+        ++stats.total;
         if (r.status == L"Present") ++stats.present;
         else if (r.status == L"Absent") ++stats.absent;
         else if (r.status == L"Late") ++stats.late;
@@ -3365,18 +3791,35 @@ std::string SlideXml(const std::string& body) {
            "</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>";
 }
 
-std::string BuildPptSlide1(const std::wstring& course, const PptStats& stats) {
+std::string BuildPptSlide1(const AttendanceSheet& sheet, const PptStats& stats) {
     int id = 3;
     double rate = stats.total ? stats.present * 100.0 / stats.total : 0.0;
     std::wstringstream rateText;
     rateText.setf(std::ios::fixed);
     rateText.precision(1);
     rateText << rate << L"%";
+    std::wstring title = Tr(L"Attendance Manager", L"\u70b9\u540d\u7ba1\u7406\u5668");
+    if (g_reportTemplate == ReportTemplate::Simple) title = Tr(L"Attendance Summary", L"\u51fa\u52e4\u6458\u8981");
+    else if (g_reportTemplate == ReportTemplate::Teacher) title = Tr(L"Course Attendance Report", L"\u8bfe\u7a0b\u51fa\u52e4\u62a5\u544a");
+    else if (g_reportTemplate == ReportTemplate::Parent) title = Tr(L"Student Attendance Report", L"\u5b66\u751f\u51fa\u52e4\u62a5\u544a");
+
+    std::wstring footer = Tr(L"Generated by AttendanceApp", L"\u7531 AttendanceApp \u751f\u6210");
+    if (g_reportTemplate == ReportTemplate::Teacher || g_reportTemplate == ReportTemplate::Complete) {
+        footer.clear();
+        if (!sheet.teacher.empty()) footer += Tr(L"Teacher/owner:", L"\u6559\u5e08/\u8d1f\u8d23\u4eba\uff1a") + L" " + sheet.teacher + L"  ";
+        if (!sheet.location.empty()) footer += Tr(L"Location:", L"\u5730\u70b9\uff1a") + L" " + sheet.location + L"  ";
+        if (!sheet.notes.empty()) footer += Tr(L"Course notes:", L"\u8bfe\u7a0b\u5907\u6ce8\uff1a") + L" " + sheet.notes;
+        if (footer.empty()) footer = Tr(L"Teacher template with course details enabled.", L"\u6559\u5e08\u7248\u62a5\u544a\u5df2\u542f\u7528\u8bfe\u7a0b\u8be6\u60c5\u3002");
+    } else if (g_reportTemplate == ReportTemplate::Parent) {
+        footer = Tr(L"Roster students", L"\u540d\u5355\u5b66\u751f") + L" " + std::to_wstring(sheet.students.size()) + L" | "
+            + Tr(L"Attendance", L"\u51fa\u52e4\u7387") + L" " + rateText.str();
+    }
+
     std::ostringstream ss;
     ss << SlideBackground();
-    ss << ShapeText(id++, 760000, 520000, 8000000, 340000, Tr(L"Attendance", L"\u51fa\u52e4\u7387") + L" Report", 1300, "BDBDBD", true);
-    ss << ShapeText(id++, 740000, 900000, 8400000, 700000, Tr(L"Attendance Manager", L"\u70b9\u540d\u7ba1\u7406\u5668"), 3400, "FFFFFF", true);
-    ss << ShapeText(id++, 760000, 1600000, 7600000, 420000, course, 1600, "E0E0E0");
+    ss << ShapeText(id++, 760000, 520000, 8000000, 340000, ReportTemplateName(g_reportTemplate) + L" | " + StatsRangeName(g_statsRange), 1300, "BDBDBD", true);
+    ss << ShapeText(id++, 740000, 900000, 8400000, 700000, title, 3400, "FFFFFF", true);
+    ss << ShapeText(id++, 760000, 1600000, 7600000, 420000, sheet.name, 1600, "E0E0E0");
     ss << RectShape(id++, 760000, 2180000, 10670000, 22000, "BDBDBD", "BDBDBD", 100000);
 
     ss << RectShape(id++, 800000, 2680000, 4650000, 2450000, "121212", "444444", 93000);
@@ -3395,7 +3838,7 @@ std::string BuildPptSlide1(const std::wstring& course, const PptStats& stats) {
         ss << ShapeText(id++, x + 240000, y + 460000, 1700000, 380000, std::to_wstring(values[i]), 2500, "FFFFFF", true);
     }
 
-    ss << ShapeText(id++, 760000, 5950000, 10400000, 340000, Tr(L"Create, edit, export, save, import, and batch clean .attd roll calls.", L""), 1050, "B8B8B8");
+    ss << ShapeText(id++, 760000, 5950000, 10400000, 340000, footer, 1050, "B8B8B8");
     return SlideXml(ss.str());
 }
 
@@ -3451,6 +3894,7 @@ std::string BuildPptSlide3(const std::vector<AttendanceRecord>& records) {
     int id = 3;
     std::vector<std::pair<std::wstring, PptStats>> days;
     for (const auto& r : records) {
+        if (!RecordMatchesStatsRange(r)) continue;
         std::wstring day = r.dateTime.size() >= 10 ? r.dateTime.substr(0, 10) : r.dateTime;
         auto it = std::find_if(days.begin(), days.end(), [&](const auto& p) { return p.first == day; });
         if (it == days.end()) {
@@ -3632,7 +4076,7 @@ bool ExportPptxFile(const std::wstring& path) {
     entries.push_back({"ppt/slideMasters/_rels/slideMaster1.xml.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout\" Target=\"../slideLayouts/slideLayout1.xml\"/><Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme\" Target=\"../theme/theme1.xml\"/></Relationships>"});
     entries.push_back({"ppt/slideLayouts/slideLayout1.xml", PptSlideLayoutXml()});
     entries.push_back({"ppt/slideLayouts/_rels/slideLayout1.xml.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster\" Target=\"../slideMasters/slideMaster1.xml\"/></Relationships>"});
-    entries.push_back({"ppt/slides/slide1.xml", BuildPptSlide1(sheet.name, stats)});
+    entries.push_back({"ppt/slides/slide1.xml", BuildPptSlide1(sheet, stats)});
     entries.push_back({"ppt/slides/slide2.xml", BuildPptSlide2(stats)});
     entries.push_back({"ppt/slides/slide3.xml", BuildPptSlide3(sheet.records)});
     entries.push_back({"ppt/slides/_rels/slide1.xml.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout\" Target=\"../slideLayouts/slideLayout1.xml\"/></Relationships>"});
@@ -3671,23 +4115,31 @@ void ExportPrintHtml() {
             "@media print{button{display:none}}</style>";
     file << "<button onclick='window.print()'>" << HtmlCell(Tr(L"Print / Save as PDF", L"\u6253\u5370 / \u53e6\u5b58\u4e3a PDF")) << "</button>";
     file << "<h1>" << HtmlCell(g_sheets[g_activeSheet].name) << "</h1>";
-    if (!g_sheets[g_activeSheet].teacher.empty() || !g_sheets[g_activeSheet].location.empty() || !g_sheets[g_activeSheet].notes.empty()) {
+    file << "<p><strong>" << HtmlCell(Tr(L"Report template", L"\u62a5\u544a\u6a21\u677f")) << ":</strong> "
+         << HtmlCell(ReportTemplateName(g_reportTemplate)) << "</p>";
+    bool showCourseDetails = g_reportTemplate == ReportTemplate::Teacher || g_reportTemplate == ReportTemplate::Complete;
+    bool showRosterSummary = g_reportTemplate != ReportTemplate::Simple;
+    bool showOtherColumn = g_reportTemplate != ReportTemplate::Parent && g_reportTemplate != ReportTemplate::Simple;
+    if (showCourseDetails && (!g_sheets[g_activeSheet].teacher.empty() || !g_sheets[g_activeSheet].location.empty() || !g_sheets[g_activeSheet].notes.empty())) {
         file << "<p>";
         if (!g_sheets[g_activeSheet].teacher.empty()) file << "<strong>" << HtmlCell(Tr(L"Teacher/owner:", L"\u6559\u5e08/\u8d1f\u8d23\u4eba\uff1a")) << "</strong> " << HtmlCell(g_sheets[g_activeSheet].teacher) << "<br>";
         if (!g_sheets[g_activeSheet].location.empty()) file << "<strong>" << HtmlCell(Tr(L"Location:", L"\u5730\u70b9\uff1a")) << "</strong> " << HtmlCell(g_sheets[g_activeSheet].location) << "<br>";
         if (!g_sheets[g_activeSheet].notes.empty()) file << "<strong>" << HtmlCell(Tr(L"Course notes:", L"\u8bfe\u7a0b\u5907\u6ce8\uff1a")) << "</strong> " << HtmlCell(g_sheets[g_activeSheet].notes);
         file << "</p>";
     }
-    if (!g_sheets[g_activeSheet].students.empty()) {
+    if (showRosterSummary && !g_sheets[g_activeSheet].students.empty()) {
         file << "<p><strong>" << HtmlCell(Tr(L"Manage students", L"\u7ba1\u7406\u5b66\u751f")) << ":</strong> " << g_sheets[g_activeSheet].students.size() << "</p>";
     }
     file << "<table><tr><th>" << HtmlCell(Tr(L"Date/Time", L"\u65e5\u671f\u65f6\u95f4")) << "</th><th>"
          << HtmlCell(Tr(L"Name", L"\u59d3\u540d")) << "</th><th>"
-         << HtmlCell(Tr(L"Status", L"\u72b6\u6001")) << "</th><th>"
-         << HtmlCell(Tr(L"Other", L"\u5176\u4ed6")) << "</th></tr>";
+         << HtmlCell(Tr(L"Status", L"\u72b6\u6001")) << "</th>";
+    if (showOtherColumn) file << "<th>" << HtmlCell(Tr(L"Other", L"\u5176\u4ed6")) << "</th>";
+    file << "</tr>";
     for (const auto& r : g_records) {
         file << "<tr><td>" << HtmlCell(r.dateTime) << "</td><td>" << HtmlCell(r.name)
-             << "</td><td>" << HtmlCell(r.status) << "</td><td>" << HtmlCell(r.other) << "</td></tr>";
+             << "</td><td>" << HtmlCell(r.status) << "</td>";
+        if (showOtherColumn) file << "<td>" << HtmlCell(r.other) << "</td>";
+        file << "</tr>";
     }
     file << "</table><script>setTimeout(()=>window.print(),300)</script>";
     ShellExecuteW(g_hwnd, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
@@ -3822,8 +4274,10 @@ void ShowStatisticsSummary() {
     int late = 0;
     int other = 0;
     CountStatuses(present, absent, late, other);
+    int totalInRange = present + absent + late + other;
     std::vector<std::pair<std::wstring, int>> studentIssues;
     for (const auto& record : g_records) {
+        if (!RecordMatchesStatsRange(record)) continue;
         if (record.status != L"Absent" && record.status != L"Late") continue;
         auto it = std::find_if(studentIssues.begin(), studentIssues.end(), [&](const auto& item) { return item.first == record.name; });
         if (it == studentIssues.end()) studentIssues.push_back({record.name, 1});
@@ -3834,7 +4288,8 @@ void ShowStatisticsSummary() {
     std::wstringstream ss;
     ss << Tr(L"Statistics summary", L"\u7edf\u8ba1\u6458\u8981") << L"\n\n";
     ss << Tr(L"Courses", L"\u8bfe\u7a0b") << L": " << g_sheets[g_activeSheet].name << L"\n";
-    ss << Tr(L"Total", L"\u603b\u6570") << L": " << g_records.size()
+    ss << Tr(L"Range", L"\u8303\u56f4") << L": " << StatsRangeName(g_statsRange) << L"\n";
+    ss << Tr(L"Total", L"\u603b\u6570") << L": " << totalInRange
        << L"    " << Tr(L"Present", L"\u51fa\u5e2d") << L": " << present << L"\n";
     ss << Tr(L"Absent", L"\u7f3a\u5e2d") << L": " << absent << L"\n";
     ss << Tr(L"Late", L"\u8fdf\u5230") << L": " << late << L"\n";
@@ -3846,6 +4301,266 @@ void ShowStatisticsSummary() {
         }
     }
     ShowMessage(ss.str(), Tr(L"Statistics summary", L"\u7edf\u8ba1\u6458\u8981"));
+}
+
+void ApplyFilterText(const std::wstring& filter) {
+    if (g_filterEdit) SetText(g_filterEdit, filter);
+    g_filterText = LowerText(filter);
+    RefreshList();
+}
+
+std::vector<std::wstring> CurrentLessonKeys() {
+    std::vector<std::wstring> lessons;
+    for (const auto& record : g_records) {
+        if (record.dateTime.empty()) continue;
+        if (std::find(lessons.begin(), lessons.end(), record.dateTime) == lessons.end()) {
+            lessons.push_back(record.dateTime);
+        }
+    }
+    std::sort(lessons.begin(), lessons.end(), std::greater<std::wstring>());
+    return lessons;
+}
+
+void CreateTodayLessonFromRoster() {
+    SyncActiveSheet();
+    const auto& students = g_sheets[g_activeSheet].students;
+    if (students.empty()) {
+        ShowMessage(Tr(L"No students in the roster.", L"\u540d\u5355\u4e2d\u6ca1\u6709\u5b66\u751f\u3002"));
+        return;
+    }
+    std::wstring lesson = TodayDateKey() + L" " + Tr(L"Lesson", L"\u8bfe\u6b21");
+    if (!PromptText(Tr(L"Create today's lesson", L"\u521b\u5efa\u4eca\u65e5\u8bfe\u6b21"), Tr(L"Lesson name:", L"\u8bfe\u6b21\u540d\u79f0\uff1a"), lesson)) return;
+    lesson = TrimWide(lesson);
+    if (lesson.empty()) return;
+
+    PushUndo();
+    MarkDirty();
+    int added = 0;
+    for (const auto& student : students) {
+        auto duplicate = std::find_if(g_records.begin(), g_records.end(), [&](const AttendanceRecord& record) {
+            return record.name == student && record.dateTime == lesson;
+        });
+        if (duplicate == g_records.end()) {
+            g_records.push_back({lesson, student, L"Absent", L""});
+            ++added;
+        }
+    }
+    SetText(g_dateEdit, lesson);
+    ApplyFilterText(L"date:" + LowerText(lesson));
+    std::wstringstream ss;
+    ss << Tr(L"Lesson records created.", L"\u8bfe\u6b21\u8bb0\u5f55\u5df2\u521b\u5efa\u3002") << L" (" << added << L")";
+    ShowMessage(ss.str(), Tr(L"Create today's lesson", L"\u521b\u5efa\u4eca\u65e5\u8bfe\u6b21"));
+}
+
+void SwitchLessonFilter() {
+    auto lessons = CurrentLessonKeys();
+    if (lessons.empty()) {
+        ShowMessage(Tr(L"No lessons were found.", L"\u672a\u627e\u5230\u8bfe\u6b21\u3002"));
+        return;
+    }
+    std::wstringstream list;
+    for (int i = 0; i < (int)std::min<size_t>(lessons.size(), 20); ++i) {
+        list << (i + 1) << L". " << lessons[i] << L"\n";
+    }
+    std::wstring choice;
+    if (!PromptText(Tr(L"Switch lesson", L"\u5207\u6362\u8bfe\u6b21"), list.str() + L"\n" + Tr(L"Enter lesson number:", L"\u8f93\u5165\u8bfe\u6b21\u7f16\u53f7\uff1a"), choice)) return;
+    int index = 0;
+    try { index = std::stoi(choice) - 1; } catch (...) { return; }
+    if (index < 0 || index >= (int)lessons.size()) return;
+    SetText(g_dateEdit, lessons[index]);
+    ApplyFilterText(L"date:" + LowerText(lessons[index]));
+}
+
+void ShowStudentProfile() {
+    SyncActiveSheet();
+    std::wstring name = GetText(g_nameEdit);
+    int selected = VisibleToRecordIndex(ListView_GetNextItem(g_list, -1, LVNI_SELECTED));
+    if (selected >= 0) name = g_records[selected].name;
+    if (!PromptText(Tr(L"Student profile", L"\u5b66\u751f\u6863\u6848"), Tr(L"Student name:", L"\u5b66\u751f\u59d3\u540d\uff1a"), name)) return;
+    name = TrimWide(name);
+    if (name.empty()) return;
+
+    int total = 0, present = 0, absent = 0, late = 0, other = 0;
+    std::vector<std::wstring> history;
+    for (const auto& sheet : g_sheets) {
+        for (const auto& record : sheet.records) {
+            if (!ContainsText(record.name, LowerText(name))) continue;
+            ++total;
+            if (record.status == L"Present") ++present;
+            else if (record.status == L"Absent") ++absent;
+            else if (record.status == L"Late") ++late;
+            else ++other;
+            if (history.size() < 12) {
+                history.push_back(sheet.name + L" | " + record.dateTime + L" | " + Tr(record.status.c_str(), record.status.c_str()));
+            }
+        }
+    }
+    double rate = total ? present * 100.0 / total : 0.0;
+    std::wstringstream ss;
+    ss << Tr(L"Student profile", L"\u5b66\u751f\u6863\u6848") << L": " << name << L"\n\n"
+       << Tr(L"Total", L"\u603b\u6570") << L": " << total << L"\n"
+       << Tr(L"Present", L"\u51fa\u5e2d") << L": " << present << L"\n"
+       << Tr(L"Absent", L"\u7f3a\u5e2d") << L": " << absent << L"\n"
+       << Tr(L"Late", L"\u8fdf\u5230") << L": " << late << L"\n"
+       << Tr(L"Other", L"\u5176\u4ed6") << L": " << other << L"\n"
+       << Tr(L"Attendance", L"\u51fa\u52e4\u7387") << L": " << std::fixed << std::setprecision(1) << rate << L"%\n";
+    if (!history.empty()) {
+        ss << L"\n" << Tr(L"Recent history", L"\u6700\u8fd1\u8bb0\u5f55") << L":\n";
+        for (const auto& line : history) ss << L"- " << line << L"\n";
+    }
+    ShowMessage(ss.str(), Tr(L"Student profile", L"\u5b66\u751f\u6863\u6848"));
+}
+
+void ShowAdvancedFilterHelp() {
+    std::wstring filter = GetText(g_filterEdit);
+    if (filter.empty()) filter = L"name: status: from:2026-07-01 to:2026-07-31";
+    std::wstring help =
+        Tr(L"Advanced filter examples:", L"\u9ad8\u7ea7\u7b5b\u9009\u793a\u4f8b\uff1a") + L"\n"
+        L"name:Alice\nstatus:Absent\nfrom:2026-07-01 to:2026-07-31\nthisweek\nthismonth\ndate:2026-07-09\n\n"
+        + Tr(L"Edit filter:", L"\u7f16\u8f91\u7b5b\u9009\uff1a");
+    if (PromptText(Tr(L"Advanced filter", L"\u9ad8\u7ea7\u7b5b\u9009"), help, filter)) {
+        ApplyFilterText(filter);
+    }
+}
+
+void ShowStatsRangeMenu(HWND button) {
+    int command = ShowThemedPopupMenu(button, {
+        {1, StatsRangeName(StatsRange::All), false},
+        {2, StatsRangeName(StatsRange::ThisWeek), false},
+        {3, StatsRangeName(StatsRange::ThisMonth), false}
+    });
+    if (command == 1) g_statsRange = StatsRange::All;
+    else if (command == 2) g_statsRange = StatsRange::ThisWeek;
+    else if (command == 3) g_statsRange = StatsRange::ThisMonth;
+    else return;
+    RefreshList();
+}
+
+void ShowRiskStudents() {
+    if (!g_riskAlertsEnabled) {
+        ShowMessage(Tr(L"Risk student reminders are disabled in Settings.", L"\u98ce\u9669\u5b66\u751f\u63d0\u9192\u5df2\u5728\u8bbe\u7f6e\u4e2d\u5173\u95ed\u3002"));
+        return;
+    }
+    std::map<std::wstring, std::pair<int, int>> stats;
+    for (const auto& sheet : g_sheets) {
+        for (const auto& record : sheet.records) {
+            auto& entry = stats[record.name];
+            ++entry.first;
+            if (record.status == L"Absent" || record.status == L"Late") ++entry.second;
+        }
+    }
+    std::vector<std::pair<std::wstring, std::pair<int, int>>> risky;
+    for (const auto& item : stats) {
+        double issueRate = item.second.first ? item.second.second * 100.0 / item.second.first : 0.0;
+        if (item.second.second >= 3 || issueRate >= 20.0) risky.push_back(item);
+    }
+    std::sort(risky.begin(), risky.end(), [](const auto& a, const auto& b) {
+        return a.second.second == b.second.second ? a.first < b.first : a.second.second > b.second.second;
+    });
+    std::wstringstream ss;
+    ss << Tr(L"Risk students", L"\u98ce\u9669\u5b66\u751f") << L"\n\n";
+    if (risky.empty()) {
+        ss << Tr(L"No risk students found.", L"\u672a\u53d1\u73b0\u98ce\u9669\u5b66\u751f\u3002");
+    } else {
+        for (int i = 0; i < (int)std::min<size_t>(risky.size(), 20); ++i) {
+            double issueRate = risky[i].second.first ? risky[i].second.second * 100.0 / risky[i].second.first : 0.0;
+            ss << L"- " << risky[i].first << L": " << risky[i].second.second << L"/" << risky[i].second.first
+               << L" (" << std::fixed << std::setprecision(1) << issueRate << L"%)\n";
+        }
+    }
+    ShowMessage(ss.str(), Tr(L"Risk students", L"\u98ce\u9669\u5b66\u751f"));
+}
+
+std::filesystem::path BackupDirectoryPath() {
+    auto marker = AppDataFilePath(L"backups\\marker.tmp");
+    return marker.empty() ? std::filesystem::path{} : marker.parent_path();
+}
+
+std::wstring TimestampForFileName() {
+    SYSTEMTIME st{};
+    GetLocalTime(&st);
+    wchar_t buffer[32]{};
+    swprintf_s(buffer, L"%04d%02d%02d-%02d%02d%02d", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    return buffer;
+}
+
+std::vector<std::filesystem::path> ListBackupFiles() {
+    std::vector<std::filesystem::path> files;
+    auto dir = BackupDirectoryPath();
+    if (dir.empty() || !std::filesystem::exists(dir)) return files;
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        if (entry.is_regular_file() && entry.path().extension() == L".attd") files.push_back(entry.path());
+    }
+    std::sort(files.begin(), files.end(), std::greater<std::filesystem::path>());
+    return files;
+}
+
+void ShowBackupManager() {
+    auto files = ListBackupFiles();
+    std::wstringstream ss;
+    ss << Tr(L"Backup manager", L"\u5907\u4efd\u7ba1\u7406\u4e2d\u5fc3") << L"\n\n";
+    if (files.empty()) {
+        ss << Tr(L"No backup file was found.", L"\u672a\u627e\u5230\u5907\u4efd\u6587\u4ef6\u3002") << L"\n";
+        ShowMessage(ss.str(), Tr(L"Backup manager", L"\u5907\u4efd\u7ba1\u7406\u4e2d\u5fc3"));
+        return;
+    }
+    for (int i = 0; i < (int)std::min<size_t>(files.size(), 15); ++i) {
+        ss << (i + 1) << L". " << files[i].filename().wstring() << L"\n";
+    }
+    std::wstring choice;
+    if (!PromptText(Tr(L"Backup manager", L"\u5907\u4efd\u7ba1\u7406\u4e2d\u5fc3"), ss.str() + L"\n" + Tr(L"Enter backup number to restore, or leave blank to cancel:", L"\u8f93\u5165\u8981\u6062\u590d\u7684\u5907\u4efd\u7f16\u53f7\uff0c\u7559\u7a7a\u53d6\u6d88\uff1a"), choice)) return;
+    choice = TrimWide(choice);
+    if (choice.empty()) return;
+    int index = 0;
+    try { index = std::stoi(choice) - 1; } catch (...) { return; }
+    if (index < 0 || index >= (int)files.size()) return;
+    if (!ConfirmDiscardUnsaved(Tr(L"Restore backup", L"\u6062\u590d\u5907\u4efd"))) return;
+    LoadAttendanceFile(files[index].wstring(), true);
+}
+
+void ShowReportTemplateMenu(HWND button) {
+    int command = ShowThemedPopupMenu(button, {
+        {1, ReportTemplateName(ReportTemplate::Simple), false},
+        {2, ReportTemplateName(ReportTemplate::Teacher), false},
+        {3, ReportTemplateName(ReportTemplate::Parent), false},
+        {4, ReportTemplateName(ReportTemplate::Complete), false}
+    });
+    if (command >= 1 && command <= 4) {
+        g_reportTemplate = (ReportTemplate)(command - 1);
+        SaveSettings();
+    }
+}
+
+void ShowShortcutCenter() {
+    std::wstring config = ShortcutConfigText();
+    std::wstring prompt = Tr(
+        L"Edit shortcuts as action=key; use Ctrl+letter or F keys:",
+        L"\u6309 action=key \u7f16\u8f91\u5feb\u6377\u952e\uff0c\u652f\u6301 Ctrl+\u5b57\u6bcd \u6216 F \u952e\uff1a"
+    );
+    if (!PromptText(Tr(L"Shortcut center", L"\u5feb\u6377\u952e\u4e2d\u5fc3"), prompt, config)) return;
+    if (ApplyShortcutConfigText(config)) {
+        SaveSettings();
+        ShowMessage(Tr(L"Shortcuts updated.", L"\u5feb\u6377\u952e\u5df2\u66f4\u65b0\u3002"), Tr(L"Shortcut center", L"\u5feb\u6377\u952e\u4e2d\u5fc3"));
+    } else {
+        ShowMessage(Tr(L"No shortcut changes were applied.", L"\u672a\u5e94\u7528\u5feb\u6377\u952e\u66f4\u6539\u3002"), Tr(L"Shortcut center", L"\u5feb\u6377\u952e\u4e2d\u5fc3"));
+    }
+}
+
+void RunCommandPalette() {
+    if (!g_commandPaletteEnabled) return;
+    std::wstring command;
+    if (!PromptText(Tr(L"Command palette", L"\u547d\u4ee4\u9762\u677f"), Tr(L"Type a command: save, import, export, backup, stats, risk, filter, lesson, profile, settings", L"\u8f93\u5165\u547d\u4ee4\uff1asave\u3001import\u3001export\u3001backup\u3001stats\u3001risk\u3001filter\u3001lesson\u3001profile\u3001settings"), command)) return;
+    command = LowerText(TrimWide(command));
+    if (command.find(L"save") != std::wstring::npos || command.find(L"\u4fdd\u5b58") != std::wstring::npos) SaveAttendance();
+    else if (command.find(L"import") != std::wstring::npos || command.find(L"\u5bfc\u5165") != std::wstring::npos) ImportAttendance();
+    else if (command.find(L"export") != std::wstring::npos || command.find(L"\u5bfc\u51fa") != std::wstring::npos) ExportCsv();
+    else if (command.find(L"backup") != std::wstring::npos || command.find(L"\u5907\u4efd") != std::wstring::npos) BackupNow();
+    else if (command.find(L"stats") != std::wstring::npos || command.find(L"\u7edf\u8ba1") != std::wstring::npos) ShowStatisticsSummary();
+    else if (command.find(L"risk") != std::wstring::npos || command.find(L"\u98ce\u9669") != std::wstring::npos) ShowRiskStudents();
+    else if (command.find(L"filter") != std::wstring::npos || command.find(L"\u7b5b\u9009") != std::wstring::npos) ShowAdvancedFilterHelp();
+    else if (command.find(L"lesson") != std::wstring::npos || command.find(L"\u8bfe\u6b21") != std::wstring::npos) CreateTodayLessonFromRoster();
+    else if (command.find(L"profile") != std::wstring::npos || command.find(L"\u6863\u6848") != std::wstring::npos) ShowStudentProfile();
+    else if (command.find(L"settings") != std::wstring::npos || command.find(L"\u8bbe\u7f6e") != std::wstring::npos) ShowSettingsWindow();
 }
 
 std::filesystem::path RecentFileRecordPath() {
@@ -3880,8 +4595,20 @@ void BackupNow() {
         ShowMessage(Tr(L"Could not save the file.", L"\u65e0\u6cd5\u4fdd\u5b58\u6587\u4ef6\u3002"));
         return;
     }
-    file << EncodeAttd(SerializeWorkbook());
-    ShowMessage(Tr(L"Backup created:", L"\u5907\u4efd\u5df2\u521b\u5efa\uff1a") + L"\n" + path.wstring());
+    std::string payload = EncodeAttd(SerializeWorkbook());
+    file << payload;
+    file.close();
+
+    auto backupDir = BackupDirectoryPath();
+    std::filesystem::path timestamped;
+    if (!backupDir.empty()) {
+        timestamped = backupDir / (L"backup-" + TimestampForFileName() + L".attd");
+        std::ofstream history(timestamped, std::ios::binary);
+        if (history) history << payload;
+    }
+    std::wstring message = Tr(L"Backup created:", L"\u5907\u4efd\u5df2\u521b\u5efa\uff1a") + L"\n" + path.wstring();
+    if (!timestamped.empty()) message += L"\n" + timestamped.wstring();
+    ShowMessage(message);
 }
 
 void RestoreLatestBackup() {
@@ -3955,12 +4682,31 @@ void OpenAutosave() {
 }
 
 void PromptRestoreAutosave() {
+    if (!g_autosavePromptEnabled) return;
     auto path = AppDataFilePath(L"autosave.attd");
     if (path.empty() || !std::filesystem::exists(path)) return;
-    std::wstring restoreMsg = Tr(L"An autosaved attendance file was found. Restore it now?", L"\u627e\u5230\u81ea\u52a8\u4fdd\u5b58\u7684\u70b9\u540d\u6587\u4ef6\u3002\u662f\u5426\u73b0\u5728\u6062\u590d\uff1f");
+    std::wstring choice = L"1";
     std::wstring restoreTitle = Tr(L"Restore Autosave", L"\u6062\u590d\u81ea\u52a8\u4fdd\u5b58");
-    if (ThemedMessageBox(g_hwnd, restoreMsg, restoreTitle, true) == IDYES) {
+    std::wstring restoreMsg =
+        Tr(L"An autosaved attendance file was found.", L"\u627e\u5230\u81ea\u52a8\u4fdd\u5b58\u7684\u70b9\u540d\u6587\u4ef6\u3002") + L"\n\n"
+        L"1. " + Tr(L"Restore", L"\u6062\u590d") + L"\n"
+        L"2. " + Tr(L"View file location", L"\u67e5\u770b\u6587\u4ef6\u4f4d\u7f6e") + L"\n"
+        L"3. " + Tr(L"Ignore this time", L"\u672c\u6b21\u5ffd\u7565") + L"\n"
+        L"4. " + Tr(L"Delete autosave", L"\u5220\u9664\u81ea\u52a8\u4fdd\u5b58") + L"\n\n"
+        + Tr(L"Choose an option:", L"\u9009\u62e9\u64cd\u4f5c\uff1a");
+    if (!PromptText(restoreTitle, restoreMsg, choice)) {
+        g_allowAutosaveOverwrite = false;
+        return;
+    }
+    choice = TrimWide(choice);
+    if (choice == L"1") {
         LoadAttendanceFile(path.wstring(), false);
+    } else if (choice == L"2") {
+        ShowMessage(path.wstring(), Tr(L"Autosave file", L"\u81ea\u52a8\u4fdd\u5b58\u6587\u4ef6"));
+        g_allowAutosaveOverwrite = false;
+    } else if (choice == L"4") {
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
     } else {
         g_allowAutosaveOverwrite = false;
     }
@@ -3968,11 +4714,12 @@ void PromptRestoreAutosave() {
 
 void ShowShortcuts() {
     std::wstring text =
-        L"F11: " + Tr(L"Fullscreen", L"\u5168\u5c4f") + L"\n" +
-        L"Ctrl+S: " + Tr(L"Save .attd", L"\u4fdd\u5b58 .attd") + L"\n" +
-        L"Ctrl+O: " + Tr(L"Import .attd", L"\u5bfc\u5165 .attd") + L"\n" +
-        L"Ctrl+Z  " + Tr(L"Undo", L"\u64a4\u9500") + L"\n" +
-        L"Ctrl+Y  " + Tr(L"Redo", L"\u91cd\u505a") + L"\n" +
+        g_shortcutFullscreen + L": " + Tr(L"Fullscreen", L"\u5168\u5c4f") + L"\n" +
+        g_shortcutSave + L": " + Tr(L"Save .attd", L"\u4fdd\u5b58 .attd") + L"\n" +
+        g_shortcutImport + L": " + Tr(L"Import .attd", L"\u5bfc\u5165 .attd") + L"\n" +
+        g_shortcutUndo + L": " + Tr(L"Undo", L"\u64a4\u9500") + L"\n" +
+        g_shortcutRedo + L": " + Tr(L"Redo", L"\u91cd\u505a") + L"\n" +
+        g_shortcutCommand + L": " + Tr(L"Command palette", L"\u547d\u4ee4\u9762\u677f") + L"\n" +
         Tr(L"Double-click row: Edit selected record", L"\u53cc\u51fb\u884c\uff1a\u7f16\u8f91\u9009\u4e2d\u8bb0\u5f55") + L"\n" +
         Tr(L"Ctrl/Shift click: Multi-select rows", L"Ctrl/Shift \u70b9\u51fb\uff1a\u591a\u9009\u884c");
     ShowMessage(text, Tr(L"Keyboard Shortcuts", L"\u5feb\u6377\u952e"));
@@ -3981,6 +4728,7 @@ void ShowShortcuts() {
 void CountStatuses(int& present, int& absent, int& late, int& other) {
     present = absent = late = other = 0;
     for (const auto& r : g_records) {
+        if (!RecordMatchesStatsRange(r)) continue;
         if (r.status == L"Present") ++present;
         else if (r.status == L"Absent") ++absent;
         else if (r.status == L"Late") ++late;
@@ -4106,6 +4854,16 @@ void ShowToolsMenu(HWND button) {
     std::wstring addStudent = Tr(L"Add student to roster", L"\u6dfb\u52a0\u5b66\u751f\u5230\u540d\u5355");
     std::wstring removeStudent = Tr(L"Remove student from roster", L"\u4ece\u540d\u5355\u79fb\u9664\u5b66\u751f");
     std::wstring createFromRoster = Tr(L"Create records from roster", L"\u4ece\u540d\u5355\u521b\u5efa\u70b9\u540d\u8bb0\u5f55");
+    std::wstring createLesson = Tr(L"Create today's lesson", L"\u521b\u5efa\u4eca\u65e5\u8bfe\u6b21");
+    std::wstring switchLesson = Tr(L"Switch lesson", L"\u5207\u6362\u8bfe\u6b21");
+    std::wstring studentProfile = Tr(L"Student profile", L"\u5b66\u751f\u6863\u6848");
+    std::wstring advancedFilter = Tr(L"Advanced filter", L"\u9ad8\u7ea7\u7b5b\u9009");
+    std::wstring statsRange = Tr(L"Statistics range", L"\u7edf\u8ba1\u8303\u56f4") + L": " + StatsRangeName(g_statsRange);
+    std::wstring riskStudents = Tr(L"Risk students", L"\u98ce\u9669\u5b66\u751f");
+    std::wstring backupManager = Tr(L"Backup manager", L"\u5907\u4efd\u7ba1\u7406\u4e2d\u5fc3");
+    std::wstring reportTemplate = Tr(L"Report template", L"\u62a5\u544a\u6a21\u677f") + L": " + ReportTemplateName(g_reportTemplate);
+    std::wstring commandPalette = Tr(L"Command palette", L"\u547d\u4ee4\u9762\u677f");
+    std::wstring shortcutCenter = Tr(L"Shortcut center", L"\u5feb\u6377\u952e\u4e2d\u5fc3");
     std::wstring undo = Tr(L"Undo", L"\u64a4\u9500");
     std::wstring redo = Tr(L"Redo", L"\u91cd\u505a");
     std::wstring shortcuts = Tr(L"Keyboard shortcuts", L"\u5feb\u6377\u952e");
@@ -4120,18 +4878,28 @@ void ShowToolsMenu(HWND button) {
         {IDM_STUDENTS_ADD, addStudent, false},
         {IDM_STUDENTS_REMOVE, removeStudent, false},
         {IDM_STUDENTS_GENERATE, createFromRoster, false},
+        {IDM_LESSON_CREATE_TODAY, createLesson, false},
+        {IDM_LESSON_SWITCH, switchLesson, false},
+        {IDM_STUDENT_PROFILE, studentProfile, false},
         {IDM_COURSE_DETAILS, courseDetails, false},
         {0, L"", true},
+        {IDM_ADVANCED_FILTER, advancedFilter, false},
         {IDM_PRINT_HTML, print, false},
         {IDM_EXPORT_PPTX, pptx, false},
+        {IDM_REPORT_TEMPLATE, reportTemplate, false},
         {IDM_STATS_CHART, chart, false},
         {IDM_STATS_SUMMARY, summary, false},
+        {IDM_STATS_RANGE, statsRange, false},
+        {IDM_RISK_STUDENTS, riskStudents, false},
         {0, L"", true},
         {IDM_UNDO, undo, false},
         {IDM_REDO, redo, false},
         {IDM_SHORTCUTS, shortcuts, false},
+        {IDM_SHORTCUT_CENTER, shortcutCenter, false},
+        {IDM_COMMAND_PALETTE, commandPalette, false},
         {0, L"", true},
         {IDM_BACKUP_NOW, backup, false},
+        {IDM_BACKUP_MANAGER, backupManager, false},
         {IDM_RESTORE_BACKUP, restore, false},
         {IDM_OPEN_RECENT, recent, false},
         {IDM_SET_SAVE_DIR, saveDir, false},
@@ -4144,15 +4912,25 @@ void ShowToolsMenu(HWND button) {
     case IDM_STUDENTS_ADD: AddStudentToRoster(); break;
     case IDM_STUDENTS_REMOVE: RemoveStudentFromRoster(); break;
     case IDM_STUDENTS_GENERATE: CreateRecordsFromRoster(); break;
+    case IDM_LESSON_CREATE_TODAY: CreateTodayLessonFromRoster(); break;
+    case IDM_LESSON_SWITCH: SwitchLessonFilter(); break;
+    case IDM_STUDENT_PROFILE: ShowStudentProfile(); break;
     case IDM_COURSE_DETAILS: EditCourseDetails(); break;
+    case IDM_ADVANCED_FILTER: ShowAdvancedFilterHelp(); break;
     case IDM_PRINT_HTML: ExportPrintHtml(); break;
     case IDM_EXPORT_PPTX: ExportPptx(); break;
+    case IDM_REPORT_TEMPLATE: ShowReportTemplateMenu(button); break;
     case IDM_STATS_CHART: ShowStatsChart(); break;
     case IDM_STATS_SUMMARY: ShowStatisticsSummary(); break;
+    case IDM_STATS_RANGE: ShowStatsRangeMenu(button); break;
+    case IDM_RISK_STUDENTS: ShowRiskStudents(); break;
     case IDM_UNDO: UndoLast(); break;
     case IDM_REDO: RedoLast(); break;
     case IDM_SHORTCUTS: ShowShortcuts(); break;
+    case IDM_SHORTCUT_CENTER: ShowShortcutCenter(); break;
+    case IDM_COMMAND_PALETTE: RunCommandPalette(); break;
     case IDM_BACKUP_NOW: BackupNow(); break;
+    case IDM_BACKUP_MANAGER: ShowBackupManager(); break;
     case IDM_RESTORE_BACKUP: RestoreLatestBackup(); break;
     case IDM_OPEN_RECENT: OpenRecentFile(); break;
     case IDM_SET_SAVE_DIR: SetDefaultSaveFolder(); break;
@@ -4190,6 +4968,13 @@ bool LoadAttendanceFile(const std::wstring& path, bool showSuccess) {
     if (!DecodeAttd(fileText, plainText) || !DeserializeWorkbook(plainText, imported)) {
         ShowMessage(Tr(L"This .attd file could not be decoded.", L"\u65e0\u6cd5\u89e3\u7801\u8be5 .attd \u6587\u4ef6\u3002"));
         return false;
+    }
+    if (plainText.rfind("ATTENDANCE_V5\n", 0) != 0) {
+        std::filesystem::path backupPath = std::filesystem::path(path).wstring() + L".pre-v5.bak";
+        if (!std::filesystem::exists(backupPath)) {
+            std::error_code ec;
+            std::filesystem::copy_file(std::filesystem::path(path), backupPath, std::filesystem::copy_options::skip_existing, ec);
+        }
     }
 
     g_sheets = std::move(imported);
@@ -4262,6 +5047,9 @@ HWND MakeSettingsControl(HWND parent, const wchar_t* cls, const wchar_t* text, D
 void FillSettingsCombos(HWND hwnd) {
     HWND language = GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE);
     HWND font = GetDlgItem(hwnd, IDC_SETTINGS_FONT);
+    HWND animation = GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LEVEL);
+    HWND particle = GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL);
+    HWND report = GetDlgItem(hwnd, IDC_SETTINGS_REPORT_TEMPLATE);
 
     SendMessageW(language, CB_RESETCONTENT, 0, 0);
     for (int i = 0; i <= (int)UiLanguage::ChineseTraditionalHongKong; ++i) {
@@ -4277,8 +5065,33 @@ void FillSettingsCombos(HWND hwnd) {
         if (g_fontFamily == g_availableFonts[i]) selected = i;
     }
     SendMessageW(font, CB_SETCURSEL, selected, 0);
+
+    SendMessageW(animation, CB_RESETCONTENT, 0, 0);
+    for (int i = 0; i <= 2; ++i) {
+        std::wstring label = AnimationLevelName((AnimationLevel)i);
+        SendMessageW(animation, CB_ADDSTRING, 0, (LPARAM)label.c_str());
+    }
+    SendMessageW(animation, CB_SETCURSEL, (WPARAM)g_animationLevel, 0);
+
+    SendMessageW(particle, CB_RESETCONTENT, 0, 0);
+    for (int i = 0; i <= 2; ++i) {
+        std::wstring label = ParticleLevelName((ParticleLevel)i);
+        SendMessageW(particle, CB_ADDSTRING, 0, (LPARAM)label.c_str());
+    }
+    SendMessageW(particle, CB_SETCURSEL, (WPARAM)g_particleLevel, 0);
+
+    SendMessageW(report, CB_RESETCONTENT, 0, 0);
+    for (int i = 0; i <= 3; ++i) {
+        std::wstring label = ReportTemplateName((ReportTemplate)i);
+        SendMessageW(report, CB_ADDSTRING, 0, (LPARAM)label.c_str());
+    }
+    SendMessageW(report, CB_SETCURSEL, (WPARAM)g_reportTemplate, 0);
+
     RedrawWindow(language, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
     RedrawWindow(font, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+    RedrawWindow(animation, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+    RedrawWindow(particle, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+    RedrawWindow(report, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
 }
 
 void ApplySettingsLanguage(HWND hwnd) {
@@ -4287,21 +5100,38 @@ void ApplySettingsLanguage(HWND hwnd) {
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), Tr(L"Interface Settings", L"\u754c\u9762\u8bbe\u7f6e"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_LANG_LABEL), Tr(L"Language", L"\u8bed\u8a00"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_FONT_LABEL), Tr(L"Interface Font", L"\u754c\u9762\u5b57\u4f53"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLES), Tr(L"Enable particle effects", L"\u542f\u7528\u7c92\u5b50\u7279\u6548"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LABEL), Tr(L"Animation level", L"\u52a8\u753b\u5f3a\u5ea6"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LABEL), Tr(L"Particle density", L"\u7c92\u5b50\u5bc6\u5ea6"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_REPORT_LABEL), Tr(L"Report template", L"\u62a5\u544a\u6a21\u677f"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLES), ParticleEffectsLabel());
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_RISK_ALERTS), Tr(L"Enable risk student reminders", L"\u542f\u7528\u98ce\u9669\u5b66\u751f\u63d0\u9192"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_PROMPT), Tr(L"Prompt for autosave recovery", L"\u542f\u52a8\u65f6\u63d0\u793a\u6062\u590d\u81ea\u52a8\u4fdd\u5b58"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_COMMAND_PALETTE), Tr(L"Enable Ctrl+K command palette", L"\u542f\u7528 Ctrl+K \u547d\u4ee4\u9762\u677f"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_ADVANCED_FILTER), Tr(L"Enable advanced filter syntax", L"\u542f\u7528\u9ad8\u7ea7\u7b5b\u9009\u8bed\u6cd5"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_APPLY), Tr(L"Apply", L"\u5e94\u7528"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_CLOSE), Tr(L"Close", L"\u5173\u95ed"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_RESET), Tr(L"Reset All Settings", L"\u91cd\u7f6e\u6240\u6709\u8bbe\u7f6e"));
     SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLES), BM_SETCHECK, g_particlesEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_RISK_ALERTS), BM_SETCHECK, g_riskAlertsEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_PROMPT), BM_SETCHECK, g_autosavePromptEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_COMMAND_PALETTE), BM_SETCHECK, g_commandPaletteEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_ADVANCED_FILTER), BM_SETCHECK, g_advancedFilterEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
     FillSettingsCombos(hwnd);
 }
 
 void ApplySettingsFromWindow(HWND hwnd) {
     int language = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE), CB_GETCURSEL, 0, 0);
     int fontIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_FONT), CB_GETCURSEL, 0, 0);
+    int animationIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LEVEL), CB_GETCURSEL, 0, 0);
+    int particleIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL), CB_GETCURSEL, 0, 0);
+    int reportIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_REPORT_TEMPLATE), CB_GETCURSEL, 0, 0);
 
     if (language < 0 || language > (int)UiLanguage::ChineseTraditionalHongKong) language = 0;
     g_language = (UiLanguage)language;
     g_theme = UiTheme::Dark;
+    if (animationIndex >= 0 && animationIndex <= 2) g_animationLevel = (AnimationLevel)animationIndex;
+    if (particleIndex >= 0 && particleIndex <= 2) g_particleLevel = (ParticleLevel)particleIndex;
+    if (reportIndex >= 0 && reportIndex <= 3) g_reportTemplate = (ReportTemplate)reportIndex;
 
     if (fontIndex >= 0) {
         std::wstring fontName = GetComboSelectedText(GetDlgItem(hwnd, IDC_SETTINGS_FONT));
@@ -4317,14 +5147,14 @@ void ApplySettingsFromWindow(HWND hwnd) {
 
 void ResizeSettingsLayout(HWND hwnd) {
     int pad = 24;
-    int labelW = 130;
+    int labelW = 170;
     int rowH = 34;
     int x = pad;
     int y = 22;
     int comboX = x + labelW;
-    int comboW = 230;
+    int comboW = 260;
 
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), x, y, 360, 34, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), x, y, labelW + comboW, 34, TRUE);
     y += 56;
     MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_LANG_LABEL), x, y + 6, labelW, rowH, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE), comboX, y, comboW, 430, TRUE);
@@ -4332,12 +5162,29 @@ void ResizeSettingsLayout(HWND hwnd) {
     MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_FONT_LABEL), x, y + 6, labelW, rowH, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_FONT), comboX, y, comboW, 300, TRUE);
     y += 48;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLES), comboX, y, labelW + comboW, 30, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LABEL), x, y + 6, labelW, rowH, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LEVEL), comboX, y, comboW, 140, TRUE);
+    y += 48;
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LABEL), x, y + 6, labelW, rowH, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL), comboX, y, comboW, 140, TRUE);
+    y += 48;
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_REPORT_LABEL), x, y + 6, labelW, rowH, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_REPORT_TEMPLATE), comboX, y, comboW, 180, TRUE);
+    y += 48;
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLES), x, y, labelW + comboW, 30, TRUE);
+    y += 38;
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_RISK_ALERTS), x, y, labelW + comboW, 30, TRUE);
+    y += 38;
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_PROMPT), x, y, labelW + comboW, 30, TRUE);
+    y += 38;
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_COMMAND_PALETTE), x, y, labelW + comboW, 30, TRUE);
+    y += 38;
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_ADVANCED_FILTER), x, y, labelW + comboW, 30, TRUE);
     y += 46;
     MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_RESET), x, y, labelW + comboW, 36, TRUE);
     y += 48;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_APPLY), comboX - 4, y, 110, 38, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_CLOSE), comboX + 120, y, 110, 38, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_APPLY), comboX + comboW - 230, y, 110, 38, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_CLOSE), comboX + comboW - 110, y, 110, 38, TRUE);
 }
 
 LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -4346,9 +5193,19 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_TITLE);
         MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_LANG_LABEL);
         MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_FONT_LABEL);
+        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_ANIMATION_LABEL);
+        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_PARTICLE_LABEL);
+        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_REPORT_LABEL);
         MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_LANGUAGE);
         MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_FONT);
+        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_ANIMATION_LEVEL);
+        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_PARTICLE_LEVEL);
+        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_REPORT_TEMPLATE);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW, IDC_SETTINGS_PARTICLES);
+        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW, IDC_SETTINGS_RISK_ALERTS);
+        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW, IDC_SETTINGS_AUTOSAVE_PROMPT);
+        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW, IDC_SETTINGS_COMMAND_PALETTE);
+        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW, IDC_SETTINGS_ADVANCED_FILTER);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_RESET);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_APPLY);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_CLOSE);
@@ -4375,10 +5232,31 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             ApplySettingsFromWindow(hwnd);
             return 0;
         }
-        if (LOWORD(wParam) == IDC_SETTINGS_PARTICLES && HIWORD(wParam) == BN_CLICKED) {
-            HWND toggle = GetDlgItem(hwnd, IDC_SETTINGS_PARTICLES);
-            g_particlesEnabled = !g_particlesEnabled;
-            SendMessageW(toggle, BM_SETCHECK, g_particlesEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+        if ((LOWORD(wParam) == IDC_SETTINGS_ANIMATION_LEVEL
+            || LOWORD(wParam) == IDC_SETTINGS_PARTICLE_LEVEL
+            || LOWORD(wParam) == IDC_SETTINGS_REPORT_TEMPLATE) && HIWORD(wParam) == CBN_SELCHANGE) {
+            CommitComboSelectionNow((HWND)lParam);
+            ApplySettingsFromWindow(hwnd);
+            return 0;
+        }
+        if ((LOWORD(wParam) == IDC_SETTINGS_PARTICLES
+            || LOWORD(wParam) == IDC_SETTINGS_RISK_ALERTS
+            || LOWORD(wParam) == IDC_SETTINGS_AUTOSAVE_PROMPT
+            || LOWORD(wParam) == IDC_SETTINGS_COMMAND_PALETTE
+            || LOWORD(wParam) == IDC_SETTINGS_ADVANCED_FILTER) && HIWORD(wParam) == BN_CLICKED) {
+            int id = LOWORD(wParam);
+            HWND toggle = GetDlgItem(hwnd, id);
+            if (id == IDC_SETTINGS_PARTICLES) g_particlesEnabled = !g_particlesEnabled;
+            else if (id == IDC_SETTINGS_RISK_ALERTS) g_riskAlertsEnabled = !g_riskAlertsEnabled;
+            else if (id == IDC_SETTINGS_AUTOSAVE_PROMPT) g_autosavePromptEnabled = !g_autosavePromptEnabled;
+            else if (id == IDC_SETTINGS_COMMAND_PALETTE) g_commandPaletteEnabled = !g_commandPaletteEnabled;
+            else if (id == IDC_SETTINGS_ADVANCED_FILTER) g_advancedFilterEnabled = !g_advancedFilterEnabled;
+            bool checked = id == IDC_SETTINGS_PARTICLES ? g_particlesEnabled
+                : id == IDC_SETTINGS_RISK_ALERTS ? g_riskAlertsEnabled
+                : id == IDC_SETTINGS_AUTOSAVE_PROMPT ? g_autosavePromptEnabled
+                : id == IDC_SETTINGS_COMMAND_PALETTE ? g_commandPaletteEnabled
+                : g_advancedFilterEnabled;
+            SendMessageW(toggle, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
             SaveSettings();
             InvalidateRect(toggle, nullptr, FALSE);
             return 0;
@@ -4494,7 +5372,7 @@ void ShowSettingsWindow() {
         className,
         settingsTitle.c_str(),
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-        CW_USEDEFAULT, CW_USEDEFAULT, 470, 370,
+        CW_USEDEFAULT, CW_USEDEFAULT, 560, 690,
         g_hwnd, nullptr, instance, nullptr
     );
     BOOL dark = TRUE;
@@ -4795,13 +5673,24 @@ void TriggerButtonFeedback(HWND hwnd, POINT origin) {
     if ((GetWindowLongPtrW(hwnd, GWL_STYLE) & BS_OWNERDRAW) == 0) return;
 
     int id = GetDlgCtrlID(hwnd);
-    if (id == IDC_SETTINGS_PARTICLES) return;
+    if (id == IDC_SETTINGS_PARTICLES || id == IDC_SETTINGS_RISK_ALERTS
+        || id == IDC_SETTINGS_AUTOSAVE_PROMPT || id == IDC_SETTINGS_COMMAND_PALETTE
+        || id == IDC_SETTINGS_ADVANCED_FILTER) return;
     ButtonEffectState state;
     state.origin = origin;
     state.startMs = AnimationNowMs();
 
     if (g_particlesEnabled && IsCoreParticleButton(id)) {
-        int count = RandomInt(30, 50);
+        int minCount = 30;
+        int maxCount = 50;
+        if (g_particleLevel == ParticleLevel::Low) {
+            minCount = 12;
+            maxCount = 22;
+        } else if (g_particleLevel == ParticleLevel::High) {
+            minCount = 50;
+            maxCount = 72;
+        }
+        int count = RandomInt(minCount, maxCount);
         state.particles.reserve(count);
         for (int i = 0; i < count; ++i) {
             double angle = RandomRange(0.0, 6.28318530717958647692);
@@ -4893,7 +5782,14 @@ void DrawButtonEffects(const DRAWITEMSTRUCT* draw, const RECT& buttonRc, COLORRE
 }
 
 bool DrawParticleToggleItem(const DRAWITEMSTRUCT* draw) {
-    if (!draw || draw->CtlType != ODT_BUTTON || draw->CtlID != IDC_SETTINGS_PARTICLES) return false;
+    if (!draw || draw->CtlType != ODT_BUTTON) return false;
+    bool* value = nullptr;
+    if (draw->CtlID == IDC_SETTINGS_PARTICLES) value = &g_particlesEnabled;
+    else if (draw->CtlID == IDC_SETTINGS_RISK_ALERTS) value = &g_riskAlertsEnabled;
+    else if (draw->CtlID == IDC_SETTINGS_AUTOSAVE_PROMPT) value = &g_autosavePromptEnabled;
+    else if (draw->CtlID == IDC_SETTINGS_COMMAND_PALETTE) value = &g_commandPaletteEnabled;
+    else if (draw->CtlID == IDC_SETTINGS_ADVANCED_FILTER) value = &g_advancedFilterEnabled;
+    else return false;
 
     wchar_t text[160]{};
     GetWindowTextW(draw->hwndItem, text, 160);
@@ -4903,7 +5799,7 @@ bool DrawParticleToggleItem(const DRAWITEMSTRUCT* draw) {
     FillRect(draw->hDC, &rc, bg);
     DeleteObject(bg);
 
-    bool checked = g_particlesEnabled;
+    bool checked = *value;
     double hover = GetAnimationValue(draw->hwndItem, AnimChannel::Hover, 0.0);
     COLORREF border = BlendColor(RGB(51, 51, 51), RGB(85, 85, 85), hover);
 
@@ -5520,23 +6416,27 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
     case WM_KEYDOWN:
         CancelMainWindowClose();
-        if ((GetKeyState(VK_CONTROL) & 0x8000) && wParam == 'S') {
+        if (ShortcutMatches(g_shortcutSave, wParam)) {
             SaveAttendance();
             return 0;
         }
-        if ((GetKeyState(VK_CONTROL) & 0x8000) && wParam == 'O') {
+        if (ShortcutMatches(g_shortcutImport, wParam)) {
             ImportAttendance();
             return 0;
         }
-        if ((GetKeyState(VK_CONTROL) & 0x8000) && wParam == 'Z') {
+        if (ShortcutMatches(g_shortcutUndo, wParam)) {
             UndoLast();
             return 0;
         }
-        if ((GetKeyState(VK_CONTROL) & 0x8000) && wParam == 'Y') {
+        if (ShortcutMatches(g_shortcutRedo, wParam)) {
             RedoLast();
             return 0;
         }
-        if (wParam == VK_F11) {
+        if (ShortcutMatches(g_shortcutCommand, wParam)) {
+            RunCommandPalette();
+            return 0;
+        }
+        if (ShortcutMatches(g_shortcutFullscreen, wParam)) {
             ToggleFullscreen(hwnd);
             return 0;
         }
