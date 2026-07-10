@@ -129,6 +129,7 @@ static constexpr int IDM_BACKUP_MANAGER = 3044;
 static constexpr int IDM_REPORT_TEMPLATE = 3045;
 static constexpr int IDM_COMMAND_PALETTE = 3046;
 static constexpr int IDM_SHORTCUT_CENTER = 3047;
+static constexpr int IDM_LESSON_COMPLETION = 3048;
 
 static constexpr int IDC_SETTINGS_LANGUAGE = 4001;
 static constexpr int IDC_SETTINGS_THEME = 4002;
@@ -192,6 +193,7 @@ static int g_scrollX = 0;
 static int g_scrollY = 0;
 static int g_contentW = 0;
 static int g_contentH = 0;
+static int g_openThemedPopupMenus = 0;
 static std::wstring g_filterText;
 static constexpr int MIN_LAYOUT_W = 1180;
 static constexpr int MIN_LAYOUT_H = 820;
@@ -341,6 +343,7 @@ void ImportAttendance();
 void ExportCsv();
 void BackupNow();
 void ShowSettingsWindow();
+void ReviewLessonCompletion();
 void StartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t durationMs = 160, bool closeOnDone = false);
 void RestartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t durationMs = 220);
 double GetAnimationValue(HWND hwnd, AnimChannel channel, double fallback = 0.0);
@@ -388,6 +391,12 @@ struct ThemedMenuState {
     int finalY = 0;
     int width = 0;
     int height = 0;
+    int contentHeight = 0;
+    int scrollY = 0;
+    int maxScrollY = 0;
+    int mainScrollX = 0;
+    int mainScrollY = 0;
+    bool scrollable = false;
     bool done = false;
     bool closing = false;
 };
@@ -396,6 +405,9 @@ static constexpr int THEMED_MENU_PAD_Y = 8;
 static constexpr int THEMED_MENU_ITEM_H = 34;
 static constexpr int THEMED_MENU_SEPARATOR_H = 13;
 static constexpr int THEMED_MENU_SLIDE_PX = 5;
+static constexpr int THEMED_MENU_SCROLL_HINT_H = 22;
+// Keep the long Tools menu compact; the remaining actions stay reachable by wheel/keyboard scroll.
+static constexpr int THEMED_MENU_MAX_H = 520;
 
 int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem>& items);
 
@@ -604,14 +616,13 @@ void ApplyGlassTitleBar(HWND hwnd) {
 
     COLORREF caption = RGB(0, 0, 0);
     COLORREF text = RGB(255, 255, 255);
+    COLORREF border = RGB(42, 42, 42);
     DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &caption, sizeof(caption));
     DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, &text, sizeof(text));
+    DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &border, sizeof(border));
 
     int backdrop = 2; // DWMSBT_MAINWINDOW / Mica on supported Windows builds.
     DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
-
-    MARGINS margins{0, 0, 1, 0};
-    DwmExtendFrameIntoClientArea(hwnd, &margins);
 }
 
 void StartListTransition() {
@@ -980,10 +991,12 @@ LRESULT CALLBACK WheelForwardProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         return DefSubclassProc(hwnd, msg, wParam, lParam);
     }
     if (msg == WM_MOUSEWHEEL && g_hwnd) {
+        if (g_openThemedPopupMenus > 0) return 0;
         ScrollMainWindow(g_hwnd, SB_VERT, 0, GET_WHEEL_DELTA_WPARAM(wParam));
         return 0;
     }
     if (msg == WM_MOUSEHWHEEL && g_hwnd) {
+        if (g_openThemedPopupMenus > 0) return 0;
         ScrollMainWindow(g_hwnd, SB_HORZ, 0, GET_WHEEL_DELTA_WPARAM(wParam));
         return 0;
     }
@@ -1113,7 +1126,7 @@ SIZE CalculateMessageDialogWindowSize(HWND owner, const std::wstring& message) {
     int clientH = std::clamp((int)textSize.cy + 108, 230, 620);
 
     RECT windowRc{0, 0, clientW, clientH};
-    AdjustWindowRectEx(&windowRc, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_DLGMODALFRAME);
+    AdjustWindowRectEx(&windowRc, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_CONTROLPARENT);
     return SIZE{(LONG)(windowRc.right - windowRc.left), (LONG)(windowRc.bottom - windowRc.top)};
 }
 
@@ -1232,7 +1245,7 @@ int ThemedMessageBox(HWND owner, const std::wstring& message, const std::wstring
     static bool registered = false;
     if (!registered) {
         WNDCLASSW wc{};
-        wc.style = CS_DROPSHADOW;
+        wc.style = CS_HREDRAW | CS_VREDRAW;
         wc.lpfnWndProc = MessageDialogProc;
         wc.hInstance = instance;
         wc.lpszClassName = className;
@@ -1248,7 +1261,7 @@ int ThemedMessageBox(HWND owner, const std::wstring& message, const std::wstring
     if (parent) EnableWindow(parent, FALSE);
     SIZE dialogSize = CalculateMessageDialogWindowSize(parent, message);
     HWND dialog = CreateWindowExW(
-        WS_EX_DLGMODALFRAME,
+        WS_EX_CONTROLPARENT,
         className,
         title.c_str(),
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
@@ -1383,7 +1396,7 @@ bool PromptText(const std::wstring& title, const std::wstring& prompt, std::wstr
     static bool registered = false;
     if (!registered) {
         WNDCLASSW wc{};
-        wc.style = CS_DROPSHADOW;
+        wc.style = CS_HREDRAW | CS_VREDRAW;
         wc.lpfnWndProc = InputDialogProc;
         wc.hInstance = instance;
         wc.lpszClassName = className;
@@ -1396,13 +1409,19 @@ bool PromptText(const std::wstring& title, const std::wstring& prompt, std::wstr
     InputDialogState state{title, prompt, value, false};
     EnableWindow(g_hwnd, FALSE);
     HWND dialog = CreateWindowExW(
-        WS_EX_DLGMODALFRAME,
+        WS_EX_CONTROLPARENT,
         className,
         title.c_str(),
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
         CW_USEDEFAULT, CW_USEDEFAULT, 430, 190,
         g_hwnd, nullptr, instance, &state
     );
+    if (!dialog) {
+        EnableWindow(g_hwnd, TRUE);
+        return false;
+    }
+    ApplyGlassTitleBar(dialog);
+    ApplyThemedControls(dialog);
     ShowWindow(dialog, SW_SHOW);
     UpdateWindow(dialog);
 
@@ -1442,6 +1461,98 @@ const wchar_t* LanguageName(UiLanguage language) {
     case UiLanguage::ChineseTraditionalHongKong: return L"\u7e41\u9ad4\u4e2d\u6587\uff08\u9999\u6e2f\u7cb5\u8a9e\uff09";
     default: return L"English";
     }
+}
+
+bool TranslateFeatureText(const std::wstring& key, std::wstring& out) {
+    if (g_language == UiLanguage::English) return false;
+
+    struct Entry {
+        const wchar_t* key;
+        const wchar_t* zh;
+        const wchar_t* mt;
+        const wchar_t* ja;
+        const wchar_t* fr;
+        const wchar_t* de;
+        const wchar_t* ru;
+        const wchar_t* zht;
+        const wchar_t* es;
+        const wchar_t* it;
+        const wchar_t* mn;
+        const wchar_t* eo;
+        const wchar_t* lzh;
+        const wchar_t* th;
+        const wchar_t* fil;
+        const wchar_t* tr;
+        const wchar_t* lt;
+        const wchar_t* no;
+        const wchar_t* vi;
+        const wchar_t* zhhk;
+    };
+
+    static const Entry entries[] = {
+        {L"Animation level", L"动画强度", L"Livell ta' animazzjoni", L"アニメーションの強さ", L"Niveau d'animation", L"Animationsstufe", L"Уровень анимации", L"動畫強度", L"Nivel de animación", L"Livello animazione", L"Хөдөлгөөний түвшин", L"Nivelo de animacio", L"動畫之度", L"ระดับภาพเคลื่อนไหว", L"Antas ng animation", L"Animasyon düzeyi", L"Animacijos lygis", L"Animasjonsnivå", L"Mức hoạt ảnh", L"動畫強度"},
+        {L"Particle density", L"粒子密度", L"Densità tal-partiċelli", L"パーティクル密度", L"Densité des particules", L"Partikeldichte", L"Плотность частиц", L"粒子密度", L"Densidad de partículas", L"Densità particelle", L"Бөөмсийн нягт", L"Denseco de eroj", L"粒子之密", L"ความหนาแน่นของอนุภาค", L"Densidad ng particle", L"Parçacık yoğunluğu", L"Dalelių tankis", L"Partikkeltetthet", L"Mật độ hạt", L"粒子密度"},
+        {L"Report template", L"报告模板", L"Mudell tar-rapport", L"レポートテンプレート", L"Modèle de rapport", L"Berichtsvorlage", L"Шаблон отчёта", L"報告範本", L"Plantilla de informe", L"Modello di rapporto", L"Тайлангийн загвар", L"Raporta ŝablono", L"報告之式", L"แม่แบบรายงาน", L"Template ng ulat", L"Rapor şablonu", L"Ataskaitos šablonas", L"Rapportmal", L"Mẫu báo cáo", L"報告範本"},
+        {L"Enable risk student reminders", L"启用风险学生提醒", L"Ippermetti tfakkiriet għal studenti f'riskju", L"要注意生徒の通知を有効にする", L"Activer les rappels pour élèves à risque", L"Erinnerungen für Risikoschüler aktivieren", L"Включить напоминания о группе риска", L"啟用風險學生提醒", L"Activar avisos de estudiantes en riesgo", L"Attiva avvisi studenti a rischio", L"Эрсдэлтэй сурагчийн сануулгыг идэвхжүүлэх", L"Ŝalti memorigojn pri riskaj lernantoj", L"啟危生之告", L"เปิดการเตือนนักเรียนกลุ่มเสี่ยง", L"I-enable ang paalala sa estudyanteng may panganib", L"Riskli öğrenci uyarılarını etkinleştir", L"Įjungti rizikos mokinių priminimus", L"Aktiver påminnelser om risikostudenter", L"Bật nhắc nhở học sinh có nguy cơ", L"啟用風險學生提示"},
+        {L"Prompt for autosave recovery", L"启动时提示恢复自动保存", L"Staqsi dwar irkupru tas-salvataġġ awtomatiku", L"自動保存の復元を確認する", L"Proposer la récupération automatique", L"Wiederherstellung der Autospeicherung anbieten", L"Предлагать восстановление автосохранения", L"提示復原自動儲存", L"Preguntar por recuperación automática", L"Chiedi recupero salvataggio automatico", L"Автомат хадгалалт сэргээхийг асуух", L"Demandi pri aŭtomata reakiro", L"問自藏之復", L"ถามการกู้คืนบันทึกอัตโนมัติ", L"Magtanong tungkol sa awtomatikong pagbawi", L"Otomatik kaydetme kurtarmasını sor", L"Klausti dėl automatinio atkūrimo", L"Spør om gjenoppretting av autolagring", L"Nhắc khôi phục lưu tự động", L"啟動時提示還原自動儲存"},
+        {L"Enable Ctrl+K command palette", L"启用 Ctrl+K 命令面板", L"Ippermetti l-paletta tal-kmand Ctrl+K", L"Ctrl+K コマンドパレットを有効にする", L"Activer la palette de commandes Ctrl+K", L"Ctrl+K-Befehlspalette aktivieren", L"Включить палитру команд Ctrl+K", L"啟用 Ctrl+K 命令面板", L"Activar paleta de comandos Ctrl+K", L"Attiva tavolozza comandi Ctrl+K", L"Ctrl+K командын самбарыг идэвхжүүлэх", L"Ŝalti komandan paletron Ctrl+K", L"啟 Ctrl+K 命令板", L"เปิดจานคำสั่ง Ctrl+K", L"I-enable ang command palette na Ctrl+K", L"Ctrl+K komut paletini etkinleştir", L"Įjungti Ctrl+K komandų paletę", L"Aktiver Ctrl+K-kommandopaletten", L"Bật bảng lệnh Ctrl+K", L"啟用 Ctrl+K 指令面板"},
+        {L"Enable advanced filter syntax", L"启用高级筛选语法", L"Ippermetti sintassi ta' filtru avvanzat", L"高度なフィルター構文を有効にする", L"Activer la syntaxe de filtre avancée", L"Erweiterte Filtersyntax aktivieren", L"Включить расширенный синтаксис фильтра", L"啟用進階篩選語法", L"Activar sintaxis de filtro avanzado", L"Attiva sintassi filtro avanzata", L"Дэвшилтэт шүүлтүүрийн хэлбэрийг идэвхжүүлэх", L"Ŝalti altnivelan filtrilan sintakson", L"啟進篩之式", L"เปิดไวยากรณ์ตัวกรองขั้นสูง", L"I-enable ang advanced filter syntax", L"Gelişmiş filtre sözdizimini etkinleştir", L"Įjungti išplėstinę filtro sintaksę", L"Aktiver avansert filtersyntaks", L"Bật cú pháp bộ lọc nâng cao", L"啟用進階篩選語法"},
+        {L"Off", L"关闭", L"Mitfi", L"オフ", L"Désactivé", L"Aus", L"Выкл.", L"關閉", L"Desactivado", L"Disattivato", L"Унтраах", L"Malŝaltita", L"闔", L"ปิด", L"Naka-off", L"Kapalı", L"Išjungta", L"Av", L"Tắt", L"關閉"},
+        {L"Standard", L"标准", L"Standard", L"標準", L"Standard", L"Standard", L"Стандартный", L"標準", L"Estándar", L"Standard", L"Стандарт", L"Norma", L"常", L"มาตรฐาน", L"Pamantayan", L"Standart", L"Standartinis", L"Standard", L"Tiêu chuẩn", L"標準"},
+        {L"Advanced", L"高级", L"Avvanzat", L"高度", L"Avancé", L"Erweitert", L"Расширенный", L"進階", L"Avanzado", L"Avanzato", L"Ахисан", L"Altnivela", L"高", L"ขั้นสูง", L"Advanced", L"Gelişmiş", L"Išplėstinis", L"Avansert", L"Nâng cao", L"進階"},
+        {L"Low", L"低", L"Baxx", L"低", L"Faible", L"Niedrig", L"Низкий", L"低", L"Bajo", L"Basso", L"Бага", L"Malalta", L"低", L"ต่ำ", L"Mababa", L"Düşük", L"Žemas", L"Lav", L"Thấp", L"低"},
+        {L"Medium", L"中", L"Medju", L"中", L"Moyen", L"Mittel", L"Средний", L"中", L"Medio", L"Medio", L"Дунд", L"Meza", L"中", L"กลาง", L"Katamtaman", L"Orta", L"Vidutinis", L"Middels", L"Trung bình", L"中"},
+        {L"High", L"高", L"Għoli", L"高", L"Élevé", L"Hoch", L"Высокий", L"高", L"Alto", L"Alto", L"Өндөр", L"Alta", L"高", L"สูง", L"Mataas", L"Yüksek", L"Aukštas", L"Høy", L"Cao", L"高"},
+        {L"Simple", L"简洁版", L"Sempliċi", L"簡易", L"Simple", L"Einfach", L"Простой", L"簡潔版", L"Simple", L"Semplice", L"Энгийн", L"Simpla", L"簡", L"แบบง่าย", L"Simple", L"Basit", L"Paprastas", L"Enkel", L"Đơn giản", L"簡潔版"},
+        {L"Teacher", L"教师版", L"Għall-għalliem", L"教師用", L"Enseignant", L"Lehrkraft", L"Учитель", L"教師版", L"Profesor", L"Insegnante", L"Багш", L"Instruisto", L"師", L"ครู", L"Guro", L"Öğretmen", L"Mokytojas", L"Lærer", L"Giáo viên", L"教師版"},
+        {L"Parent", L"家长版", L"Ġenitur", L"保護者用", L"Parent", L"Eltern", L"Родитель", L"家長版", L"Padre", L"Genitore", L"Эцэг эх", L"Gepatro", L"親", L"ผู้ปกครอง", L"Magulang", L"Veli", L"Tėvas ar mama", L"Foresatt", L"Phụ huynh", L"家長版"},
+        {L"Complete", L"完整版", L"Komplet", L"完全", L"Complet", L"Vollständig", L"Полный", L"完整版", L"Completo", L"Completo", L"Бүрэн", L"Kompleta", L"全", L"สมบูรณ์", L"Kumpleto", L"Tam", L"Visas", L"Fullstendig", L"Đầy đủ", L"完整版"},
+        {L"All time", L"全部时间", L"Il-ħin kollu", L"全期間", L"Toute la période", L"Gesamter Zeitraum", L"За всё время", L"全部時間", L"Todo el tiempo", L"Tutto il periodo", L"Бүх хугацаа", L"Ĉiu tempo", L"通時", L"ตลอดเวลา", L"Lahat ng oras", L"Tüm zamanlar", L"Visas laikas", L"Hele perioden", L"Toàn bộ thời gian", L"全部時間"},
+        {L"This week", L"本周", L"Din il-ġimgħa", L"今週", L"Cette semaine", L"Diese Woche", L"Эта неделя", L"本週", L"Esta semana", L"Questa settimana", L"Энэ долоо хоног", L"Ĉi tiu semajno", L"本週", L"สัปดาห์นี้", L"Ngayong linggo", L"Bu hafta", L"Ši savaitė", L"Denne uken", L"Tuần này", L"本週"},
+        {L"This month", L"本月", L"Dan ix-xahar", L"今月", L"Ce mois-ci", L"Dieser Monat", L"Этот месяц", L"本月", L"Este mes", L"Questo mese", L"Энэ сар", L"Ĉi tiu monato", L"本月", L"เดือนนี้", L"Ngayong buwan", L"Bu ay", L"Šis mėnuo", L"Denne måneden", L"Tháng này", L"本月"},
+        {L"Create today's lesson", L"创建今日课次", L"Oħloq il-lezzjoni tal-lum", L"今日の授業を作成", L"Créer la séance du jour", L"Heutige Unterrichtsstunde erstellen", L"Создать урок на сегодня", L"建立今日課次", L"Crear la clase de hoy", L"Crea la lezione di oggi", L"Өнөөдрийн хичээл үүсгэх", L"Krei hodiaŭan lecionon", L"立今日課", L"สร้างคาบเรียนวันนี้", L"Gumawa ng aralin ngayon", L"Bugünün dersini oluştur", L"Sukurti šiandienos pamoką", L"Opprett dagens økt", L"Tạo buổi học hôm nay", L"建立今日課堂"},
+        {L"Switch lesson", L"切换课次", L"Ibdel lezzjoni", L"授業を切り替え", L"Changer de séance", L"Unterrichtsstunde wechseln", L"Сменить урок", L"切換課次", L"Cambiar clase", L"Cambia lezione", L"Хичээл солих", L"Ŝanĝi lecionon", L"易課", L"สลับคาบเรียน", L"Lumipat ng aralin", L"Dersi değiştir", L"Keisti pamoką", L"Bytt økt", L"Chuyển buổi học", L"切換課堂"},
+        {L"Student profile", L"学生档案", L"Profil tal-istudent", L"学生プロフィール", L"Profil de l'élève", L"Schülerprofil", L"Профиль ученика", L"學生檔案", L"Perfil del estudiante", L"Profilo studente", L"Сурагчийн танилцуулга", L"Profilo de lernanto", L"弟子檔", L"โปรไฟล์นักเรียน", L"Profile ng estudyante", L"Öğrenci profili", L"Mokinio profilis", L"Elevprofil", L"Hồ sơ học sinh", L"學生檔案"},
+        {L"Advanced filter", L"高级筛选", L"Filtru avvanzat", L"高度なフィルター", L"Filtre avancé", L"Erweiterter Filter", L"Расширенный фильтр", L"進階篩選", L"Filtro avanzado", L"Filtro avanzato", L"Дэвшилтэт шүүлтүүр", L"Altnivela filtrilo", L"進篩", L"ตัวกรองขั้นสูง", L"Advanced filter", L"Gelişmiş filtre", L"Išplėstinis filtras", L"Avansert filter", L"Bộ lọc nâng cao", L"進階篩選"},
+        {L"Statistics range", L"统计范围", L"Medda tal-istatistika", L"統計範囲", L"Période statistique", L"Statistikzeitraum", L"Диапазон статистики", L"統計範圍", L"Rango de estadísticas", L"Intervallo statistiche", L"Статистикийн хүрээ", L"Statistika intervalo", L"計數之域", L"ช่วงสถิติ", L"Saklaw ng istatistika", L"İstatistik aralığı", L"Statistikos intervalas", L"Statistikkområde", L"Phạm vi thống kê", L"統計範圍"},
+        {L"Risk students", L"风险学生", L"Studenti f'riskju", L"要注意生徒", L"Élèves à risque", L"Risikoschüler", L"Учащиеся группы риска", L"風險學生", L"Estudiantes en riesgo", L"Studenti a rischio", L"Эрсдэлтэй сурагчид", L"Riskaj lernantoj", L"危弟", L"นักเรียนกลุ่มเสี่ยง", L"Mga estudyanteng may panganib", L"Riskli öğrenciler", L"Rizikos mokiniai", L"Risikostudenter", L"Học sinh có nguy cơ", L"風險學生"},
+        {L"Backup manager", L"备份管理中心", L"Maniġer tal-backup", L"バックアップ管理", L"Gestionnaire de sauvegardes", L"Sicherungsverwaltung", L"Менеджер резервных копий", L"備份管理中心", L"Gestor de copias", L"Gestore backup", L"Нөөцийн менежер", L"Sekurkopi-administrilo", L"備份司", L"ตัวจัดการข้อมูลสำรอง", L"Backup manager", L"Yedek yöneticisi", L"Atsarginių kopijų tvarkyklė", L"Sikkerhetskopi-behandler", L"Trình quản lý sao lưu", L"備份管理中心"},
+        {L"Command palette", L"命令面板", L"Paletta tal-kmand", L"コマンドパレット", L"Palette de commandes", L"Befehlspalette", L"Палитра команд", L"命令面板", L"Paleta de comandos", L"Tavolozza comandi", L"Командын самбар", L"Komanda paletro", L"命令板", L"จานคำสั่ง", L"Command palette", L"Komut paleti", L"Komandų paletė", L"Kommandopalett", L"Bảng lệnh", L"指令面板"},
+        {L"Shortcut center", L"快捷键中心", L"Ċentru shortcuts", L"ショートカットセンター", L"Centre des raccourcis", L"Tastenkürzelzentrale", L"Центр сочетаний клавиш", L"快速鍵中心", L"Centro de atajos", L"Centro scorciatoie", L"Товчлолын төв", L"Ŝparvoja centro", L"捷鍵司", L"ศูนย์คีย์ลัด", L"Sentro ng shortcut", L"Kısayol merkezi", L"Spartųjų klavišų centras", L"Snarveissenter", L"Trung tâm phím tắt", L"快速鍵中心"},
+        {L"Lesson", L"课次", L"Lezzjoni", L"授業", L"Séance", L"Unterrichtsstunde", L"Урок", L"課次", L"Clase", L"Lezione", L"Хичээл", L"Leciono", L"課", L"คาบเรียน", L"Aralin", L"Ders", L"Pamoka", L"Økt", L"Buổi học", L"課堂"},
+        {L"Lesson name:", L"课次名称：", L"Isem tal-lezzjoni:", L"授業名:", L"Nom de la séance :", L"Name der Unterrichtsstunde:", L"Название урока:", L"課次名稱：", L"Nombre de la clase:", L"Nome della lezione:", L"Хичээлийн нэр:", L"Leciona nomo:", L"課名：", L"ชื่อคาบเรียน:", L"Pangalan ng aralin:", L"Ders adı:", L"Pamokos pavadinimas:", L"Øktnavn:", L"Tên buổi học:", L"課堂名稱："},
+        {L"Recent history", L"最近记录", L"Storja riċenti", L"最近の履歴", L"Historique récent", L"Letzte Historie", L"Недавняя история", L"最近紀錄", L"Historial reciente", L"Cronologia recente", L"Сүүлийн түүх", L"Lastatempa historio", L"近錄", L"ประวัติล่าสุด", L"Kamakailang kasaysayan", L"Son geçmiş", L"Naujausia istorija", L"Nylig historikk", L"Lịch sử gần đây", L"最近紀錄"},
+        {L"Lesson completion check", L"课次完成检查", L"Kontroll tat-tlestija tal-lezzjoni", L"授業完了チェック", L"Vérification de séance", L"Unterrichtsprüfung", L"Проверка урока", L"課次完成檢查", L"Comprobación de clase", L"Controllo lezione", L"Хичээлийн шалгалт", L"Leciona kompletiga kontrolo", L"課成檢", L"ตรวจสอบความครบถ้วนของคาบ", L"Pagsusuri ng aralin", L"Ders tamamlama denetimi", L"Pamokos patikra", L"Kontroll av økt", L"Kiểm tra buổi học", L"課堂完成檢查"},
+        {L"Default Course", L"默认课程", L"Kors awtomatiku", L"既定コース", L"Cours par défaut", L"Standardkurs", L"Курс по умолчанию", L"預設課程", L"Curso predeterminado", L"Corso predefinito", L"Үндсэн хичээл", L"Defaŭlta kurso", L"常課", L"รายวิชาเริ่มต้น", L"Default na kurso", L"Varsayılan ders", L"Numatytasis kursas", L"Standardkurs", L"Khóa học mặc định", L"預設課程"}
+    };
+
+    for (const auto& entry : entries) {
+        if (key != entry.key) continue;
+        switch (g_language) {
+        case UiLanguage::ChineseSimplified: out = entry.zh; break;
+        case UiLanguage::Maltese: out = entry.mt; break;
+        case UiLanguage::Japanese: out = entry.ja; break;
+        case UiLanguage::French: out = entry.fr; break;
+        case UiLanguage::German: out = entry.de; break;
+        case UiLanguage::Russian: out = entry.ru; break;
+        case UiLanguage::ChineseTraditional: out = entry.zht; break;
+        case UiLanguage::Spanish: out = entry.es; break;
+        case UiLanguage::Italian: out = entry.it; break;
+        case UiLanguage::Mongolian: out = entry.mn; break;
+        case UiLanguage::Esperanto: out = entry.eo; break;
+        case UiLanguage::ClassicalChinese: out = entry.lzh; break;
+        case UiLanguage::Thai: out = entry.th; break;
+        case UiLanguage::Filipino: out = entry.fil; break;
+        case UiLanguage::Turkish: out = entry.tr; break;
+        case UiLanguage::Lithuanian: out = entry.lt; break;
+        case UiLanguage::Norwegian: out = entry.no; break;
+        case UiLanguage::Vietnamese: out = entry.vi; break;
+        case UiLanguage::ChineseTraditionalHongKong: out = entry.zhhk; break;
+        default: return false;
+        }
+        return true;
+    }
+    return false;
 }
 
 bool TranslateAdditionalLanguage(const std::wstring& key, std::wstring& out) {
@@ -1744,10 +1855,11 @@ bool TranslateAdditionalLanguage(const std::wstring& key, std::wstring& out) {
     return false;
 }
 
-std::wstring Tr(const wchar_t* english, const wchar_t*) {
+std::wstring Tr(const wchar_t* english, const wchar_t* chinese) {
     std::wstring key = english;
     if (g_language == UiLanguage::English) return key;
     std::wstring additional;
+    if (TranslateFeatureText(key, additional)) return additional;
     if (TranslateAdditionalLanguage(key, additional)) return additional;
 
     auto zh = [&](const wchar_t* s) -> std::wstring { return s; };
@@ -1921,7 +2033,9 @@ std::wstring Tr(const wchar_t* english, const wchar_t*) {
             }
         }
     }
-    return key;
+    // Every user-visible call site supplies a Chinese fallback. Keep non-English
+    // modes readable while a legacy string is being promoted into a language pack.
+    return chinese && *chinese ? std::wstring(chinese) : key;
 }
 
 std::wstring ParticleEffectsLabel() {
@@ -2600,7 +2714,10 @@ void RefreshCourseCombo() {
     EnsureSheets();
     SendMessageW(g_courseCombo, CB_RESETCONTENT, 0, 0);
     for (const auto& sheet : g_sheets) {
-        SendMessageW(g_courseCombo, CB_ADDSTRING, 0, (LPARAM)sheet.name.c_str());
+        const std::wstring displayName = sheet.name == L"Default Course"
+            ? Tr(L"Default Course", L"默认课程")
+            : sheet.name;
+        SendMessageW(g_courseCombo, CB_ADDSTRING, 0, (LPARAM)displayName.c_str());
     }
     SendMessageW(g_courseCombo, CB_SETCURSEL, g_activeSheet, 0);
     RedrawWindow(g_courseCombo, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
@@ -2677,15 +2794,37 @@ int ThemedMenuTotalHeight(const ThemedMenuState* state) {
     return height;
 }
 
+int ThemedMenuContentTop(const ThemedMenuState* state) {
+    return state && state->scrollable ? THEMED_MENU_SCROLL_HINT_H : 0;
+}
+
+int ThemedMenuContentBottom(const ThemedMenuState* state) {
+    if (!state) return 0;
+    return state->height - (state->scrollable ? THEMED_MENU_SCROLL_HINT_H : 0);
+}
+
 int ThemedMenuHitTest(ThemedMenuState* state, int y) {
+    if (!state || y < ThemedMenuContentTop(state) || y >= ThemedMenuContentBottom(state)) return -1;
+    int contentY = y - ThemedMenuContentTop(state) + state->scrollY;
     for (int i = 0; i < (int)state->items.size(); ++i) {
         int top = ThemedMenuItemTop(state, i);
         int height = state->items[i].separator ? THEMED_MENU_SEPARATOR_H : THEMED_MENU_ITEM_H;
-        if (y >= top && y < top + height) {
+        if (contentY >= top && contentY < top + height) {
             return state->items[i].separator ? -1 : i;
         }
     }
     return -1;
+}
+
+void ScrollThemedMenu(HWND hwnd, ThemedMenuState* state, int delta) {
+    if (!hwnd || !state || !state->scrollable || delta == 0) return;
+    int next = std::clamp(state->scrollY + delta, 0, state->maxScrollY);
+    if (next == state->scrollY) return;
+    state->scrollY = next;
+    state->hover = -1;
+    StartAnimation(hwnd, AnimChannel::Hover, 0.0, 80);
+    InvalidateRect(hwnd, nullptr, FALSE);
+    RedrawWindow(g_hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_NOERASE);
 }
 
 void DrawSoftDivider(HDC hdc, int left, int right, int y) {
@@ -2713,7 +2852,7 @@ RECT ThemedMenuItemRect(HWND hwnd, const ThemedMenuState* state, int index) {
     if (!state || index < 0 || index >= (int)state->items.size() || state->items[index].separator) {
         return rc;
     }
-    int top = ThemedMenuItemTop(state, index);
+    int top = ThemedMenuItemTop(state, index) - state->scrollY + ThemedMenuContentTop(state);
     return RECT{6, top, rc.right - 6, top + THEMED_MENU_ITEM_H};
 }
 
@@ -2721,8 +2860,8 @@ void ApplyThemedMenuReveal(HWND hwnd, ThemedMenuState* state) {
     if (!hwnd || !state) return;
     double reveal = GetAnimationValue(hwnd, AnimChannel::Reveal, 1.0);
     int y = state->finalY - (int)std::lround((1.0 - reveal) * THEMED_MENU_SLIDE_PX);
-    BYTE alpha = (BYTE)std::clamp((int)std::lround(255.0 * reveal), 1, 255);
-    SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA);
+    // The menu paints its own fade through its fill, border, and text colors. Keeping this
+    // as an ordinary popup avoids layered-window composition artifacts in the owner window.
     SetWindowPos(hwnd, HWND_TOPMOST, state->finalX, y, state->width, state->height,
         SWP_NOACTIVATE | SWP_NOOWNERZORDER);
 }
@@ -2754,9 +2893,15 @@ void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState* state) {
     HGDIOBJ oldFont = SelectObject(hdc, g_font);
     SetBkMode(hdc, TRANSPARENT);
 
+    const int contentTop = ThemedMenuContentTop(state);
+    const int contentBottom = ThemedMenuContentBottom(state);
+    SaveDC(hdc);
+    IntersectClipRect(hdc, 0, contentTop, rc.right, contentBottom);
     for (int i = 0; i < (int)state->items.size(); ++i) {
         double itemProgress = EaseOut(reveal);
-        int top = ThemedMenuItemTop(state, i);
+        int top = ThemedMenuItemTop(state, i) - state->scrollY + contentTop;
+        int itemHeight = state->items[i].separator ? THEMED_MENU_SEPARATOR_H : THEMED_MENU_ITEM_H;
+        if (top + itemHeight <= contentTop || top >= contentBottom) continue;
         if (state->items[i].separator) {
             DrawSoftDivider(hdc, 12, rc.right - 12, top + 6);
             continue;
@@ -2775,6 +2920,33 @@ void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState* state) {
         textRc.right -= 16;
         SetTextColor(hdc, BlendColor(COLOR_MUTED, COLOR_TEXT, itemProgress));
         DrawTextW(hdc, state->items[i].text.c_str(), -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
+    RestoreDC(hdc, -1);
+
+    if (state->scrollable) {
+        auto drawScrollArrow = [&](bool up, bool active) {
+            if (!active) return;
+            int centerX = rc.right - 18;
+            int centerY = up ? THEMED_MENU_SCROLL_HINT_H / 2 : rc.bottom - THEMED_MENU_SCROLL_HINT_H / 2;
+            POINT arrow[3] = {
+                {centerX - 5, centerY + (up ? 3 : -3)},
+                {centerX + 5, centerY + (up ? 3 : -3)},
+                {centerX, centerY + (up ? -3 : 3)}
+            };
+            HBRUSH arrowBrush = CreateSolidBrush(RGB(150, 150, 150));
+            HPEN arrowPen = CreatePen(PS_SOLID, 1, RGB(150, 150, 150));
+            HGDIOBJ oldPen = SelectObject(hdc, arrowPen);
+            HGDIOBJ oldBrush = SelectObject(hdc, arrowBrush);
+            Polygon(hdc, arrow, 3);
+            SelectObject(hdc, oldBrush);
+            SelectObject(hdc, oldPen);
+            DeleteObject(arrowPen);
+            DeleteObject(arrowBrush);
+        };
+        drawScrollArrow(true, state->scrollY > 0);
+        drawScrollArrow(false, state->scrollY < state->maxScrollY);
+        DrawSoftDivider(hdc, 10, rc.right - 10, contentTop - 1);
+        DrawSoftDivider(hdc, 10, rc.right - 10, contentBottom);
     }
 
     SelectObject(hdc, oldFont);
@@ -2842,6 +3014,15 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             }
         }
         return 0;
+    case WM_MOUSEWHEEL:
+        if (state && !state->closing && state->scrollable) {
+            int wheel = GET_WHEEL_DELTA_WPARAM(wParam);
+            int rows = wheel / WHEEL_DELTA;
+            if (rows == 0) rows = wheel > 0 ? 1 : -1;
+            ScrollThemedMenu(hwnd, state, -rows * THEMED_MENU_ITEM_H * 2);
+            return 0;
+        }
+        break;
     case WM_LBUTTONDOWN:
         if (state && !state->closing) {
             POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
@@ -2849,6 +3030,14 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             GetClientRect(hwnd, &rc);
             if (!PtInRect(&rc, pt)) {
                 CloseThemedPopupMenu(hwnd, state, 0);
+                return 0;
+            }
+            if (state->scrollable && pt.y < ThemedMenuContentTop(state)) {
+                ScrollThemedMenu(hwnd, state, -THEMED_MENU_ITEM_H * 2);
+                return 0;
+            }
+            if (state->scrollable && pt.y >= ThemedMenuContentBottom(state)) {
+                ScrollThemedMenu(hwnd, state, THEMED_MENU_ITEM_H * 2);
                 return 0;
             }
         }
@@ -2863,6 +3052,24 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         if (wParam == VK_ESCAPE && state && !state->closing) {
             CloseThemedPopupMenu(hwnd, state, 0);
             return 0;
+        }
+        if (state && !state->closing && state->scrollable) {
+            if (wParam == VK_UP || wParam == VK_PRIOR) {
+                ScrollThemedMenu(hwnd, state, -THEMED_MENU_ITEM_H * (wParam == VK_PRIOR ? 5 : 1));
+                return 0;
+            }
+            if (wParam == VK_DOWN || wParam == VK_NEXT) {
+                ScrollThemedMenu(hwnd, state, THEMED_MENU_ITEM_H * (wParam == VK_NEXT ? 5 : 1));
+                return 0;
+            }
+            if (wParam == VK_HOME) {
+                ScrollThemedMenu(hwnd, state, -state->maxScrollY);
+                return 0;
+            }
+            if (wParam == VK_END) {
+                ScrollThemedMenu(hwnd, state, state->maxScrollY);
+                return 0;
+            }
         }
         break;
     case WM_ACTIVATE:
@@ -2898,7 +3105,7 @@ void RegisterThemedMenuClass() {
     if (registered) return;
 
     WNDCLASSW wc{};
-    wc.style = CS_DROPSHADOW;
+    wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = ThemedMenuProc;
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.lpszClassName = L"AttendanceThemedPopupMenu";
@@ -2925,15 +3132,18 @@ int MeasureThemedMenuWidth(const std::vector<ThemedMenuItem>& items) {
 
 int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem>& items) {
     if (!button || items.empty()) return 0;
-    RegisterThemedMenuClass();
-
     ThemedMenuState state;
     state.items = items;
+    state.mainScrollX = g_scrollX;
+    state.mainScrollY = g_scrollY;
+    ++g_openThemedPopupMenus;
+    RegisterThemedMenuClass();
 
     RECT buttonRc{};
     GetWindowRect(button, &buttonRc);
     int width = MeasureThemedMenuWidth(items);
-    int height = ThemedMenuTotalHeight(&state);
+    state.contentHeight = ThemedMenuTotalHeight(&state);
+    int height = state.contentHeight;
     int x = buttonRc.right - width;
     int y = buttonRc.bottom + 4;
 
@@ -2941,6 +3151,14 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem>& items) {
     MONITORINFO mi{};
     mi.cbSize = sizeof(mi);
     if (GetMonitorInfoW(monitor, &mi)) {
+        int workHeight = (int)(mi.rcWork.bottom - mi.rcWork.top);
+        int maxHeight = std::max(160, std::min(THEMED_MENU_MAX_H, workHeight - 16));
+        if (height > maxHeight) {
+            state.scrollable = true;
+            height = maxHeight;
+            int viewportHeight = height - THEMED_MENU_SCROLL_HINT_H * 2;
+            state.maxScrollY = std::max(0, state.contentHeight - viewportHeight);
+        }
         int minX = (int)mi.rcWork.left + 4;
         int maxX = std::max(minX, (int)mi.rcWork.right - width - 4);
         int minY = (int)mi.rcWork.top + 4;
@@ -2955,30 +3173,40 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem>& items) {
     state.height = height;
 
     HWND popup = CreateWindowExW(
-        WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED,
+        WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
         L"AttendanceThemedPopupMenu", L"",
         WS_POPUP,
-        x, y - THEMED_MENU_SLIDE_PX, width, height,
+        state.finalX, state.finalY - THEMED_MENU_SLIDE_PX, width, height,
         g_hwnd, nullptr, GetModuleHandleW(nullptr), &state
     );
-    if (!popup) return 0;
+    if (!popup) {
+        --g_openThemedPopupMenus;
+        return 0;
+    }
 
-    BOOL dark = TRUE;
-    DwmSetWindowAttribute(popup, 20, &dark, sizeof(dark));
-    SetLayeredWindowAttributes(popup, 0, 1, LWA_ALPHA);
     StartWindowReveal(popup, 180);
     ShowWindow(popup, SW_SHOW);
     ApplyThemedMenuReveal(popup, &state);
+    // Recompose the owner once without an erase pass so native child controls cannot retain
+    // stale regions while the overlay is introduced.
+    RedrawWindow(g_hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_NOERASE);
     SetForegroundWindow(popup);
     SetFocus(popup);
-    SetCapture(popup);
 
     MSG msg{};
     while (!state.done && IsWindow(popup) && GetMessageW(&msg, nullptr, 0, 0) > 0) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+    --g_openThemedPopupMenus;
     if (IsWindow(popup)) DestroyWindow(popup);
+    RedrawWindow(g_hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_NOERASE);
+    if (g_scrollX != state.mainScrollX || g_scrollY != state.mainScrollY) {
+        g_scrollX = state.mainScrollX;
+        g_scrollY = state.mainScrollY;
+        ResizeLayout(g_hwnd);
+        InvalidateRect(g_hwnd, nullptr, FALSE);
+    }
     return state.selected;
 }
 
@@ -4549,7 +4777,7 @@ void ShowShortcutCenter() {
 void RunCommandPalette() {
     if (!g_commandPaletteEnabled) return;
     std::wstring command;
-    if (!PromptText(Tr(L"Command palette", L"\u547d\u4ee4\u9762\u677f"), Tr(L"Type a command: save, import, export, backup, stats, risk, filter, lesson, profile, settings", L"\u8f93\u5165\u547d\u4ee4\uff1asave\u3001import\u3001export\u3001backup\u3001stats\u3001risk\u3001filter\u3001lesson\u3001profile\u3001settings"), command)) return;
+    if (!PromptText(Tr(L"Command palette", L"\u547d\u4ee4\u9762\u677f"), Tr(L"Type a command: save, import, export, backup, stats, risk, filter, lesson, review, profile, settings", L"\u8f93\u5165\u547d\u4ee4\uff1asave\u3001import\u3001export\u3001backup\u3001stats\u3001risk\u3001filter\u3001lesson\u3001review\u3001profile\u3001settings"), command)) return;
     command = LowerText(TrimWide(command));
     if (command.find(L"save") != std::wstring::npos || command.find(L"\u4fdd\u5b58") != std::wstring::npos) SaveAttendance();
     else if (command.find(L"import") != std::wstring::npos || command.find(L"\u5bfc\u5165") != std::wstring::npos) ImportAttendance();
@@ -4558,6 +4786,7 @@ void RunCommandPalette() {
     else if (command.find(L"stats") != std::wstring::npos || command.find(L"\u7edf\u8ba1") != std::wstring::npos) ShowStatisticsSummary();
     else if (command.find(L"risk") != std::wstring::npos || command.find(L"\u98ce\u9669") != std::wstring::npos) ShowRiskStudents();
     else if (command.find(L"filter") != std::wstring::npos || command.find(L"\u7b5b\u9009") != std::wstring::npos) ShowAdvancedFilterHelp();
+    else if (command.find(L"review") != std::wstring::npos || command.find(L"\u68c0\u67e5") != std::wstring::npos) ReviewLessonCompletion();
     else if (command.find(L"lesson") != std::wstring::npos || command.find(L"\u8bfe\u6b21") != std::wstring::npos) CreateTodayLessonFromRoster();
     else if (command.find(L"profile") != std::wstring::npos || command.find(L"\u6863\u6848") != std::wstring::npos) ShowStudentProfile();
     else if (command.find(L"settings") != std::wstring::npos || command.find(L"\u8bbe\u7f6e") != std::wstring::npos) ShowSettingsWindow();
@@ -4821,7 +5050,7 @@ void ShowStatsChart() {
     static bool registered = false;
     if (!registered) {
         WNDCLASSW wc{};
-        wc.style = CS_DROPSHADOW;
+        wc.style = CS_HREDRAW | CS_VREDRAW;
         wc.lpfnWndProc = ChartProc;
         wc.hInstance = instance;
         wc.lpszClassName = className;
@@ -4837,11 +5066,67 @@ void ShowStatsChart() {
         CW_USEDEFAULT, CW_USEDEFAULT, 760, 420,
         g_hwnd, nullptr, instance, nullptr
     );
-    BOOL dark = TRUE;
-    DwmSetWindowAttribute(g_chartWindow, 20, &dark, sizeof(dark));
+    ApplyGlassTitleBar(g_chartWindow);
     StartWindowReveal(g_chartWindow, 190);
     ShowWindow(g_chartWindow, SW_SHOW);
     UpdateWindow(g_chartWindow);
+}
+
+void ReviewLessonCompletion() {
+    SyncActiveSheet();
+    const std::wstring lesson = TrimWide(GetText(g_dateEdit));
+    if (lesson.empty()) {
+        ShowMessage(Tr(L"Enter a lesson name or date first.", L"请先输入课次名称或日期。"));
+        return;
+    }
+
+    const auto& sheet = g_sheets[g_activeSheet];
+    std::map<std::wstring, int> recordCounts;
+    int recordsInLesson = 0;
+    for (const auto& record : g_records) {
+        if (record.dateTime != lesson) continue;
+        ++recordsInLesson;
+        ++recordCounts[record.name];
+    }
+
+    std::vector<std::wstring> roster = sheet.students;
+    if (roster.empty()) {
+        for (const auto& item : recordCounts) roster.push_back(item.first);
+    }
+    std::vector<std::wstring> missing;
+    for (const auto& student : roster) {
+        if (recordCounts.find(student) == recordCounts.end()) missing.push_back(student);
+    }
+    std::vector<std::wstring> duplicates;
+    for (const auto& item : recordCounts) {
+        if (item.second > 1) duplicates.push_back(item.first);
+    }
+
+    std::wstringstream report;
+    report << Tr(L"Lesson completion check", L"课次完成检查") << L"\n\n"
+           << Tr(L"Lesson", L"课次") << L": " << lesson << L"\n"
+           << Tr(L"Roster", L"名单人数") << L": " << roster.size() << L"\n"
+           << Tr(L"Records", L"记录数") << L": " << recordsInLesson << L"\n";
+    if (roster.empty()) {
+        report << L"\n" << Tr(L"No roster or lesson records are available to check.", L"当前没有名单或课次记录可供检查。") << L"\n";
+    } else if (missing.empty()) {
+        report << L"\n" << Tr(L"Every roster student has a record.", L"名单中的每位学生都已有记录。") << L"\n";
+    } else {
+        report << L"\n" << Tr(L"Missing records", L"缺少记录") << L" (" << missing.size() << L"): ";
+        for (size_t i = 0; i < missing.size(); ++i) {
+            if (i) report << L", ";
+            report << missing[i];
+        }
+        report << L"\n";
+    }
+    if (!duplicates.empty()) {
+        report << L"\n" << Tr(L"Duplicate records", L"重复记录") << L" (" << duplicates.size() << L"): ";
+        for (size_t i = 0; i < duplicates.size(); ++i) {
+            if (i) report << L", ";
+            report << duplicates[i];
+        }
+    }
+    ShowMessage(report.str(), Tr(L"Lesson completion check", L"课次完成检查"));
 }
 
 void ShowToolsMenu(HWND button) {
@@ -4856,6 +5141,7 @@ void ShowToolsMenu(HWND button) {
     std::wstring createFromRoster = Tr(L"Create records from roster", L"\u4ece\u540d\u5355\u521b\u5efa\u70b9\u540d\u8bb0\u5f55");
     std::wstring createLesson = Tr(L"Create today's lesson", L"\u521b\u5efa\u4eca\u65e5\u8bfe\u6b21");
     std::wstring switchLesson = Tr(L"Switch lesson", L"\u5207\u6362\u8bfe\u6b21");
+    std::wstring lessonCompletion = Tr(L"Lesson completion check", L"课次完成检查");
     std::wstring studentProfile = Tr(L"Student profile", L"\u5b66\u751f\u6863\u6848");
     std::wstring advancedFilter = Tr(L"Advanced filter", L"\u9ad8\u7ea7\u7b5b\u9009");
     std::wstring statsRange = Tr(L"Statistics range", L"\u7edf\u8ba1\u8303\u56f4") + L": " + StatsRangeName(g_statsRange);
@@ -4880,6 +5166,7 @@ void ShowToolsMenu(HWND button) {
         {IDM_STUDENTS_GENERATE, createFromRoster, false},
         {IDM_LESSON_CREATE_TODAY, createLesson, false},
         {IDM_LESSON_SWITCH, switchLesson, false},
+        {IDM_LESSON_COMPLETION, lessonCompletion, false},
         {IDM_STUDENT_PROFILE, studentProfile, false},
         {IDM_COURSE_DETAILS, courseDetails, false},
         {0, L"", true},
@@ -4914,6 +5201,7 @@ void ShowToolsMenu(HWND button) {
     case IDM_STUDENTS_GENERATE: CreateRecordsFromRoster(); break;
     case IDM_LESSON_CREATE_TODAY: CreateTodayLessonFromRoster(); break;
     case IDM_LESSON_SWITCH: SwitchLessonFilter(); break;
+    case IDM_LESSON_COMPLETION: ReviewLessonCompletion(); break;
     case IDM_STUDENT_PROFILE: ShowStudentProfile(); break;
     case IDM_COURSE_DETAILS: EditCourseDetails(); break;
     case IDM_ADVANCED_FILTER: ShowAdvancedFilterHelp(); break;
@@ -5356,7 +5644,7 @@ void ShowSettingsWindow() {
     static bool registered = false;
     if (!registered) {
         WNDCLASSW wc{};
-        wc.style = CS_DROPSHADOW;
+        wc.style = CS_HREDRAW | CS_VREDRAW;
         wc.lpfnWndProc = SettingsProc;
         wc.hInstance = instance;
         wc.lpszClassName = className;
@@ -5368,15 +5656,14 @@ void ShowSettingsWindow() {
 
     std::wstring settingsTitle = Tr(L"Settings", L"\u8bbe\u7f6e");
     g_settingsWindow = CreateWindowExW(
-        WS_EX_DLGMODALFRAME,
+        WS_EX_CONTROLPARENT,
         className,
         settingsTitle.c_str(),
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
         CW_USEDEFAULT, CW_USEDEFAULT, 560, 690,
         g_hwnd, nullptr, instance, nullptr
     );
-    BOOL dark = TRUE;
-    DwmSetWindowAttribute(g_settingsWindow, 20, &dark, sizeof(dark));
+    ApplyGlassTitleBar(g_settingsWindow);
     ApplyThemedControls(g_settingsWindow);
     ShowWindow(g_settingsWindow, SW_SHOW);
     UpdateWindow(g_settingsWindow);
@@ -6343,9 +6630,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         ScrollMainWindow(hwnd, SB_HORZ, LOWORD(wParam), 0);
         return 0;
     case WM_MOUSEWHEEL:
+        if (g_openThemedPopupMenus > 0) return 0;
         ScrollMainWindow(hwnd, SB_VERT, 0, GET_WHEEL_DELTA_WPARAM(wParam));
         return 0;
     case WM_MOUSEHWHEEL:
+        if (g_openThemedPopupMenus > 0) return 0;
         ScrollMainWindow(hwnd, SB_HORZ, 0, GET_WHEEL_DELTA_WPARAM(wParam));
         return 0;
     case WM_COMMAND: {
