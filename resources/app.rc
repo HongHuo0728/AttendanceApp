@@ -4,8 +4,8 @@ IDI_APP_ICON ICON "..\\assets\\AttendanceApp.ico"
 IDI_ATTD_ICON ICON "..\\assets\\AttdFile.ico"
 
 1 VERSIONINFO
- FILEVERSION 1,2,1,0
- PRODUCTVERSION 1,2,1,0
+ FILEVERSION 1,2,2,0
+ PRODUCTVERSION 1,2,2,0
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -23,12 +23,12 @@ BEGIN
             VALUE "Comments", "Supported languages: English, Simplified Chinese, Maltese, Japanese, French, German, Russian, Traditional Chinese Taiwan, Spanish, Italian, Mongolian, Esperanto, Classical Chinese, Thai, Filipino, Turkish, Lithuanian, Norwegian, Vietnamese, Traditional Chinese Hong Kong Cantonese\0"
             VALUE "CompanyName", "Attendance App\0"
             VALUE "FileDescription", "Attendance App\0"
-            VALUE "FileVersion", "1.2.1\0"
+            VALUE "FileVersion", "1.2.2\0"
             VALUE "InternalName", "AttendanceApp\0"
             VALUE "LegalCopyright", "MIT License\0"
             VALUE "OriginalFilename", "AttendanceApp.exe\0"
             VALUE "ProductName", "Attendance App\0"
-            VALUE "ProductVersion", "1.2.1\0"
+            VALUE "ProductVersion", "1.2.2\0"
         END
     END
     BLOCK "VarFileInfo"

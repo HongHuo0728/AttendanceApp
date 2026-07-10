@@ -211,7 +211,7 @@ void EnableComboPaint(HWND combo);
 void ApplyComboDropDownTheme(HWND combo);
 std::string WideToUtf8(const std::wstring& input);
 std::wstring Utf8ToWide(const std::string& input);
-bool LoadAttendanceFile(const std::wstring& path, bool showSuccess);
+bool LoadAttendanceFile(const std::wstring& path, bool showSuccess, bool rememberRecent = true);
 void PushUndo();
 HWND MakeSettingsControl(HWND parent, const wchar_t* cls, const wchar_t* text, DWORD style, int id);
 std::wstring Tr(const wchar_t* english, const wchar_t* chinese);
@@ -252,6 +252,8 @@ std::wstring GetText(HWND hwnd) {
 void SetText(HWND hwnd, const std::wstring& text) {
     SetWindowTextW(hwnd, text.c_str());
 }
+
+void ClearAutosaveFile();
 
 void SetStaticTextClean(HWND hwnd, const std::wstring& text) {
     if (!hwnd) return;
@@ -451,7 +453,12 @@ bool ThemedConfirm(const std::wstring& title, const std::wstring& message, HWND 
     UpdateWindow(dialog);
 
     MSG msg{};
-    while (IsWindow(dialog) && GetMessageW(&msg, nullptr, 0, 0)) {
+    while (IsWindow(dialog)) {
+        int result = GetMessageW(&msg, nullptr, 0, 0);
+        if (result <= 0) {
+            if (result == 0) PostQuitMessage((int)msg.wParam);
+            break;
+        }
         if (!IsDialogMessageW(dialog, &msg)) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
@@ -500,7 +507,12 @@ void ThemedMessage(const std::wstring& title, const std::wstring& message, HWND 
     UpdateWindow(dialog);
 
     MSG msg{};
-    while (IsWindow(dialog) && GetMessageW(&msg, nullptr, 0, 0)) {
+    while (IsWindow(dialog)) {
+        int result = GetMessageW(&msg, nullptr, 0, 0);
+        if (result <= 0) {
+            if (result == 0) PostQuitMessage((int)msg.wParam);
+            break;
+        }
         if (!IsDialogMessageW(dialog, &msg)) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
@@ -626,11 +638,20 @@ bool PromptText(const std::wstring& title, const std::wstring& prompt, std::wstr
         CW_USEDEFAULT, CW_USEDEFAULT, 430, 190,
         g_hwnd, nullptr, instance, &state
     );
+    if (!dialog) {
+        EnableWindow(g_hwnd, TRUE);
+        return false;
+    }
     ShowWindow(dialog, SW_SHOW);
     UpdateWindow(dialog);
 
     MSG msg{};
-    while (IsWindow(dialog) && GetMessageW(&msg, nullptr, 0, 0)) {
+    while (IsWindow(dialog)) {
+        int result = GetMessageW(&msg, nullptr, 0, 0);
+        if (result <= 0) {
+            if (result == 0) PostQuitMessage((int)msg.wParam);
+            break;
+        }
         if (!IsDialogMessageW(dialog, &msg)) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
@@ -676,6 +697,12 @@ bool TranslateAdditionalLanguage(const std::wstring& key, std::wstring& out) {
             const wchar_t* zhhk;
         };
         static const V12Entry entries[] = {
+            {L"Attendance Files", L"Oppropsfiler", L"T\u1ec7p \u0111i\u1ec3m danh", L"\u9ede\u540d\u6a94\u6848"},
+            {L"All Files", L"Alle filer", L"T\u1ea5t c\u1ea3 t\u1ec7p", L"\u6240\u6709\u6a94\u6848"},
+            {L"CSV Files", L"CSV-filer", L"T\u1ec7p CSV", L"CSV \u6a94\u6848"},
+            {L"Text Files", L"Tekstfiler", L"T\u1ec7p v\u0103n b\u1ea3n", L"\u6587\u5b57\u6a94\u6848"},
+            {L"HTML Files", L"HTML-filer", L"T\u1ec7p HTML", L"HTML \u6a94\u6848"},
+            {L"PowerPoint Files", L"PowerPoint-filer", L"T\u1ec7p PowerPoint", L"PowerPoint \u6a94\u6848"},
             {L"AttendanceApp - .attd Roll Call Manager", L"AttendanceApp - .attd oppropsbehandler", L"AttendanceApp - Tr\u00ecnh qu\u1ea3n l\u00fd \u0111i\u1ec3m danh .attd", L"AttendanceApp - .attd \u9ede\u540d\u7ba1\u7406"},
             {L"Attendance Manager", L"Frav\u00e6rsbehandler", L"Qu\u1ea3n l\u00fd \u0111i\u1ec3m danh", L"\u9ede\u540d\u7ba1\u7406"},
             {L"Create, edit, export, save, import, and batch clean .attd roll calls.", L"Opprett, rediger, eksporter, lagre, importer og rydd .attd-opprop.", L"T\u1ea1o, s\u1eeda, xu\u1ea5t, l\u01b0u, nh\u1eadp v\u00e0 d\u1ecdn d\u1eb9p \u0111i\u1ec3m danh .attd.", L"\u5efa\u7acb\u3001\u7de8\u8f2f\u3001\u532f\u51fa\u3001\u5132\u5b58\u3001\u532f\u5165\u540c\u6279\u91cf\u6e05\u7406 .attd \u9ede\u540d\u8a18\u9304\u3002"},
@@ -884,6 +911,12 @@ bool TranslateAdditionalLanguage(const std::wstring& key, std::wstring& out) {
     };
 
     static const Entry entries[] = {
+        {L"Attendance Files", L"File presenze", L"\u0418\u0440\u0446\u0438\u0439\u043d \u0444\u0430\u0439\u043b\u0443\u0443\u0434", L"\u0108eestdosieroj", L"\u9ede\u540d\u6a94", L"\u0e44\u0e1f\u0e25\u0e4c\u0e40\u0e0a\u0e47\u0e01\u0e0a\u0e37\u0e48\u0e2d", L"Mga file ng attendance", L"Yoklama dosyalar\u0131", L"Lankomumo failai"},
+        {L"All Files", L"Tutti i file", L"\u0411\u04af\u0445 \u0444\u0430\u0439\u043b", L"\u0108iuj dosieroj", L"\u8af8\u6a94", L"\u0e44\u0e1f\u0e25\u0e4c\u0e17\u0e31\u0e49\u0e07\u0e2b\u0e21\u0e14", L"Lahat ng file", L"T\u00fcm dosyalar", L"Visi failai"},
+        {L"CSV Files", L"File CSV", L"CSV \u0444\u0430\u0439\u043b\u0443\u0443\u0434", L"CSV-dosieroj", L"CSV\u6a94", L"\u0e44\u0e1f\u0e25\u0e4c CSV", L"Mga CSV file", L"CSV dosyalar\u0131", L"CSV failai"},
+        {L"Text Files", L"File di testo", L"\u0422\u0435\u043a\u0441\u0442 \u0444\u0430\u0439\u043b\u0443\u0443\u0434", L"Tekstdosieroj", L"\u6587\u672c\u6a94", L"\u0e44\u0e1f\u0e25\u0e4c\u0e02\u0e49\u0e2d\u0e04\u0e27\u0e32\u0e21", L"Mga text file", L"Metin dosyalar\u0131", L"Teksto failai"},
+        {L"HTML Files", L"File HTML", L"HTML \u0444\u0430\u0439\u043b\u0443\u0443\u0434", L"HTML-dosieroj", L"HTML\u6a94", L"\u0e44\u0e1f\u0e25\u0e4c HTML", L"Mga HTML file", L"HTML dosyalar\u0131", L"HTML failai"},
+        {L"PowerPoint Files", L"File PowerPoint", L"PowerPoint \u0444\u0430\u0439\u043b\u0443\u0443\u0434", L"PowerPoint-dosieroj", L"PowerPoint\u6a94", L"\u0e44\u0e1f\u0e25\u0e4c PowerPoint", L"Mga PowerPoint file", L"PowerPoint dosyalar\u0131", L"PowerPoint failai"},
         {L"AttendanceApp - .attd Roll Call Manager", L"AttendanceApp - Gestore appello .attd", L"AttendanceApp - .attd \u0438\u0440\u0446\u0438\u0439\u043d \u043c\u0435\u043d\u0435\u0436\u0435\u0440", L"AttendanceApp - .attd \u0109eestadministrilo", L"AttendanceApp - \u9ede\u540d\u7c3f", L"AttendanceApp - \u0e15\u0e31\u0e27\u0e08\u0e31\u0e14\u0e01\u0e32\u0e23\u0e40\u0e0a\u0e47\u0e01\u0e0a\u0e37\u0e48\u0e2d .attd", L"AttendanceApp - tagapamahala ng roll call .attd", L"AttendanceApp - .attd yoklama y\u00f6neticisi", L"AttendanceApp - .attd lankomumo valdiklis"},
         {L"Attendance Manager", L"Gestore presenze", L"\u0418\u0440\u0446\u0438\u0439\u043d \u043c\u0435\u043d\u0435\u0436\u0435\u0440", L"\u0108eestadministrilo", L"\u9ede\u540d\u7ba1\u7406", L"\u0e08\u0e31\u0e14\u0e01\u0e32\u0e23\u0e01\u0e32\u0e23\u0e40\u0e0a\u0e47\u0e01\u0e0a\u0e37\u0e48\u0e2d", L"Tagapamahala ng attendance", L"Yoklama y\u00f6neticisi", L"Lankomumo valdiklis"},
         {L"Create, edit, export, save, import, and batch clean .attd roll calls.", L"Crea, modifica, esporta, salva, importa e pulisci appelli .attd.", L".attd \u0438\u0440\u0446\u0438\u0439\u0433 \u04af\u04af\u0441\u0433\u044d\u0445, \u0437\u0430\u0441\u0430\u0445, \u044d\u043a\u0441\u043f\u043e\u0440\u0442, \u0445\u0430\u0434\u0433\u0430\u043b\u0430\u0445, \u0438\u043c\u043f\u043e\u0440\u0442 \u0445\u0438\u0439\u0445.", L"Kreu, redaktu, eksportu, konservu kaj importu .attd \u0109eestojn.", L"\u5efa\u7c3f\u3001\u7de8\u8f2f\u3001\u532f\u51fa\u3001\u5132\u5b58\u3001\u532f\u5165\u3001\u6279\u6e05 .attd \u9ede\u540d\u3002", L"\u0e2a\u0e23\u0e49\u0e32\u0e07 \u0e41\u0e01\u0e49\u0e44\u0e02 \u0e2a\u0e48\u0e07\u0e2d\u0e2d\u0e01 \u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01 \u0e19\u0e33\u0e40\u0e02\u0e49\u0e32 \u0e41\u0e25\u0e30\u0e25\u0e49\u0e32\u0e07 .attd", L"Gumawa, mag-edit, mag-export, mag-save, mag-import, at maglinis ng .attd.", L".attd yoklamalar\u0131 olu\u015ftur, d\u00fczenle, d\u0131\u015fa aktar, kaydet ve i\u00e7e aktar.", L"Kurkite, taisykite, eksportuokite, saugokite ir importuokite .attd lankomum\u0105."},
@@ -1009,6 +1042,12 @@ std::wstring Tr(const wchar_t* english, const wchar_t*) {
     };
 
     static const Entry entries[] = {
+        {L"Attendance Files", L"\u70b9\u540d\u6587\u4ef6", L"Fajls tal-attendenza", L"\u51fa\u5e2d\u30d5\u30a1\u30a4\u30eb", L"Fichiers de pr\u00e9sence", L"Anwesenheitsdateien", L"\u0424\u0430\u0439\u043b\u044b \u043f\u043e\u0441\u0435\u0449\u0430\u0435\u043c\u043e\u0441\u0442\u0438", L"\u9ede\u540d\u6a94\u6848", L"Archivos de asistencia"},
+        {L"All Files", L"\u6240\u6709\u6587\u4ef6", L"Il-fajls kollha", L"\u3059\u3079\u3066\u306e\u30d5\u30a1\u30a4\u30eb", L"Tous les fichiers", L"Alle Dateien", L"\u0412\u0441\u0435 \u0444\u0430\u0439\u043b\u044b", L"\u6240\u6709\u6a94\u6848", L"Todos los archivos"},
+        {L"CSV Files", L"CSV \u6587\u4ef6", L"Fajls CSV", L"CSV\u30d5\u30a1\u30a4\u30eb", L"Fichiers CSV", L"CSV-Dateien", L"CSV \u0444\u0430\u0439\u043b\u044b", L"CSV \u6a94\u6848", L"Archivos CSV"},
+        {L"Text Files", L"\u6587\u672c\u6587\u4ef6", L"Fajls tat-test", L"\u30c6\u30ad\u30b9\u30c8\u30d5\u30a1\u30a4\u30eb", L"Fichiers texte", L"Textdateien", L"\u0422\u0435\u043a\u0441\u0442\u043e\u0432\u044b\u0435 \u0444\u0430\u0439\u043b\u044b", L"\u6587\u5b57\u6a94\u6848", L"Archivos de texto"},
+        {L"HTML Files", L"HTML \u6587\u4ef6", L"Fajls HTML", L"HTML\u30d5\u30a1\u30a4\u30eb", L"Fichiers HTML", L"HTML-Dateien", L"HTML \u0444\u0430\u0439\u043b\u044b", L"HTML \u6a94\u6848", L"Archivos HTML"},
+        {L"PowerPoint Files", L"PowerPoint \u6587\u4ef6", L"Fajls PowerPoint", L"PowerPoint\u30d5\u30a1\u30a4\u30eb", L"Fichiers PowerPoint", L"PowerPoint-Dateien", L"\u0424\u0430\u0439\u043b\u044b PowerPoint", L"PowerPoint \u6a94\u6848", L"Archivos de PowerPoint"},
         {L"AttendanceApp - .attd Roll Call Manager", L"AttendanceApp - .attd \u70b9\u540d\u7ba1\u7406\u5668", L"AttendanceApp - Mani\u0121er tal-Attendenza .attd", L"AttendanceApp - .attd \u51fa\u5e2d\u7ba1\u7406", L"AttendanceApp - Gestionnaire d'appel .attd", L"AttendanceApp - .attd Anwesenheitsmanager", L"AttendanceApp - \u0436\u0443\u0440\u043d\u0430\u043b .attd", L"AttendanceApp - .attd \u9ede\u540d\u7ba1\u7406\u5668", L"AttendanceApp - gestor de asistencia .attd"},
         {L"Attendance Manager", L"\u70b9\u540d\u7ba1\u7406\u5668", L"Mani\u0121er tal-Attendenza", L"\u51fa\u5e2d\u7ba1\u7406", L"Gestionnaire d'appel", L"Anwesenheitsmanager", L"\u0416\u0443\u0440\u043d\u0430\u043b \u043f\u043e\u0441\u0435\u0449\u0430\u0435\u043c\u043e\u0441\u0442\u0438", L"\u9ede\u540d\u7ba1\u7406\u5668", L"Gestor de asistencia"},
         {L"Create, edit, export, save, import, and batch clean .attd roll calls.", L"\u521b\u5efa\u3001\u7f16\u8f91\u3001\u5bfc\u51fa\u3001\u4fdd\u5b58\u3001\u5bfc\u5165\u5e76\u6279\u91cf\u6574\u7406 .attd \u70b9\u540d\u8bb0\u5f55\u3002", L"O\u0127loq, editja, esporta, issejvja, importa u naddaf re\u0121istri .attd.", L".attd \u306e\u51fa\u5e2d\u8a18\u9332\u3092\u4f5c\u6210\u3001\u7de8\u96c6\u3001\u30a8\u30af\u30b9\u30dd\u30fc\u30c8\u3001\u4fdd\u5b58\u3001\u30a4\u30f3\u30dd\u30fc\u30c8\u3001\u4e00\u62ec\u6574\u7406\u3002", L"Cr\u00e9er, modifier, exporter, enregistrer, importer et nettoyer les appels .attd.", L".attd-Anwesenheiten erstellen, bearbeiten, exportieren, speichern, importieren und bereinigen.", L"\u0421\u043e\u0437\u0434\u0430\u0432\u0430\u0439\u0442\u0435, \u0440\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u0443\u0439\u0442\u0435, \u044d\u043a\u0441\u043f\u043e\u0440\u0442\u0438\u0440\u0443\u0439\u0442\u0435 \u0438 \u0438\u043c\u043f\u043e\u0440\u0442\u0438\u0440\u0443\u0439\u0442\u0435 .attd.", L"\u5efa\u7acb\u3001\u7de8\u8f2f\u3001\u532f\u51fa\u3001\u5132\u5b58\u3001\u532f\u5165\u4e26\u6279\u6b21\u6574\u7406 .attd \u9ede\u540d\u8a18\u9304\u3002", L"Crea, edita, exporta, guarda, importa y limpia registros .attd."},
@@ -1986,7 +2025,12 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem>& items) {
     SetCapture(popup);
 
     MSG msg{};
-    while (!state.done && IsWindow(popup) && GetMessageW(&msg, nullptr, 0, 0) > 0) {
+    while (!state.done && IsWindow(popup)) {
+        int result = GetMessageW(&msg, nullptr, 0, 0);
+        if (result <= 0) {
+            if (result == 0) PostQuitMessage((int)msg.wParam);
+            break;
+        }
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
@@ -2407,12 +2451,28 @@ void ShowDeleteMenu(HWND button) {
     }
 }
 
+std::wstring BuildFileFilter(const std::vector<std::pair<std::wstring, std::wstring>>& entries) {
+    std::wstring filter;
+    for (const auto& entry : entries) {
+        filter += entry.first + L" (" + entry.second + L")";
+        filter.push_back(L'\0');
+        filter += entry.second;
+        filter.push_back(L'\0');
+    }
+    filter.push_back(L'\0');
+    return filter;
+}
+
 std::wstring SaveFileDialog() {
     wchar_t fileName[MAX_PATH] = L"attendance.attd";
+    std::wstring filter = BuildFileFilter({
+        {Tr(L"Attendance Files", L"\u70b9\u540d\u6587\u4ef6"), L"*.attd"},
+        {Tr(L"All Files", L"\u6240\u6709\u6587\u4ef6"), L"*.*"}
+    });
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = g_hwnd;
-    ofn.lpstrFilter = L"Attendance Files (*.attd)\0*.attd\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFilter = filter.c_str();
     ofn.lpstrFile = fileName;
     ofn.nMaxFile = MAX_PATH;
     ofn.lpstrDefExt = L"attd";
@@ -2423,10 +2483,14 @@ std::wstring SaveFileDialog() {
 
 std::wstring SaveCsvFileDialog() {
     wchar_t fileName[MAX_PATH] = L"attendance.csv";
+    std::wstring filter = BuildFileFilter({
+        {Tr(L"CSV Files", L"CSV \u6587\u4ef6"), L"*.csv"},
+        {Tr(L"All Files", L"\u6240\u6709\u6587\u4ef6"), L"*.*"}
+    });
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = g_hwnd;
-    ofn.lpstrFilter = L"CSV Files (*.csv)\0*.csv\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFilter = filter.c_str();
     ofn.lpstrFile = fileName;
     ofn.nMaxFile = MAX_PATH;
     ofn.lpstrDefExt = L"csv";
@@ -2437,10 +2501,14 @@ std::wstring SaveCsvFileDialog() {
 
 std::wstring OpenFileDialog() {
     wchar_t fileName[MAX_PATH] = L"";
+    std::wstring filter = BuildFileFilter({
+        {Tr(L"Attendance Files", L"\u70b9\u540d\u6587\u4ef6"), L"*.attd"},
+        {Tr(L"All Files", L"\u6240\u6709\u6587\u4ef6"), L"*.*"}
+    });
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = g_hwnd;
-    ofn.lpstrFilter = L"Attendance Files (*.attd)\0*.attd\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFilter = filter.c_str();
     ofn.lpstrFile = fileName;
     ofn.nMaxFile = MAX_PATH;
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
@@ -2449,10 +2517,15 @@ std::wstring OpenFileDialog() {
 
 std::wstring OpenCsvFileDialog() {
     wchar_t fileName[MAX_PATH] = L"";
+    std::wstring filter = BuildFileFilter({
+        {Tr(L"CSV Files", L"CSV \u6587\u4ef6"), L"*.csv"},
+        {Tr(L"Text Files", L"\u6587\u672c\u6587\u4ef6"), L"*.txt"},
+        {Tr(L"All Files", L"\u6240\u6709\u6587\u4ef6"), L"*.*"}
+    });
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = g_hwnd;
-    ofn.lpstrFilter = L"CSV Files (*.csv)\0*.csv\0Text Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFilter = filter.c_str();
     ofn.lpstrFile = fileName;
     ofn.nMaxFile = MAX_PATH;
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
@@ -2461,10 +2534,14 @@ std::wstring OpenCsvFileDialog() {
 
 std::wstring SaveHtmlFileDialog() {
     wchar_t fileName[MAX_PATH] = L"attendance-print.html";
+    std::wstring filter = BuildFileFilter({
+        {Tr(L"HTML Files", L"HTML \u6587\u4ef6"), L"*.html"},
+        {Tr(L"All Files", L"\u6240\u6709\u6587\u4ef6"), L"*.*"}
+    });
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = g_hwnd;
-    ofn.lpstrFilter = L"HTML Files (*.html)\0*.html\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFilter = filter.c_str();
     ofn.lpstrFile = fileName;
     ofn.nMaxFile = MAX_PATH;
     ofn.lpstrDefExt = L"html";
@@ -2475,10 +2552,14 @@ std::wstring SaveHtmlFileDialog() {
 
 std::wstring SavePptxFileDialog() {
     wchar_t fileName[MAX_PATH] = L"attendance-report.pptx";
+    std::wstring filter = BuildFileFilter({
+        {Tr(L"PowerPoint Files", L"PowerPoint \u6587\u4ef6"), L"*.pptx"},
+        {Tr(L"All Files", L"\u6240\u6709\u6587\u4ef6"), L"*.*"}
+    });
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = g_hwnd;
-    ofn.lpstrFilter = L"PowerPoint Files (*.pptx)\0*.pptx\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFilter = filter.c_str();
     ofn.lpstrFile = fileName;
     ofn.nMaxFile = MAX_PATH;
     ofn.lpstrDefExt = L"pptx";
@@ -3285,23 +3366,28 @@ void CreateRecordsFromRoster() {
         ShowMessage(Tr(L"No students in the roster.", L"\u540d\u5355\u4e2d\u6ca1\u6709\u5b66\u751f\u3002"));
         return;
     }
-    PushUndo();
-    MarkDirty();
     std::wstring dateTime = GetText(g_dateEdit);
     if (dateTime.empty()) dateTime = CurrentDateTimeText();
-    int added = 0;
+    std::vector<AttendanceRecord> created;
     for (const auto& student : students) {
         auto duplicate = std::find_if(g_records.begin(), g_records.end(), [&](const AttendanceRecord& record) {
             return record.name == student && record.dateTime == dateTime;
         });
-        if (duplicate == g_records.end()) {
-            g_records.push_back({dateTime, student, L"Absent", L""});
-            ++added;
+        auto pendingDuplicate = std::find_if(created.begin(), created.end(), [&](const AttendanceRecord& record) {
+            return record.name == student && record.dateTime == dateTime;
+        });
+        if (duplicate == g_records.end() && pendingDuplicate == created.end()) {
+            created.push_back({dateTime, student, L"Absent", L""});
         }
     }
-    RefreshList();
+    if (!created.empty()) {
+        PushUndo();
+        MarkDirty();
+        g_records.insert(g_records.end(), created.begin(), created.end());
+        RefreshList();
+    }
     std::wstringstream ss;
-    ss << Tr(L"Roster records created.", L"\u5df2\u4ece\u540d\u5355\u521b\u5efa\u70b9\u540d\u8bb0\u5f55\u3002") << L" (" << added << L")";
+    ss << Tr(L"Roster records created.", L"\u5df2\u4ece\u540d\u5355\u521b\u5efa\u70b9\u540d\u8bb0\u5f55\u3002") << L" (" << created.size() << L")";
     ShowMessage(ss.str());
 }
 
@@ -3377,6 +3463,13 @@ std::filesystem::path LatestBackupPath() {
     return AppDataFilePath(L"backup-latest.attd");
 }
 
+void ClearAutosaveFile() {
+    auto path = AppDataFilePath(L"autosave.attd");
+    if (path.empty()) return;
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+}
+
 void BackupNow() {
     SyncActiveSheet();
     auto path = LatestBackupPath();
@@ -3397,7 +3490,7 @@ void RestoreLatestBackup() {
         return;
     }
     if (!ConfirmDiscardUnsaved(Tr(L"Restore latest backup", L"\u6062\u590d\u6700\u65b0\u5907\u4efd"))) return;
-    LoadAttendanceFile(path.wstring(), true);
+    LoadAttendanceFile(path.wstring(), true, false);
 }
 
 void OpenRecentFile() {
@@ -3457,7 +3550,7 @@ void OpenAutosave() {
         return;
     }
     if (!ConfirmDiscardUnsaved(Tr(L"Open autosave", L"\u6253\u5f00\u81ea\u52a8\u4fdd\u5b58"))) return;
-    LoadAttendanceFile(path.wstring(), true);
+    LoadAttendanceFile(path.wstring(), true, false);
 }
 
 void PromptRestoreAutosave() {
@@ -3466,7 +3559,7 @@ void PromptRestoreAutosave() {
     std::wstring restoreMsg = Tr(L"An autosaved attendance file was found. Restore it now?", L"\u627e\u5230\u81ea\u52a8\u4fdd\u5b58\u7684\u70b9\u540d\u6587\u4ef6\u3002\u662f\u5426\u73b0\u5728\u6062\u590d\uff1f");
     std::wstring restoreTitle = Tr(L"Restore Autosave", L"\u6062\u590d\u81ea\u52a8\u4fdd\u5b58");
     if (ThemedConfirm(restoreTitle, restoreMsg)) {
-        LoadAttendanceFile(path.wstring(), false);
+        LoadAttendanceFile(path.wstring(), false, false);
     } else {
         g_allowAutosaveOverwrite = false;
     }
@@ -3666,11 +3759,12 @@ void SaveAttendance() {
     file << EncodeAttd(SerializeWorkbook());
     g_dirty = false;
     g_allowAutosaveOverwrite = true;
+    ClearAutosaveFile();
     SaveRecentFilePath(path);
     ShowMessage(Tr(L"Saved successfully.", L"\u4fdd\u5b58\u6210\u529f\u3002"));
 }
 
-bool LoadAttendanceFile(const std::wstring& path, bool showSuccess) {
+bool LoadAttendanceFile(const std::wstring& path, bool showSuccess, bool rememberRecent) {
     std::ifstream file(std::filesystem::path(path), std::ios::binary);
     if (!file) {
         ShowMessage(Tr(L"Could not open the file.", L"\u65e0\u6cd5\u6253\u5f00\u6587\u4ef6\u3002"));
@@ -3678,6 +3772,7 @@ bool LoadAttendanceFile(const std::wstring& path, bool showSuccess) {
     }
 
     std::string fileText((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    file.close();
     std::string plainText;
     std::vector<AttendanceSheet> imported;
     if (!DecodeAttd(fileText, plainText) || !DeserializeWorkbook(plainText, imported)) {
@@ -3692,7 +3787,8 @@ bool LoadAttendanceFile(const std::wstring& path, bool showSuccess) {
     g_redoStack.clear();
     g_dirty = false;
     g_allowAutosaveOverwrite = true;
-    SaveRecentFilePath(path);
+    ClearAutosaveFile();
+    if (rememberRecent) SaveRecentFilePath(path);
     RefreshCourseCombo();
     RefreshList();
     if (showSuccess) ShowMessage(Tr(L"Imported successfully.", L"\u5bfc\u5165\u6210\u529f\u3002"));
