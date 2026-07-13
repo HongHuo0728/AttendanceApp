@@ -24,6 +24,7 @@
 - `Create records from roster`: creates Absent attendance records for roster students at the current date/time.
 - `Create today's lesson`: creates a dated lesson for every roster student.
 - `Switch lesson`: filters the table to an existing lesson/date.
+- `Quick roll call`: opens a focused roster-by-roster attendance window for the lesson currently entered in Date/Time.
 - `Lesson completion check`: compares the current date/lesson with the roster and reports missing or duplicate records before attendance is finalized.
 - `Student profile`: summarizes one student's total, present, absent, late, and recent records.
 - `Advanced filter`: opens syntax help and edits the table filter.
@@ -37,7 +38,7 @@
 - `Undo` / `Redo`: restores recent changes.
 - `Keyboard shortcuts`: shows available shortcuts.
 - `Shortcut center`: edits key bindings such as `save=Ctrl+S` and `command=Ctrl+K`.
-- `Command palette`: runs common commands from a typed prompt, including `review` for the lesson completion check.
+- `Command palette`: runs common commands from a typed prompt, including `rollcall` or `点名` for Quick roll call and `review` for the lesson completion check.
 - `Backup now`: writes the latest backup to AppData.
 - `Backup manager`: restores from timestamped backup history.
 - `Restore latest backup`: restores the latest AppData backup.
@@ -45,6 +46,18 @@
 - `Set default save folder`: chooses the initial folder for save/export dialogs.
 - `Export database mirror`: writes a tab-separated database mirror to AppData.
 - `Open autosave`: opens the autosaved `.attd` file.
+
+## Quick Roll Call
+
+1. Select the course and enter the target lesson/date in the main Date/Time field.
+2. Open `Tools` -> `Quick roll call`, or press `Ctrl+K` and enter `rollcall` or `点名`.
+3. Mark the current student with `Present`, `Absent`, `Late`, or `Other`. `Other` requires a note.
+4. Use `Previous` to revisit the preceding student or `Skip` to leave the current record unchanged and continue.
+5. Select `Finish` to apply the session. If students remain unchecked, confirm whether to keep the partial results.
+
+Number keys `1` through `4` select Present, Absent, Late, and Other. Left Arrow moves to the previous student; Right Arrow skips forward. The window shows the existing unique record when one is available. Duplicate records for the same student and lesson must be resolved before the session can start.
+
+All applied changes from one Quick roll call session form a single undo step. `Ctrl+Z` therefore restores the entire session at once. `Cancel`, `Escape`, or closing the window discards the working copy and leaves the workbook unchanged.
 
 ## Settings
 
@@ -58,7 +71,7 @@ All settings apply immediately when you change a selection or switch. `Apply` sa
 - `Enable particle effects`: turns the click particle burst on or off. Disable it when you prefer a quieter interface or need the smallest rendering load.
 - `Enable risk student reminders`: allows the Tools menu to surface students with repeated absence or lateness.
 - `Prompt for autosave recovery`: checks for a recoverable autosave when the program starts, so unsaved work can be restored.
-- `Enable Ctrl+K command palette`: enables the quick command entry box. Use it for actions such as `save`, `backup`, `stats`, `lesson`, or `review`.
+- `Enable Ctrl+K command palette`: enables the quick command entry box. Use it for actions such as `save`, `backup`, `stats`, `lesson`, `rollcall`, `点名`, or `review`.
 - `Enable advanced filter syntax`: enables terms such as `name:`, `status:`, `from:`, `to:`, `thisweek`, and `thismonth` in the search field.
 
 ## Search / Filter

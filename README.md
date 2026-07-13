@@ -13,6 +13,7 @@ AttendanceApp is a standalone C++/Win32 desktop application for roll call and at
 - Import student rosters from CSV files.
 - Manage student roster entries and generate attendance records from the roster.
 - Create today's lesson from the roster and switch between lesson/date filters.
+- Run Quick roll call from the current course roster with number-key marking, previous/skip navigation, duplicate protection, partial-finish confirmation, and one-step undo.
 - Review lesson completion against the roster, including missing and duplicate attendance records.
 - Open per-student attendance profiles and risk-student summaries.
 - Use advanced filter syntax for names, status, course, date, and date ranges.
@@ -28,11 +29,11 @@ AttendanceApp is a standalone C++/Win32 desktop application for roll call and at
 - Undo/redo with editable keyboard shortcuts.
 - Graphical statistics chart window.
 - Statistics range controls for all records, this week, or this month.
-- Command palette for quick save/import/export/backup/statistics/settings actions and lesson review.
+- Command palette for quick save/import/export/backup/statistics/settings actions, lesson review, and `rollcall` / `点名` launch.
 - Database mirror export to `%APPDATA%\AttendanceApp\attendance.attddb`.
 - Persistent settings saved to `%APPDATA%\AttendanceApp\settings.ini`.
 - Pure-black interface theme, interface font selection, animation/particle intensity controls, and multilingual UI.
-- Bounded, scrollable Tools menu that keeps every action reachable on smaller screens.
+- Bounded, scrollable Tools menu with a local double-buffered refresh path, keyboard navigation, and a slim position indicator.
 - Supported languages: English, Simplified Chinese, Maltese, Japanese, French, German, Russian, Traditional Chinese Taiwan, Spanish, Italian, Mongolian, Esperanto, Classical Chinese, Thai, Filipino, Turkish, Lithuanian, Norwegian, Vietnamese, Traditional Chinese Hong Kong Cantonese.
 - Default window size: `1600x900`; resizable with `F11` fullscreen.
 
@@ -105,7 +106,7 @@ build\Release\AttendanceApp.exe
 5. Use `Save .attd` to save the attendance workbook.
 6. Use `Import .attd` to load a saved attendance workbook.
 7. Use the search box above the table to filter the current course by date, name, status, or notes.
-8. Use `Tools` for lesson workflows, roster management, course details, lesson completion checks, student profiles, advanced filters, report templates, print/PDF export, PowerPoint export, statistics, risk students, backup/restore, recent files, default save folder, autosave, command palette, shortcut editing, and database mirror export.
+8. Use `Tools` for Quick roll call, lesson workflows, roster management, course details, lesson completion checks, student profiles, advanced filters, report templates, print/PDF export, PowerPoint export, statistics, risk students, backup/restore, recent files, default save folder, autosave, command palette, shortcut editing, and database mirror export.
 
 ## Register `.attd` File Icon
 

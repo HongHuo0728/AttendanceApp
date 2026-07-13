@@ -130,6 +130,7 @@ static constexpr int IDM_REPORT_TEMPLATE = 3045;
 static constexpr int IDM_COMMAND_PALETTE = 3046;
 static constexpr int IDM_SHORTCUT_CENTER = 3047;
 static constexpr int IDM_LESSON_COMPLETION = 3048;
+static constexpr int IDM_QUICK_ROLL_CALL = 3049;
 
 static constexpr int IDC_SETTINGS_LANGUAGE = 4001;
 static constexpr int IDC_SETTINGS_THEME = 4002;
@@ -159,6 +160,23 @@ static constexpr int IDC_MESSAGE_TEXT = 6001;
 static constexpr int IDC_MESSAGE_YES = 6002;
 static constexpr int IDC_MESSAGE_NO = 6003;
 static constexpr int IDC_MESSAGE_OK = 6004;
+static constexpr int IDC_QUICK_TITLE = 7001;
+static constexpr int IDC_QUICK_COURSE = 7002;
+static constexpr int IDC_QUICK_LESSON = 7003;
+static constexpr int IDC_QUICK_PROGRESS = 7004;
+static constexpr int IDC_QUICK_STUDENT = 7005;
+static constexpr int IDC_QUICK_STATUS = 7006;
+static constexpr int IDC_QUICK_NOTES_LABEL = 7007;
+static constexpr int IDC_QUICK_NOTES = 7008;
+static constexpr int IDC_QUICK_PRESENT = 7009;
+static constexpr int IDC_QUICK_ABSENT = 7010;
+static constexpr int IDC_QUICK_LATE = 7011;
+static constexpr int IDC_QUICK_OTHER = 7012;
+static constexpr int IDC_QUICK_PREVIOUS = 7013;
+static constexpr int IDC_QUICK_SKIP = 7014;
+static constexpr int IDC_QUICK_FINISH = 7015;
+static constexpr int IDC_QUICK_CANCEL = 7016;
+static constexpr int IDC_QUICK_HINT = 7017;
 
 static HWND g_hwnd = nullptr;
 static HWND g_dateEdit = nullptr;
@@ -169,6 +187,7 @@ static HWND g_courseCombo = nullptr;
 static HWND g_filterEdit = nullptr;
 static HWND g_settingsWindow = nullptr;
 static HWND g_chartWindow = nullptr;
+static HWND g_quickRollCallWindow = nullptr;
 static HFONT g_font = nullptr;
 static HFONT g_titleFont = nullptr;
 static HFONT g_smallFont = nullptr;
@@ -213,6 +232,17 @@ struct MessageDialogState {
     bool yesNo = false;
     int result = IDOK;
     bool done = false;
+};
+
+struct QuickRollCallState {
+    std::wstring lesson;
+    std::wstring course;
+    std::vector<std::wstring> students;
+    std::vector<AttendanceRecord> workingRecords;
+    std::vector<bool> reviewed;
+    size_t index = 0;
+    bool changed = false;
+    bool allowClose = false;
 };
 
 enum class UiLanguage {
@@ -310,6 +340,8 @@ struct ButtonParticle {
 struct ButtonEffectState {
     POINT origin{};
     uint64_t startMs = 0;
+    uint32_t durationMs = 0;
+    bool rippleEnabled = true;
     std::vector<ButtonParticle> particles;
 };
 
@@ -344,6 +376,7 @@ void ExportCsv();
 void BackupNow();
 void ShowSettingsWindow();
 void ReviewLessonCompletion();
+void ShowQuickRollCall();
 void StartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t durationMs = 160, bool closeOnDone = false);
 void RestartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t durationMs = 220);
 double GetAnimationValue(HWND hwnd, AnimChannel channel, double fallback = 0.0);
@@ -396,7 +429,10 @@ struct ThemedMenuState {
     int maxScrollY = 0;
     int mainScrollX = 0;
     int mainScrollY = 0;
+    POINT lastMouse{};
     bool scrollable = false;
+    bool keyboardMode = false;
+    bool hasMousePoint = false;
     bool done = false;
     bool closing = false;
 };
@@ -405,7 +441,6 @@ static constexpr int THEMED_MENU_PAD_Y = 8;
 static constexpr int THEMED_MENU_ITEM_H = 34;
 static constexpr int THEMED_MENU_SEPARATOR_H = 13;
 static constexpr int THEMED_MENU_SLIDE_PX = 5;
-static constexpr int THEMED_MENU_SCROLL_HINT_H = 22;
 // Keep the long Tools menu compact; the remaining actions stay reachable by wheel/keyboard scroll.
 static constexpr int THEMED_MENU_MAX_H = 520;
 
@@ -539,7 +574,10 @@ void StopAnimationThread() {
     if (g_animationThread.joinable()) g_animationThread.join();
 }
 
-uint32_t EffectiveAnimationDuration(uint32_t durationMs) {
+uint32_t EffectiveAnimationDuration(AnimChannel channel, uint32_t durationMs) {
+    // Particle frames must follow their physical lifetime, independently of
+    // the interface animation preset. Shortening this channel freezes effects.
+    if (channel == AnimChannel::Effect) return durationMs;
     if (g_animationLevel == AnimationLevel::Off) return 0;
     if (g_animationLevel == AnimationLevel::Standard) return std::min<uint32_t>(durationMs, 160);
     return durationMs;
@@ -547,7 +585,7 @@ uint32_t EffectiveAnimationDuration(uint32_t durationMs) {
 
 void StartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t durationMs, bool closeOnDone) {
     if (!hwnd) return;
-    durationMs = EffectiveAnimationDuration(durationMs);
+    durationMs = EffectiveAnimationDuration(channel, durationMs);
     EnsureAnimationThread();
     std::lock_guard<std::mutex> lock(g_animMutex);
     AnimValue& anim = g_animations[hwnd][(int)channel];
@@ -566,7 +604,7 @@ void StartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t dura
 
 void RestartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t durationMs) {
     if (!hwnd) return;
-    durationMs = EffectiveAnimationDuration(durationMs);
+    durationMs = EffectiveAnimationDuration(channel, durationMs);
     EnsureAnimationThread();
     std::lock_guard<std::mutex> lock(g_animMutex);
     AnimValue& anim = g_animations[hwnd][(int)channel];
@@ -625,10 +663,32 @@ void ApplyGlassTitleBar(HWND hwnd) {
     DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
 }
 
+void CenterOwnedWindow(HWND window, HWND owner) {
+    if (!window) return;
+    RECT windowRc{};
+    if (!GetWindowRect(window, &windowRc)) return;
+
+    HMONITOR monitor = MonitorFromWindow(owner && IsWindow(owner) ? owner : window, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    if (!GetMonitorInfoW(monitor, &mi)) return;
+
+    RECT anchor = mi.rcWork;
+    if (owner && IsWindow(owner)) GetWindowRect(owner, &anchor);
+    int width = windowRc.right - windowRc.left;
+    int height = windowRc.bottom - windowRc.top;
+    int x = anchor.left + ((anchor.right - anchor.left) - width) / 2;
+    int y = anchor.top + ((anchor.bottom - anchor.top) - height) / 2;
+    x = std::clamp(x, (int)mi.rcWork.left, std::max((int)mi.rcWork.left, (int)mi.rcWork.right - width));
+    y = std::clamp(y, (int)mi.rcWork.top, std::max((int)mi.rcWork.top, (int)mi.rcWork.bottom - height));
+    SetWindowPos(window, nullptr, x, y, 0, 0,
+        SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+}
+
 void StartListTransition() {
     if (!g_list) return;
     RestartAnimation(g_list, AnimChannel::ListReveal, 1.0, 260);
-    RedrawWindow(g_list, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME);
+    RedrawWindow(g_list, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_NOERASE);
 }
 
 LRESULT HandleListCustomDraw(LPARAM lParam) {
@@ -660,10 +720,10 @@ void SetStaticTextClean(HWND hwnd, const std::wstring& text) {
     RECT rc{};
     if (parent && GetWindowRect(hwnd, &rc)) {
         MapWindowPoints(nullptr, parent, reinterpret_cast<POINT*>(&rc), 2);
-        InvalidateRect(parent, &rc, TRUE);
+        RedrawWindow(parent, &rc, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
     }
     SetWindowTextW(hwnd, text.c_str());
-    InvalidateRect(hwnd, nullptr, TRUE);
+    InvalidateRect(hwnd, nullptr, FALSE);
     UpdateWindow(hwnd);
 }
 
@@ -1008,7 +1068,7 @@ void EnableMouseWheelForward(HWND hwnd) {
 }
 
 void RedrawAnimatedControl(HWND hwnd) {
-    RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_UPDATENOW);
+    RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_UPDATENOW | RDW_NOERASE);
 }
 
 void DrawAnimatedEditFrame(HWND hwnd) {
@@ -1168,6 +1228,7 @@ LRESULT CALLBACK MessageDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         }
         ApplyThemedControls(hwnd);
         ResizeMessageDialog(hwnd);
+        SetFocus(GetDlgItem(hwnd, state->yesNo ? IDC_MESSAGE_NO : IDC_MESSAGE_OK));
         return 0;
     }
     case WM_SIZE:
@@ -1209,8 +1270,9 @@ LRESULT CALLBACK MessageDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
     case WM_CTLCOLORSTATIC: {
         HDC hdc = (HDC)wParam;
         SetTextColor(hdc, COLOR_TEXT);
-        SetBkMode(hdc, TRANSPARENT);
-        return (LRESULT)GetStockObject(HOLLOW_BRUSH);
+        SetBkMode(hdc, OPAQUE);
+        SetBkColor(hdc, COLOR_BG);
+        return (LRESULT)g_bgBrush;
     }
     case WM_PAINT: {
         PAINTSTRUCT ps{};
@@ -1264,7 +1326,7 @@ int ThemedMessageBox(HWND owner, const std::wstring& message, const std::wstring
         WS_EX_CONTROLPARENT,
         className,
         title.c_str(),
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT, dialogSize.cx, dialogSize.cy,
         parent, nullptr, instance, &state
     );
@@ -1276,13 +1338,30 @@ int ThemedMessageBox(HWND owner, const std::wstring& message, const std::wstring
     BOOL dark = TRUE;
     DwmSetWindowAttribute(dialog, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
     ApplyGlassTitleBar(dialog);
+    CenterOwnedWindow(dialog, parent);
     ShowWindow(dialog, SW_SHOW);
     UpdateWindow(dialog);
+    SetFocus(GetDlgItem(dialog, state.yesNo ? IDC_MESSAGE_NO : IDC_MESSAGE_OK));
 
     MSG msg{};
     while (!state.done && IsWindow(dialog) && GetMessageW(&msg, nullptr, 0, 0) > 0) {
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
+        if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE) {
+            SendMessageW(dialog, WM_CLOSE, 0, 0);
+            continue;
+        }
+        if (msg.message == WM_KEYDOWN && msg.wParam == VK_RETURN) {
+            HWND focused = GetFocus();
+            int id = focused && IsChild(dialog, focused) ? GetDlgCtrlID(focused) : 0;
+            if (id != IDC_MESSAGE_YES && id != IDC_MESSAGE_NO && id != IDC_MESSAGE_OK) {
+                id = state.yesNo ? IDC_MESSAGE_NO : IDC_MESSAGE_OK;
+            }
+            SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(id, BN_CLICKED), (LPARAM)GetDlgItem(dialog, id));
+            continue;
+        }
+        if (!IsDialogMessageW(dialog, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
     }
     if (IsWindow(dialog)) DestroyWindow(dialog);
     if (parent) {
@@ -1368,8 +1447,9 @@ LRESULT CALLBACK InputDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
     case WM_CTLCOLORSTATIC: {
         HDC hdc = (HDC)wParam;
         SetTextColor(hdc, COLOR_TEXT);
-        SetBkMode(hdc, TRANSPARENT);
-        return (LRESULT)GetStockObject(HOLLOW_BRUSH);
+        SetBkMode(hdc, OPAQUE);
+        SetBkColor(hdc, COLOR_BG);
+        return (LRESULT)g_bgBrush;
     }
     case WM_CTLCOLOREDIT: {
         HDC hdc = (HDC)wParam;
@@ -1412,7 +1492,7 @@ bool PromptText(const std::wstring& title, const std::wstring& prompt, std::wstr
         WS_EX_CONTROLPARENT,
         className,
         title.c_str(),
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT, 430, 190,
         g_hwnd, nullptr, instance, &state
     );
@@ -1422,11 +1502,18 @@ bool PromptText(const std::wstring& title, const std::wstring& prompt, std::wstr
     }
     ApplyGlassTitleBar(dialog);
     ApplyThemedControls(dialog);
+    CenterOwnedWindow(dialog, g_hwnd);
     ShowWindow(dialog, SW_SHOW);
     UpdateWindow(dialog);
 
     MSG msg{};
     while (IsWindow(dialog) && GetMessageW(&msg, nullptr, 0, 0)) {
+        if (msg.message == WM_KEYDOWN && (msg.hwnd == dialog || IsChild(dialog, msg.hwnd))) {
+            if (msg.wParam == VK_RETURN || msg.wParam == VK_ESCAPE) {
+                SendMessageW(dialog, WM_KEYDOWN, msg.wParam, msg.lParam);
+                continue;
+            }
+        }
         if (!IsDialogMessageW(dialog, &msg)) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
@@ -1523,6 +1610,26 @@ bool TranslateFeatureText(const std::wstring& key, std::wstring& out) {
         {L"Lesson name:", L"课次名称：", L"Isem tal-lezzjoni:", L"授業名:", L"Nom de la séance :", L"Name der Unterrichtsstunde:", L"Название урока:", L"課次名稱：", L"Nombre de la clase:", L"Nome della lezione:", L"Хичээлийн нэр:", L"Leciona nomo:", L"課名：", L"ชื่อคาบเรียน:", L"Pangalan ng aralin:", L"Ders adı:", L"Pamokos pavadinimas:", L"Øktnavn:", L"Tên buổi học:", L"課堂名稱："},
         {L"Recent history", L"最近记录", L"Storja riċenti", L"最近の履歴", L"Historique récent", L"Letzte Historie", L"Недавняя история", L"最近紀錄", L"Historial reciente", L"Cronologia recente", L"Сүүлийн түүх", L"Lastatempa historio", L"近錄", L"ประวัติล่าสุด", L"Kamakailang kasaysayan", L"Son geçmiş", L"Naujausia istorija", L"Nylig historikk", L"Lịch sử gần đây", L"最近紀錄"},
         {L"Lesson completion check", L"课次完成检查", L"Kontroll tat-tlestija tal-lezzjoni", L"授業完了チェック", L"Vérification de séance", L"Unterrichtsprüfung", L"Проверка урока", L"課次完成檢查", L"Comprobación de clase", L"Controllo lezione", L"Хичээлийн шалгалт", L"Leciona kompletiga kontrolo", L"課成檢", L"ตรวจสอบความครบถ้วนของคาบ", L"Pagsusuri ng aralin", L"Ders tamamlama denetimi", L"Pamokos patikra", L"Kontroll av økt", L"Kiểm tra buổi học", L"課堂完成檢查"},
+        {L"Quick roll call", L"快速点名", L"Sejħa rapida", L"クイック点呼", L"Appel rapide", L"Schnelle Anwesenheit", L"Быстрая перекличка", L"快速點名", L"Pase de lista rápido", L"Appello rapido", L"Шуурхай бүртгэл", L"Rapida nomvoko", L"速點", L"เช็กชื่อด่วน", L"Mabilis na roll call", L"Hızlı yoklama", L"Greita patikra", L"Hurtig opprop", L"Điểm danh nhanh", L"快速點名"},
+        {L"Reviewed", L"已检查", L"Iċċekkjati", L"確認済み", L"Vérifiés", L"Geprüft", L"Проверено", L"已檢查", L"Revisados", L"Verificati", L"Шалгасан", L"Kontrolitaj", L"已檢", L"ตรวจแล้ว", L"Nasuri", L"İncelenen", L"Patikrinta", L"Kontrollert", L"Đã kiểm tra", L"已檢查"},
+        {L"Remaining", L"剩余", L"Fadal", L"残り", L"Restants", L"Verbleibend", L"Осталось", L"剩餘", L"Restantes", L"Rimanenti", L"Үлдсэн", L"Restantaj", L"餘", L"คงเหลือ", L"Natitira", L"Kalan", L"Liko", L"Gjenstår", L"Còn lại", L"剩餘"},
+        {L"Course:", L"课程：", L"Kors:", L"コース：", L"Cours :", L"Kurs:", L"Курс:", L"課程：", L"Curso:", L"Corso:", L"Хичээл:", L"Kurso:", L"課程：", L"รายวิชา:", L"Kurso:", L"Ders:", L"Kursas:", L"Kurs:", L"Khóa học:", L"課程："},
+        {L"Lesson:", L"课次：", L"Lezzjoni:", L"授業：", L"Séance :", L"Unterricht:", L"Урок:", L"課次：", L"Clase:", L"Lezione:", L"Хичээл:", L"Leciono:", L"課：", L"คาบเรียน:", L"Aralin:", L"Ders:", L"Pamoka:", L"Økt:", L"Buổi học:", L"課堂："},
+        {L"Current status:", L"当前状态：", L"Status kurrenti:", L"現在の状態：", L"Statut actuel :", L"Aktueller Status:", L"Текущий статус:", L"目前狀態：", L"Estado actual:", L"Stato attuale:", L"Одоогийн төлөв:", L"Nuna stato:", L"今態：", L"สถานะปัจจุบัน:", L"Kasalukuyang katayuan:", L"Geçerli durum:", L"Dabartinė būsena:", L"Gjeldende status:", L"Trạng thái hiện tại:", L"目前狀態："},
+        {L"Unmarked", L"未标记", L"Mhux immarkat", L"未マーク", L"Non marqué", L"Nicht markiert", L"Не отмечено", L"未標記", L"Sin marcar", L"Non segnato", L"Тэмдэглээгүй", L"Nemarkita", L"未標", L"ยังไม่ระบุ", L"Hindi pa namarkahan", L"İşaretlenmedi", L"Nepažymėta", L"Ikke markert", L"Chưa đánh dấu", L"未標記"},
+        {L"Notes:", L"备注：", L"Noti:", L"メモ：", L"Notes :", L"Notizen:", L"Примечания:", L"備註：", L"Notas:", L"Note:", L"Тэмдэглэл:", L"Notoj:", L"註：", L"หมายเหตุ:", L"Tala:", L"Notlar:", L"Pastabos:", L"Merknader:", L"Ghi chú:", L"備註："},
+        {L"Previous", L"上一位", L"Preċedenti", L"前へ", L"Précédent", L"Zurück", L"Предыдущий", L"上一位", L"Anterior", L"Precedente", L"Өмнөх", L"Antaŭa", L"前", L"ก่อนหน้า", L"Nakaraan", L"Önceki", L"Ankstesnis", L"Forrige", L"Trước", L"上一位"},
+        {L"Skip", L"跳过", L"Aqbeż", L"スキップ", L"Passer", L"Überspringen", L"Пропустить", L"略過", L"Omitir", L"Salta", L"Алгасах", L"Preterlasi", L"略", L"ข้าม", L"Laktawan", L"Atla", L"Praleisti", L"Hopp over", L"Bỏ qua", L"略過"},
+        {L"Finish", L"完成", L"Lesti", L"完了", L"Terminer", L"Fertig", L"Завершить", L"完成", L"Finalizar", L"Termina", L"Дуусгах", L"Fini", L"畢", L"เสร็จสิ้น", L"Tapusin", L"Bitir", L"Baigti", L"Fullfør", L"Hoàn tất", L"完成"},
+        {L"Cancel", L"取消", L"Ikkanċella", L"キャンセル", L"Annuler", L"Abbrechen", L"Отмена", L"取消", L"Cancelar", L"Annulla", L"Цуцлах", L"Nuligi", L"罷", L"ยกเลิก", L"Kanselahin", L"İptal", L"Atšaukti", L"Avbryt", L"Hủy", L"取消"},
+        {L"No students in the roster.", L"当前课程名单中没有学生。", L"M'hemmx studenti fil-lista.", L"名簿に生徒がいません。", L"La liste ne contient aucun élève.", L"Die Liste enthält keine Schüler.", L"В списке нет учащихся.", L"目前課程名單中沒有學生。", L"No hay estudiantes en la lista.", L"Nessuno studente nell'elenco.", L"Жагсаалтад сурагч алга.", L"Neniuj lernantoj en la listo.", L"名簿無生。", L"ไม่มีนักเรียนในรายชื่อ", L"Walang estudyante sa talaan.", L"Listede öğrenci yok.", L"Sąraše nėra mokinių.", L"Ingen elever i listen.", L"Không có học sinh trong danh sách.", L"目前課程名單中沒有學生。"},
+        {L"Other status requires a note.", L"选择其他状态时必须填写备注。", L"L-istatus Ieħor jeħtieġ nota.", L"その他にはメモが必要です。", L"Le statut Autre exige une note.", L"Für Sonstiges ist eine Notiz erforderlich.", L"Для статуса Другое нужна заметка.", L"選擇其他狀態時必須填寫備註。", L"El estado Otro requiere una nota.", L"Lo stato Altro richiede una nota.", L"Бусад төлөвт тэмдэглэл шаардлагатай.", L"Alia stato postulas noton.", L"他態須註。", L"สถานะอื่นต้องมีหมายเหตุ", L"Kailangan ng tala para sa Iba pa.", L"Diğer durumu için not gerekir.", L"Būsenai Kita reikia pastabos.", L"Annen status krever merknad.", L"Trạng thái Khác cần ghi chú.", L"其他狀態必須填寫備註。"},
+        {L"Duplicate lesson records must be resolved before quick roll call.", L"开始快速点名前必须先处理重复课次记录。", L"Ir-rekords duplikati għandhom jiġu solvuti qabel is-sejħa rapida.", L"クイック点呼の前に重複記録を解決してください。", L"Corrigez les doublons avant l'appel rapide.", L"Doppelte Einträge müssen vorher bereinigt werden.", L"Перед перекличкой устраните дубликаты.", L"快速點名前必須先處理重複課次紀錄。", L"Resuelva los registros duplicados antes del pase rápido.", L"Risolvi i record duplicati prima dell'appello rapido.", L"Шуурхай бүртгэлээс өмнө давхардлыг засна уу.", L"Solvu duoblajn registrojn antaŭ la rapida nomvoko.", L"速點前必去重錄。", L"ต้องแก้ไขรายการซ้ำก่อนเช็กชื่อด่วน", L"Ayusin muna ang dobleng tala bago ang mabilis na roll call.", L"Hızlı yoklamadan önce yinelenen kayıtları çözün.", L"Prieš greitą patikrą pašalinkite dublikatus.", L"Løs duplikater før hurtig opprop.", L"Hãy xử lý bản ghi trùng trước khi điểm danh nhanh.", L"快速點名前必須先處理重複課堂紀錄。"},
+        {L"Discard quick roll call changes?", L"放弃本次快速点名的修改吗？", L"Twarrab il-bidliet tas-sejħa rapida?", L"クイック点呼の変更を破棄しますか？", L"Abandonner les modifications de l'appel rapide ?", L"Änderungen der Schnellkontrolle verwerfen?", L"Отменить изменения быстрой переклички?", L"放棄本次快速點名的修改嗎？", L"¿Descartar los cambios del pase rápido?", L"Scartare le modifiche dell'appello rapido?", L"Шуурхай бүртгэлийн өөрчлөлтийг цуцлах уу?", L"Forĵeti la ŝanĝojn de rapida nomvoko?", L"棄速點之改乎？", L"ยกเลิกการเปลี่ยนแปลงเช็กชื่อด่วนหรือไม่", L"Itapon ang mga pagbabago sa mabilis na roll call?", L"Hızlı yoklama değişiklikleri atılsın mı?", L"Atmesti greitos patikros pakeitimus?", L"Forkaste endringer fra hurtig opprop?", L"Hủy thay đổi điểm danh nhanh?", L"放棄本次快速點名的修改嗎？"},
+        {L"students have not been reviewed. Finish and keep the partial results?", L"名学生尚未检查。是否完成并保留部分结果？", L"studenti għadhom ma ġewx iċċekkjati. Tispiċċa u żżomm ir-riżultati parzjali?", L"名が未確認です。部分結果を保持して完了しますか？", L"élèves restent à vérifier. Terminer et conserver les résultats partiels ?", L"Schüler sind ungeprüft. Beenden und Teilergebnisse behalten?", L"учащихся не проверено. Завершить и сохранить частичные результаты?", L"名學生尚未檢查。是否完成並保留部分結果？", L"estudiantes no han sido revisados. ¿Finalizar y conservar los resultados parciales?", L"studenti non sono stati verificati. Terminare e conservare i risultati parziali?", L"сурагч шалгагдаагүй. Дуусгаж хэсэгчилсэн үр дүнг хадгалах уу?", L"lernantoj ne estas kontrolitaj. Fini kaj konservi la partajn rezultojn?", L"生未檢。畢而存其半果乎？", L"คนยังไม่ได้ตรวจ จะเสร็จสิ้นและเก็บผลบางส่วนหรือไม่", L"estudyante ang hindi pa nasuri. Tapusin at panatilihin ang bahagyang resulta?", L"öğrenci incelenmedi. Bitirip kısmi sonuçlar tutulsun mu?", L"mokiniai nepatikrinti. Baigti ir palikti dalinius rezultatus?", L"elever er ikke kontrollert. Fullføre og beholde delresultatene?", L"học sinh chưa được kiểm tra. Hoàn tất và giữ kết quả một phần?", L"名學生尚未檢查。是否完成並保留部分結果？"},
+        {L"Quick roll call changes were applied.", L"快速点名修改已应用。", L"Il-bidliet tas-sejħa rapida ġew applikati.", L"クイック点呼の変更を適用しました。", L"Les modifications de l'appel rapide ont été appliquées.", L"Die Änderungen wurden übernommen.", L"Изменения быстрой переклички применены.", L"快速點名修改已套用。", L"Se aplicaron los cambios del pase rápido.", L"Le modifiche dell'appello rapido sono state applicate.", L"Шуурхай бүртгэлийн өөрчлөлтийг хэрэгжүүллээ.", L"La ŝanĝoj de rapida nomvoko estis aplikitaj.", L"速點之改已施。", L"ใช้การเปลี่ยนแปลงเช็กชื่อด่วนแล้ว", L"Nailapat ang mga pagbabago sa mabilis na roll call.", L"Hızlı yoklama değişiklikleri uygulandı.", L"Greitos patikros pakeitimai pritaikyti.", L"Endringene fra hurtig opprop er brukt.", L"Đã áp dụng thay đổi điểm danh nhanh.", L"快速點名修改已套用。"},
+        {L"Keyboard: 1 Present, 2 Absent, 3 Late, 4 Other, Left Previous, Right Skip", L"键盘：1 出席，2 缺席，3 迟到，4 其他，左方向键上一位，右方向键跳过", L"Tastiera: 1 Preżenti, 2 Assenti, 3 Tard, 4 Ieħor, Xellug Qabel, Lemin Aqbeż", L"キー：1 出席、2 欠席、3 遅刻、4 その他、左 前へ、右 スキップ", L"Clavier : 1 Présent, 2 Absent, 3 Retard, 4 Autre, Gauche Précédent, Droite Passer", L"Tasten: 1 Anwesend, 2 Abwesend, 3 Verspätet, 4 Sonstiges, Links Zurück, Rechts Überspringen", L"Клавиши: 1 Присутствует, 2 Отсутствует, 3 Опоздал, 4 Другое, Влево Назад, Вправо Пропустить", L"鍵盤：1 出席，2 缺席，3 遲到，4 其他，左鍵上一位，右鍵略過", L"Teclado: 1 Presente, 2 Ausente, 3 Tarde, 4 Otro, Izquierda Anterior, Derecha Omitir", L"Tasti: 1 Presente, 2 Assente, 3 Ritardo, 4 Altro, Sinistra Precedente, Destra Salta", L"Товч: 1 Ирсэн, 2 Тасалсан, 3 Хоцорсон, 4 Бусад, Зүүн Өмнөх, Баруун Алгасах", L"Klavoj: 1 Ĉeestas, 2 Forestas, 3 Malfrua, 4 Alia, Maldekstre Antaŭa, Dekstre Preterlasi", L"鍵：一出席，二缺席，三遲，四他，左前，右略", L"แป้น: 1 มา, 2 ขาด, 3 สาย, 4 อื่น, ซ้าย ก่อนหน้า, ขวา ข้าม", L"Key: 1 Present, 2 Absent, 3 Late, 4 Iba pa, Kaliwa Nakaraan, Kanan Laktawan", L"Tuşlar: 1 Var, 2 Yok, 3 Geç, 4 Diğer, Sol Önceki, Sağ Atla", L"Klavišai: 1 Yra, 2 Nėra, 3 Vėluoja, 4 Kita, Kairė Ankstesnis, Dešinė Praleisti", L"Taster: 1 Tilstede, 2 Fravær, 3 Sen, 4 Annet, Venstre Forrige, Høyre Hopp over", L"Phím: 1 Có mặt, 2 Vắng, 3 Muộn, 4 Khác, Trái Trước, Phải Bỏ qua", L"鍵盤：1 出席，2 缺席，3 遲到，4 其他，左鍵上一位，右鍵略過"},
+        {L"Type a command: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings", L"输入命令：save、import、export、backup、stats、risk、filter、lesson、rollcall、点名、review、profile、settings", L"Ikteb kmand: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings", L"コマンドを入力：save、import、export、backup、stats、risk、filter、lesson、rollcall、review、profile、settings", L"Saisissez une commande : save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings", L"Befehl eingeben: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings", L"Введите команду: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings", L"輸入命令：save、import、export、backup、stats、risk、filter、lesson、rollcall、點名、review、profile、settings", L"Escriba un comando: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings", L"Digita un comando: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings", L"Тушаал оруулна уу: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings", L"Tajpu komandon: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings", L"輸命：save、import、export、backup、stats、risk、filter、lesson、rollcall、review、profile、settings", L"พิมพ์คำสั่ง: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings", L"Mag-type ng command: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings", L"Komut girin: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings", L"Įveskite komandą: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings", L"Skriv en kommando: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings", L"Nhập lệnh: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings", L"輸入指令：save、import、export、backup、stats、risk、filter、lesson、rollcall、點名、review、profile、settings"},
         {L"Default Course", L"默认课程", L"Kors awtomatiku", L"既定コース", L"Cours par défaut", L"Standardkurs", L"Курс по умолчанию", L"預設課程", L"Curso predeterminado", L"Corso predefinito", L"Үндсэн хичээл", L"Defaŭlta kurso", L"常課", L"รายวิชาเริ่มต้น", L"Default na kurso", L"Varsayılan ders", L"Numatytasis kursas", L"Standardkurs", L"Khóa học mặc định", L"預設課程"}
     };
 
@@ -2795,12 +2902,13 @@ int ThemedMenuTotalHeight(const ThemedMenuState* state) {
 }
 
 int ThemedMenuContentTop(const ThemedMenuState* state) {
-    return state && state->scrollable ? THEMED_MENU_SCROLL_HINT_H : 0;
+    (void)state;
+    return 0;
 }
 
 int ThemedMenuContentBottom(const ThemedMenuState* state) {
     if (!state) return 0;
-    return state->height - (state->scrollable ? THEMED_MENU_SCROLL_HINT_H : 0);
+    return state->height;
 }
 
 int ThemedMenuHitTest(ThemedMenuState* state, int y) {
@@ -2821,10 +2929,52 @@ void ScrollThemedMenu(HWND hwnd, ThemedMenuState* state, int delta) {
     int next = std::clamp(state->scrollY + delta, 0, state->maxScrollY);
     if (next == state->scrollY) return;
     state->scrollY = next;
-    state->hover = -1;
+    if (!state->keyboardMode) state->hover = -1;
     StartAnimation(hwnd, AnimChannel::Hover, 0.0, 80);
     InvalidateRect(hwnd, nullptr, FALSE);
-    RedrawWindow(g_hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_NOERASE);
+}
+
+int FindThemedMenuItem(const ThemedMenuState* state, int start, int direction) {
+    if (!state || state->items.empty() || direction == 0) return -1;
+    int index = start;
+    for (int tries = 0; tries < (int)state->items.size(); ++tries) {
+        index += direction;
+        if (index < 0 || index >= (int)state->items.size()) return -1;
+        if (!state->items[index].separator) return index;
+    }
+    return -1;
+}
+
+int FirstThemedMenuItem(const ThemedMenuState* state) {
+    return FindThemedMenuItem(state, -1, 1);
+}
+
+int LastThemedMenuItem(const ThemedMenuState* state) {
+    return state ? FindThemedMenuItem(state, (int)state->items.size(), -1) : -1;
+}
+
+void EnsureThemedMenuItemVisible(HWND hwnd, ThemedMenuState* state, int index) {
+    if (!hwnd || !state || index < 0 || index >= (int)state->items.size() || !state->scrollable) return;
+    int top = ThemedMenuItemTop(state, index);
+    int bottom = top + (state->items[index].separator ? THEMED_MENU_SEPARATOR_H : THEMED_MENU_ITEM_H);
+    int viewportHeight = std::max(1, ThemedMenuContentBottom(state) - ThemedMenuContentTop(state));
+    int next = state->scrollY;
+    if (top < next) next = top;
+    else if (bottom > next + viewportHeight) next = bottom - viewportHeight;
+    next = std::clamp(next, 0, state->maxScrollY);
+    if (next != state->scrollY) {
+        state->scrollY = next;
+        InvalidateRect(hwnd, nullptr, FALSE);
+    }
+}
+
+void SelectThemedMenuItem(HWND hwnd, ThemedMenuState* state, int index) {
+    if (!hwnd || !state || index < 0 || index >= (int)state->items.size() || state->items[index].separator) return;
+    state->keyboardMode = true;
+    state->hover = index;
+    EnsureThemedMenuItemVisible(hwnd, state, index);
+    StartAnimation(hwnd, AnimChannel::Hover, 1.0, 90);
+    InvalidateRect(hwnd, nullptr, FALSE);
 }
 
 void DrawSoftDivider(HDC hdc, int left, int right, int y) {
@@ -2852,18 +3002,15 @@ RECT ThemedMenuItemRect(HWND hwnd, const ThemedMenuState* state, int index) {
     if (!state || index < 0 || index >= (int)state->items.size() || state->items[index].separator) {
         return rc;
     }
-    int top = ThemedMenuItemTop(state, index) - state->scrollY + ThemedMenuContentTop(state);
+    double reveal = GetAnimationValue(hwnd, AnimChannel::Reveal, 1.0);
+    int slideOffset = -(int)std::lround((1.0 - reveal) * THEMED_MENU_SLIDE_PX);
+    int top = ThemedMenuItemTop(state, index) - state->scrollY + ThemedMenuContentTop(state) + slideOffset;
     return RECT{6, top, rc.right - 6, top + THEMED_MENU_ITEM_H};
 }
 
 void ApplyThemedMenuReveal(HWND hwnd, ThemedMenuState* state) {
     if (!hwnd || !state) return;
-    double reveal = GetAnimationValue(hwnd, AnimChannel::Reveal, 1.0);
-    int y = state->finalY - (int)std::lround((1.0 - reveal) * THEMED_MENU_SLIDE_PX);
-    // The menu paints its own fade through its fill, border, and text colors. Keeping this
-    // as an ordinary popup avoids layered-window composition artifacts in the owner window.
-    SetWindowPos(hwnd, HWND_TOPMOST, state->finalX, y, state->width, state->height,
-        SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+    InvalidateRect(hwnd, nullptr, FALSE);
 }
 
 void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState* state) {
@@ -2895,11 +3042,12 @@ void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState* state) {
 
     const int contentTop = ThemedMenuContentTop(state);
     const int contentBottom = ThemedMenuContentBottom(state);
+    const int slideOffset = -(int)std::lround((1.0 - reveal) * THEMED_MENU_SLIDE_PX);
     SaveDC(hdc);
     IntersectClipRect(hdc, 0, contentTop, rc.right, contentBottom);
     for (int i = 0; i < (int)state->items.size(); ++i) {
         double itemProgress = EaseOut(reveal);
-        int top = ThemedMenuItemTop(state, i) - state->scrollY + contentTop;
+        int top = ThemedMenuItemTop(state, i) - state->scrollY + contentTop + slideOffset;
         int itemHeight = state->items[i].separator ? THEMED_MENU_SEPARATOR_H : THEMED_MENU_ITEM_H;
         if (top + itemHeight <= contentTop || top >= contentBottom) continue;
         if (state->items[i].separator) {
@@ -2917,36 +3065,31 @@ void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState* state) {
 
         RECT textRc = itemRc;
         textRc.left += 16;
-        textRc.right -= 16;
+        textRc.right -= state->scrollable ? 26 : 16;
         SetTextColor(hdc, BlendColor(COLOR_MUTED, COLOR_TEXT, itemProgress));
         DrawTextW(hdc, state->items[i].text.c_str(), -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
     RestoreDC(hdc, -1);
 
-    if (state->scrollable) {
-        auto drawScrollArrow = [&](bool up, bool active) {
-            if (!active) return;
-            int centerX = rc.right - 18;
-            int centerY = up ? THEMED_MENU_SCROLL_HINT_H / 2 : rc.bottom - THEMED_MENU_SCROLL_HINT_H / 2;
-            POINT arrow[3] = {
-                {centerX - 5, centerY + (up ? 3 : -3)},
-                {centerX + 5, centerY + (up ? 3 : -3)},
-                {centerX, centerY + (up ? -3 : 3)}
-            };
-            HBRUSH arrowBrush = CreateSolidBrush(RGB(150, 150, 150));
-            HPEN arrowPen = CreatePen(PS_SOLID, 1, RGB(150, 150, 150));
-            HGDIOBJ oldPen = SelectObject(hdc, arrowPen);
-            HGDIOBJ oldBrush = SelectObject(hdc, arrowBrush);
-            Polygon(hdc, arrow, 3);
-            SelectObject(hdc, oldBrush);
-            SelectObject(hdc, oldPen);
-            DeleteObject(arrowPen);
-            DeleteObject(arrowBrush);
-        };
-        drawScrollArrow(true, state->scrollY > 0);
-        drawScrollArrow(false, state->scrollY < state->maxScrollY);
-        DrawSoftDivider(hdc, 10, rc.right - 10, contentTop - 1);
-        DrawSoftDivider(hdc, 10, rc.right - 10, contentBottom);
+    if (state->scrollable && state->contentHeight > 0) {
+        RECT track{rc.right - 9, rc.top + 8, rc.right - 5, rc.bottom - 8};
+        HBRUSH trackBrush = CreateSolidBrush(RGB(28, 28, 28));
+        FillRect(hdc, &track, trackBrush);
+        DeleteObject(trackBrush);
+
+        int trackHeight = std::max(1, (int)(track.bottom - track.top));
+        int thumbHeight = std::clamp(
+            (int)std::lround(trackHeight * (state->height / (double)state->contentHeight)),
+            34,
+            trackHeight);
+        int thumbTravel = std::max(0, trackHeight - thumbHeight);
+        int thumbTop = track.top + (state->maxScrollY > 0
+            ? (int)std::lround(thumbTravel * (state->scrollY / (double)state->maxScrollY))
+            : 0);
+        RECT thumb{track.left, thumbTop, track.right, thumbTop + thumbHeight};
+        HBRUSH thumbBrush = CreateSolidBrush(RGB(112, 112, 112));
+        FillRect(hdc, &thumb, thumbBrush);
+        DeleteObject(thumbBrush);
     }
 
     SelectObject(hdc, oldFont);
@@ -3003,7 +3146,14 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 1;
     case WM_MOUSEMOVE:
         if (state && !state->closing) {
-            int next = ThemedMenuHitTest(state, GET_Y_LPARAM(lParam));
+            POINT mouse{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            bool actuallyMoved = !state->hasMousePoint
+                || mouse.x != state->lastMouse.x || mouse.y != state->lastMouse.y;
+            state->lastMouse = mouse;
+            state->hasMousePoint = true;
+            if (state->keyboardMode && !actuallyMoved) return 0;
+            state->keyboardMode = false;
+            int next = ThemedMenuHitTest(state, mouse.y);
             if (next != state->hover) {
                 RECT oldRc = ThemedMenuItemRect(hwnd, state, state->hover);
                 state->hover = next;
@@ -3016,6 +3166,8 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 0;
     case WM_MOUSEWHEEL:
         if (state && !state->closing && state->scrollable) {
+            state->keyboardMode = false;
+            state->hover = -1;
             int wheel = GET_WHEEL_DELTA_WPARAM(wParam);
             int rows = wheel / WHEEL_DELTA;
             if (rows == 0) rows = wheel > 0 ? 1 : -1;
@@ -3032,12 +3184,10 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 CloseThemedPopupMenu(hwnd, state, 0);
                 return 0;
             }
-            if (state->scrollable && pt.y < ThemedMenuContentTop(state)) {
-                ScrollThemedMenu(hwnd, state, -THEMED_MENU_ITEM_H * 2);
-                return 0;
-            }
-            if (state->scrollable && pt.y >= ThemedMenuContentBottom(state)) {
-                ScrollThemedMenu(hwnd, state, THEMED_MENU_ITEM_H * 2);
+            if (state->scrollable && pt.x >= rc.right - 16) {
+                state->keyboardMode = false;
+                state->hover = -1;
+                ScrollThemedMenu(hwnd, state, pt.y < rc.bottom / 2 ? -state->height : state->height);
                 return 0;
             }
         }
@@ -3053,21 +3203,35 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             CloseThemedPopupMenu(hwnd, state, 0);
             return 0;
         }
-        if (state && !state->closing && state->scrollable) {
-            if (wParam == VK_UP || wParam == VK_PRIOR) {
-                ScrollThemedMenu(hwnd, state, -THEMED_MENU_ITEM_H * (wParam == VK_PRIOR ? 5 : 1));
-                return 0;
-            }
-            if (wParam == VK_DOWN || wParam == VK_NEXT) {
-                ScrollThemedMenu(hwnd, state, THEMED_MENU_ITEM_H * (wParam == VK_NEXT ? 5 : 1));
+        if (state && !state->closing) {
+            if (wParam == VK_RETURN || wParam == VK_SPACE) {
+                if (state->hover >= 0 && state->hover < (int)state->items.size() && !state->items[state->hover].separator) {
+                    CloseThemedPopupMenu(hwnd, state, state->items[state->hover].command);
+                }
                 return 0;
             }
             if (wParam == VK_HOME) {
-                ScrollThemedMenu(hwnd, state, -state->maxScrollY);
+                SelectThemedMenuItem(hwnd, state, FirstThemedMenuItem(state));
                 return 0;
             }
             if (wParam == VK_END) {
-                ScrollThemedMenu(hwnd, state, state->maxScrollY);
+                SelectThemedMenuItem(hwnd, state, LastThemedMenuItem(state));
+                return 0;
+            }
+            if (wParam == VK_UP || wParam == VK_DOWN || wParam == VK_PRIOR || wParam == VK_NEXT) {
+                int direction = (wParam == VK_UP || wParam == VK_PRIOR) ? -1 : 1;
+                int steps = (wParam == VK_PRIOR || wParam == VK_NEXT) ? 6 : 1;
+                int index = state->hover;
+                if (index < 0) {
+                    index = direction > 0 ? FirstThemedMenuItem(state) : LastThemedMenuItem(state);
+                } else {
+                    for (int i = 0; i < steps; ++i) {
+                        int next = FindThemedMenuItem(state, index, direction);
+                        if (next < 0) break;
+                        index = next;
+                    }
+                }
+                SelectThemedMenuItem(hwnd, state, index);
                 return 0;
             }
         }
@@ -3127,7 +3291,7 @@ int MeasureThemedMenuWidth(const std::vector<ThemedMenuItem>& items) {
     }
     SelectObject(hdc, oldFont);
     ReleaseDC(g_hwnd, hdc);
-    return std::min(width, 360);
+    return std::min(width, 460);
 }
 
 int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem>& items) {
@@ -3156,8 +3320,7 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem>& items) {
         if (height > maxHeight) {
             state.scrollable = true;
             height = maxHeight;
-            int viewportHeight = height - THEMED_MENU_SCROLL_HINT_H * 2;
-            state.maxScrollY = std::max(0, state.contentHeight - viewportHeight);
+            state.maxScrollY = std::max(0, state.contentHeight - height);
         }
         int minX = (int)mi.rcWork.left + 4;
         int maxX = std::max(minX, (int)mi.rcWork.right - width - 4);
@@ -3173,10 +3336,10 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem>& items) {
     state.height = height;
 
     HWND popup = CreateWindowExW(
-        WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
         L"AttendanceThemedPopupMenu", L"",
         WS_POPUP,
-        state.finalX, state.finalY - THEMED_MENU_SLIDE_PX, width, height,
+        state.finalX, state.finalY, width, height,
         g_hwnd, nullptr, GetModuleHandleW(nullptr), &state
     );
     if (!popup) {
@@ -3185,22 +3348,24 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem>& items) {
     }
 
     StartWindowReveal(popup, 180);
-    ShowWindow(popup, SW_SHOW);
+    ShowWindow(popup, SW_SHOWNOACTIVATE);
     ApplyThemedMenuReveal(popup, &state);
-    // Recompose the owner once without an erase pass so native child controls cannot retain
-    // stale regions while the overlay is introduced.
-    RedrawWindow(g_hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_NOERASE);
-    SetForegroundWindow(popup);
+    SetCapture(popup);
     SetFocus(popup);
 
     MSG msg{};
     while (!state.done && IsWindow(popup) && GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        if ((msg.message == WM_KEYDOWN || msg.message == WM_SYSKEYDOWN || msg.message == WM_MOUSEWHEEL)
+            && msg.hwnd != popup) {
+            SendMessageW(popup, msg.message, msg.wParam, msg.lParam);
+            continue;
+        }
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
     --g_openThemedPopupMenus;
     if (IsWindow(popup)) DestroyWindow(popup);
-    RedrawWindow(g_hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_NOERASE);
+    InvalidateRect(button, nullptr, FALSE);
     if (g_scrollX != state.mainScrollX || g_scrollY != state.mainScrollY) {
         g_scrollX = state.mainScrollX;
         g_scrollY = state.mainScrollY;
@@ -3290,7 +3455,7 @@ BOOL CALLBACK ApplyThemeToChild(HWND child, LPARAM) {
     wchar_t className[32]{};
     GetClassNameW(child, className, 32);
     if (lstrcmpiW(className, L"ComboBox") == 0) ApplyComboDropDownTheme(child);
-    InvalidateRect(child, nullptr, TRUE);
+    InvalidateRect(child, nullptr, FALSE);
     return TRUE;
 }
 
@@ -3361,7 +3526,7 @@ void ApplyVisualSettings() {
     ApplyThemedControls(g_hwnd);
     ApplyThemedControls(g_settingsWindow);
     if (g_hwnd) {
-        InvalidateRect(g_hwnd, nullptr, TRUE);
+        InvalidateRect(g_hwnd, nullptr, FALSE);
         ResizeLayout(g_hwnd);
     }
 }
@@ -4774,10 +4939,413 @@ void ShowShortcutCenter() {
     }
 }
 
+int FindQuickRollCallRecord(const QuickRollCallState& state, const std::wstring& student) {
+    int found = -1;
+    for (int i = 0; i < (int)state.workingRecords.size(); ++i) {
+        const auto& record = state.workingRecords[i];
+        if (record.dateTime != state.lesson || record.name != student) continue;
+        if (found >= 0) return -2;
+        found = i;
+    }
+    return found;
+}
+
+std::wstring LocalizedQuickRollCallStatus(const std::wstring& status) {
+    if (status == L"Present") return Tr(L"Present", L"出席");
+    if (status == L"Absent") return Tr(L"Absent", L"缺席");
+    if (status == L"Late") return Tr(L"Late", L"迟到");
+    if (status == L"Other") return Tr(L"Other", L"其他");
+    if (status.empty()) return Tr(L"Unmarked", L"未标记");
+    return status;
+}
+
+void ResizeQuickRollCallLayout(HWND hwnd) {
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    int width = rc.right - rc.left;
+    int height = rc.bottom - rc.top;
+    if (width <= 0 || height <= 0) return;
+
+    int pad = 28;
+    int innerW = std::max(320, width - pad * 2);
+    int gap = 12;
+    int statusW = std::max(110, (innerW - gap * 3) / 4);
+    int navW = std::max(110, (innerW - gap * 3) / 4);
+
+    HDWP defer = BeginDeferWindowPos(17);
+    auto move = [&](int id, int x, int y, int w, int h) {
+        HWND control = GetDlgItem(hwnd, id);
+        if (control && defer) {
+            defer = DeferWindowPos(defer, control, nullptr, x, y, w, h,
+                SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+        }
+    };
+
+    move(IDC_QUICK_TITLE, pad, 20, innerW, 38);
+    move(IDC_QUICK_COURSE, pad, 64, innerW * 2 / 3, 26);
+    move(IDC_QUICK_LESSON, pad, 92, innerW * 2 / 3, 26);
+    move(IDC_QUICK_PROGRESS, pad + innerW * 2 / 3, 64, innerW / 3, 54);
+    move(IDC_QUICK_STUDENT, pad, 130, innerW, 54);
+    move(IDC_QUICK_STATUS, pad, 187, innerW, 30);
+    move(IDC_QUICK_NOTES_LABEL, pad, 232, innerW, 24);
+    move(IDC_QUICK_NOTES, pad, 260, innerW, 52);
+
+    int statusY = 334;
+    move(IDC_QUICK_PRESENT, pad, statusY, statusW, 54);
+    move(IDC_QUICK_ABSENT, pad + statusW + gap, statusY, statusW, 54);
+    move(IDC_QUICK_LATE, pad + (statusW + gap) * 2, statusY, statusW, 54);
+    move(IDC_QUICK_OTHER, pad + (statusW + gap) * 3, statusY, innerW - (statusW + gap) * 3, 54);
+
+    int navY = std::max(statusY + 74, height - 112);
+    move(IDC_QUICK_PREVIOUS, pad, navY, navW, 40);
+    move(IDC_QUICK_SKIP, pad + navW + gap, navY, navW, 40);
+    move(IDC_QUICK_FINISH, pad + (navW + gap) * 2, navY, navW, 40);
+    move(IDC_QUICK_CANCEL, pad + (navW + gap) * 3, navY, innerW - (navW + gap) * 3, 40);
+    move(IDC_QUICK_HINT, pad, navY + 48, innerW, 28);
+    if (defer) EndDeferWindowPos(defer);
+    RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE);
+}
+
+void RefreshQuickRollCallWindow(HWND hwnd) {
+    auto* state = reinterpret_cast<QuickRollCallState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (!state || state->students.empty()) return;
+    state->index = std::min(state->index, state->students.size() - 1);
+
+    const std::wstring& student = state->students[state->index];
+    int recordIndex = FindQuickRollCallRecord(*state, student);
+    std::wstring status;
+    std::wstring notes;
+    if (recordIndex >= 0) {
+        status = state->workingRecords[recordIndex].status;
+        notes = state->workingRecords[recordIndex].other;
+    }
+
+    size_t reviewed = (size_t)std::count(state->reviewed.begin(), state->reviewed.end(), true);
+    size_t remaining = state->reviewed.size() - reviewed;
+    std::wstringstream progress;
+    progress << Tr(L"Reviewed", L"已检查") << L" " << reviewed << L" / " << state->students.size()
+             << L"\n" << Tr(L"Remaining", L"剩余") << L" " << remaining;
+
+    SetText(GetDlgItem(hwnd, IDC_QUICK_COURSE), Tr(L"Course:", L"课程：") + L" " + state->course);
+    SetText(GetDlgItem(hwnd, IDC_QUICK_LESSON), Tr(L"Lesson:", L"课次：") + L" " + state->lesson);
+    SetText(GetDlgItem(hwnd, IDC_QUICK_PROGRESS), progress.str());
+    SetText(GetDlgItem(hwnd, IDC_QUICK_STUDENT), student);
+    SetText(GetDlgItem(hwnd, IDC_QUICK_STATUS),
+        Tr(L"Current status:", L"当前状态：") + L" " + LocalizedQuickRollCallStatus(status));
+    SetText(GetDlgItem(hwnd, IDC_QUICK_NOTES), notes);
+    SendMessageW(GetDlgItem(hwnd, IDC_QUICK_NOTES), EM_SETSEL, 0, 0);
+    InvalidateRect(hwnd, nullptr, FALSE);
+}
+
+bool ApplyQuickRollCallStatus(HWND hwnd, const std::wstring& status) {
+    auto* state = reinterpret_cast<QuickRollCallState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (!state || state->students.empty()) return false;
+
+    std::wstring notes = TrimWide(GetText(GetDlgItem(hwnd, IDC_QUICK_NOTES)));
+    if (status == L"Other" && notes.empty()) {
+        ThemedMessageBox(hwnd, Tr(L"Other status requires a note.", L"选择其他状态时必须填写备注。"),
+            Tr(L"Quick roll call", L"快速点名"), false);
+        SetFocus(GetDlgItem(hwnd, IDC_QUICK_NOTES));
+        return false;
+    }
+
+    const std::wstring& student = state->students[state->index];
+    int recordIndex = FindQuickRollCallRecord(*state, student);
+    if (recordIndex == -2) {
+        ThemedMessageBox(hwnd,
+            Tr(L"Duplicate lesson records must be resolved before quick roll call.", L"开始快速点名前必须先处理重复课次记录。"),
+            Tr(L"Quick roll call", L"快速点名"), false);
+        return false;
+    }
+
+    if (recordIndex < 0) {
+        state->workingRecords.push_back({state->lesson, student, status, notes});
+        state->changed = true;
+    } else {
+        auto& record = state->workingRecords[recordIndex];
+        if (record.status != status || record.other != notes) {
+            record.status = status;
+            record.other = notes;
+            state->changed = true;
+        }
+    }
+    state->reviewed[state->index] = true;
+    if (state->index + 1 < state->students.size()) ++state->index;
+    RefreshQuickRollCallWindow(hwnd);
+    return true;
+}
+
+void SkipQuickRollCallStudent(HWND hwnd) {
+    auto* state = reinterpret_cast<QuickRollCallState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (!state || state->students.empty()) return;
+    state->reviewed[state->index] = true;
+    if (state->index + 1 < state->students.size()) ++state->index;
+    RefreshQuickRollCallWindow(hwnd);
+}
+
+void PreviousQuickRollCallStudent(HWND hwnd) {
+    auto* state = reinterpret_cast<QuickRollCallState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (!state || state->students.empty()) return;
+    if (state->index > 0) --state->index;
+    RefreshQuickRollCallWindow(hwnd);
+}
+
+void CancelQuickRollCall(HWND hwnd) {
+    auto* state = reinterpret_cast<QuickRollCallState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (!state) return;
+    if (state->changed && !state->allowClose) {
+        int result = ThemedMessageBox(hwnd,
+            Tr(L"Discard quick roll call changes?", L"放弃本次快速点名的修改吗？"),
+            Tr(L"Quick roll call", L"快速点名"), true);
+        if (result != IDYES) return;
+    }
+    state->allowClose = true;
+    DestroyWindow(hwnd);
+}
+
+void FinishQuickRollCall(HWND hwnd) {
+    auto* state = reinterpret_cast<QuickRollCallState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (!state) return;
+    size_t unreviewed = (size_t)std::count(state->reviewed.begin(), state->reviewed.end(), false);
+    if (unreviewed > 0) {
+        std::wstringstream warning;
+        warning << unreviewed << L" "
+                << Tr(L"students have not been reviewed. Finish and keep the partial results?",
+                      L"名学生尚未检查。是否完成并保留部分结果？");
+        if (ThemedMessageBox(hwnd, warning.str(), Tr(L"Quick roll call", L"快速点名"), true) != IDYES) return;
+    }
+
+    bool changed = state->changed;
+    if (changed) {
+        PushUndo();
+        g_records = state->workingRecords;
+        MarkDirty();
+        SyncActiveSheet();
+        RefreshList();
+    }
+    state->allowClose = true;
+    DestroyWindow(hwnd);
+    if (changed) {
+        ShowMessage(Tr(L"Quick roll call changes were applied.", L"快速点名修改已应用。"),
+            Tr(L"Quick roll call", L"快速点名"));
+    }
+}
+
+LRESULT CALLBACK QuickRollCallProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    auto* state = reinterpret_cast<QuickRollCallState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    switch (msg) {
+    case WM_CREATE: {
+        auto* create = reinterpret_cast<CREATESTRUCTW*>(lParam);
+        state = reinterpret_cast<QuickRollCallState*>(create->lpCreateParams);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)state);
+
+        MakeSettingsControl(hwnd, L"STATIC", Tr(L"Quick roll call", L"快速点名").c_str(), SS_LEFT | SS_NOPREFIX, IDC_QUICK_TITLE);
+        MakeSettingsControl(hwnd, L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, IDC_QUICK_COURSE);
+        MakeSettingsControl(hwnd, L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, IDC_QUICK_LESSON);
+        MakeSettingsControl(hwnd, L"STATIC", L"", SS_RIGHT | SS_NOPREFIX, IDC_QUICK_PROGRESS);
+        MakeSettingsControl(hwnd, L"STATIC", L"", SS_CENTER | SS_NOPREFIX, IDC_QUICK_STUDENT);
+        MakeSettingsControl(hwnd, L"STATIC", L"", SS_CENTER | SS_NOPREFIX, IDC_QUICK_STATUS);
+        MakeSettingsControl(hwnd, L"STATIC", Tr(L"Notes:", L"备注：").c_str(), SS_LEFT | SS_NOPREFIX, IDC_QUICK_NOTES_LABEL);
+        MakeSettingsControl(hwnd, L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, IDC_QUICK_NOTES);
+        MakeSettingsControl(hwnd, L"BUTTON", Tr(L"Present", L"出席").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_QUICK_PRESENT);
+        MakeSettingsControl(hwnd, L"BUTTON", Tr(L"Absent", L"缺席").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_QUICK_ABSENT);
+        MakeSettingsControl(hwnd, L"BUTTON", Tr(L"Late", L"迟到").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_QUICK_LATE);
+        MakeSettingsControl(hwnd, L"BUTTON", Tr(L"Other", L"其他").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_QUICK_OTHER);
+        MakeSettingsControl(hwnd, L"BUTTON", Tr(L"Previous", L"上一位").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_QUICK_PREVIOUS);
+        MakeSettingsControl(hwnd, L"BUTTON", Tr(L"Skip", L"跳过").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_QUICK_SKIP);
+        MakeSettingsControl(hwnd, L"BUTTON", Tr(L"Finish", L"完成").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_QUICK_FINISH);
+        MakeSettingsControl(hwnd, L"BUTTON", Tr(L"Cancel", L"取消").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_QUICK_CANCEL);
+        MakeSettingsControl(hwnd, L"STATIC",
+            Tr(L"Keyboard: 1 Present, 2 Absent, 3 Late, 4 Other, Left Previous, Right Skip",
+               L"键盘：1 出席，2 缺席，3 迟到，4 其他，左方向键上一位，右方向键跳过").c_str(),
+            SS_CENTER | SS_NOPREFIX | SS_ENDELLIPSIS, IDC_QUICK_HINT);
+
+        SendMessageW(GetDlgItem(hwnd, IDC_QUICK_TITLE), WM_SETFONT, (WPARAM)g_titleFont, TRUE);
+        SendMessageW(GetDlgItem(hwnd, IDC_QUICK_STUDENT), WM_SETFONT, (WPARAM)g_titleFont, TRUE);
+        SendMessageW(GetDlgItem(hwnd, IDC_QUICK_HINT), WM_SETFONT, (WPARAM)g_smallFont, TRUE);
+        ApplyThemedControls(hwnd);
+        ResizeQuickRollCallLayout(hwnd);
+        RefreshQuickRollCallWindow(hwnd);
+        SetFocus(GetDlgItem(hwnd, IDC_QUICK_PRESENT));
+        return 0;
+    }
+    case WM_SIZE:
+        ResizeQuickRollCallLayout(hwnd);
+        return 0;
+    case WM_COMMAND:
+        if (HIWORD(wParam) != BN_CLICKED) break;
+        switch (LOWORD(wParam)) {
+        case IDC_QUICK_PRESENT: ApplyQuickRollCallStatus(hwnd, L"Present"); return 0;
+        case IDC_QUICK_ABSENT: ApplyQuickRollCallStatus(hwnd, L"Absent"); return 0;
+        case IDC_QUICK_LATE: ApplyQuickRollCallStatus(hwnd, L"Late"); return 0;
+        case IDC_QUICK_OTHER: ApplyQuickRollCallStatus(hwnd, L"Other"); return 0;
+        case IDC_QUICK_PREVIOUS: PreviousQuickRollCallStudent(hwnd); return 0;
+        case IDC_QUICK_SKIP: SkipQuickRollCallStudent(hwnd); return 0;
+        case IDC_QUICK_FINISH: FinishQuickRollCall(hwnd); return 0;
+        case IDC_QUICK_CANCEL: CancelQuickRollCall(hwnd); return 0;
+        }
+        break;
+    case WM_KEYDOWN:
+        if (wParam == L'1' || wParam == VK_NUMPAD1) { ApplyQuickRollCallStatus(hwnd, L"Present"); return 0; }
+        if (wParam == L'2' || wParam == VK_NUMPAD2) { ApplyQuickRollCallStatus(hwnd, L"Absent"); return 0; }
+        if (wParam == L'3' || wParam == VK_NUMPAD3) { ApplyQuickRollCallStatus(hwnd, L"Late"); return 0; }
+        if (wParam == L'4' || wParam == VK_NUMPAD4) { ApplyQuickRollCallStatus(hwnd, L"Other"); return 0; }
+        if (wParam == VK_LEFT) { PreviousQuickRollCallStudent(hwnd); return 0; }
+        if (wParam == VK_RIGHT) { SkipQuickRollCallStudent(hwnd); return 0; }
+        if (wParam == VK_ESCAPE) { CancelQuickRollCall(hwnd); return 0; }
+        break;
+    case WM_DRAWITEM: {
+        auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
+        if (DrawButtonItem(draw)) return TRUE;
+        break;
+    }
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(hwnd, &ps);
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        int width = std::max(1, (int)(rc.right - rc.left));
+        int height = std::max(1, (int)(rc.bottom - rc.top));
+        HDC memDc = CreateCompatibleDC(hdc);
+        HBITMAP bitmap = CreateCompatibleBitmap(hdc, width, height);
+        HGDIOBJ oldBitmap = SelectObject(memDc, bitmap);
+        PaintAppBackground(hwnd, memDc);
+        BitBlt(hdc, 0, 0, width, height, memDc, 0, 0, SRCCOPY);
+        SelectObject(memDc, oldBitmap);
+        DeleteObject(bitmap);
+        DeleteDC(memDc);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_CTLCOLORSTATIC: {
+        HDC hdc = (HDC)wParam;
+        HWND control = (HWND)lParam;
+        int id = GetDlgCtrlID(control);
+        SetTextColor(hdc, id == IDC_QUICK_TITLE || id == IDC_QUICK_STUDENT ? COLOR_TEXT : COLOR_MUTED);
+        SetBkMode(hdc, OPAQUE);
+        SetBkColor(hdc, COLOR_BG);
+        return (LRESULT)g_bgBrush;
+    }
+    case WM_CTLCOLOREDIT: {
+        HDC hdc = (HDC)wParam;
+        SetTextColor(hdc, COLOR_TEXT);
+        SetBkColor(hdc, COLOR_INPUT);
+        return (LRESULT)g_inputBrush;
+    }
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_APP_ANIMATION_TICK:
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    case WM_CLOSE:
+        CancelQuickRollCall(hwnd);
+        return 0;
+    case WM_DESTROY:
+        RemoveAnimationState(hwnd);
+        g_quickRollCallWindow = nullptr;
+        EnableWindow(g_hwnd, TRUE);
+        SetForegroundWindow(g_hwnd);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+        delete state;
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+void ShowQuickRollCall() {
+    if (g_quickRollCallWindow && IsWindow(g_quickRollCallWindow)) {
+        ShowWindow(g_quickRollCallWindow, SW_SHOW);
+        SetForegroundWindow(g_quickRollCallWindow);
+        return;
+    }
+
+    SyncActiveSheet();
+    EnsureSheets();
+    std::wstring lesson = TrimWide(GetText(g_dateEdit));
+    if (lesson.empty()) {
+        if (!PromptText(Tr(L"Quick roll call", L"快速点名"), Tr(L"Lesson name:", L"课次名称："), lesson)) return;
+        lesson = TrimWide(lesson);
+        if (lesson.empty()) return;
+        SetText(g_dateEdit, lesson);
+    }
+
+    std::vector<std::wstring> students;
+    std::set<std::wstring> seen;
+    for (const auto& rawName : g_sheets[g_activeSheet].students) {
+        std::wstring name = TrimWide(rawName);
+        std::wstring key = LowerText(name);
+        if (!name.empty() && seen.insert(key).second) students.push_back(name);
+    }
+    if (students.empty()) {
+        ShowMessage(Tr(L"No students in the roster.", L"当前课程名单中没有学生。"),
+            Tr(L"Quick roll call", L"快速点名"));
+        return;
+    }
+
+    std::map<std::wstring, int> counts;
+    for (const auto& record : g_records) {
+        if (record.dateTime == lesson) ++counts[record.name];
+    }
+    std::vector<std::wstring> duplicates;
+    for (const auto& student : students) {
+        if (counts[student] > 1) duplicates.push_back(student);
+    }
+    if (!duplicates.empty()) {
+        std::wstringstream message;
+        message << Tr(L"Duplicate lesson records must be resolved before quick roll call.",
+                      L"开始快速点名前必须先处理重复课次记录。") << L"\n\n";
+        for (const auto& student : duplicates) message << L"- " << student << L"\n";
+        ShowMessage(message.str(), Tr(L"Quick roll call", L"快速点名"));
+        return;
+    }
+
+    auto* state = new QuickRollCallState;
+    state->lesson = lesson;
+    state->course = g_sheets[g_activeSheet].name;
+    state->students = std::move(students);
+    state->workingRecords = g_records;
+    state->reviewed.assign(state->students.size(), false);
+
+    HINSTANCE instance = GetModuleHandleW(nullptr);
+    const wchar_t* className = L"AttendanceQuickRollCallWindow";
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSW wc{};
+        wc.lpfnWndProc = QuickRollCallProc;
+        wc.hInstance = instance;
+        wc.lpszClassName = className;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_APP_ICON));
+        wc.hbrBackground = nullptr;
+        RegisterClassW(&wc);
+        registered = true;
+    }
+
+    EnableWindow(g_hwnd, FALSE);
+    g_quickRollCallWindow = CreateWindowExW(
+        WS_EX_CONTROLPARENT,
+        className,
+        Tr(L"Quick roll call", L"快速点名").c_str(),
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN,
+        CW_USEDEFAULT, CW_USEDEFAULT, 900, 570,
+        g_hwnd, nullptr, instance, state
+    );
+    if (!g_quickRollCallWindow) {
+        EnableWindow(g_hwnd, TRUE);
+        delete state;
+        return;
+    }
+    ApplyGlassTitleBar(g_quickRollCallWindow);
+    CenterOwnedWindow(g_quickRollCallWindow, g_hwnd);
+    ShowWindow(g_quickRollCallWindow, SW_SHOW);
+    UpdateWindow(g_quickRollCallWindow);
+    SetForegroundWindow(g_quickRollCallWindow);
+}
+
 void RunCommandPalette() {
     if (!g_commandPaletteEnabled) return;
     std::wstring command;
-    if (!PromptText(Tr(L"Command palette", L"\u547d\u4ee4\u9762\u677f"), Tr(L"Type a command: save, import, export, backup, stats, risk, filter, lesson, review, profile, settings", L"\u8f93\u5165\u547d\u4ee4\uff1asave\u3001import\u3001export\u3001backup\u3001stats\u3001risk\u3001filter\u3001lesson\u3001review\u3001profile\u3001settings"), command)) return;
+    if (!PromptText(Tr(L"Command palette", L"\u547d\u4ee4\u9762\u677f"), Tr(L"Type a command: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings", L"\u8f93\u5165\u547d\u4ee4\uff1asave\u3001import\u3001export\u3001backup\u3001stats\u3001risk\u3001filter\u3001lesson\u3001rollcall\u3001\u70b9\u540d\u3001review\u3001profile\u3001settings"), command)) return;
     command = LowerText(TrimWide(command));
     if (command.find(L"save") != std::wstring::npos || command.find(L"\u4fdd\u5b58") != std::wstring::npos) SaveAttendance();
     else if (command.find(L"import") != std::wstring::npos || command.find(L"\u5bfc\u5165") != std::wstring::npos) ImportAttendance();
@@ -4786,6 +5354,7 @@ void RunCommandPalette() {
     else if (command.find(L"stats") != std::wstring::npos || command.find(L"\u7edf\u8ba1") != std::wstring::npos) ShowStatisticsSummary();
     else if (command.find(L"risk") != std::wstring::npos || command.find(L"\u98ce\u9669") != std::wstring::npos) ShowRiskStudents();
     else if (command.find(L"filter") != std::wstring::npos || command.find(L"\u7b5b\u9009") != std::wstring::npos) ShowAdvancedFilterHelp();
+    else if (command.find(L"rollcall") != std::wstring::npos || command.find(L"\u70b9\u540d") != std::wstring::npos) ShowQuickRollCall();
     else if (command.find(L"review") != std::wstring::npos || command.find(L"\u68c0\u67e5") != std::wstring::npos) ReviewLessonCompletion();
     else if (command.find(L"lesson") != std::wstring::npos || command.find(L"\u8bfe\u6b21") != std::wstring::npos) CreateTodayLessonFromRoster();
     else if (command.find(L"profile") != std::wstring::npos || command.find(L"\u6863\u6848") != std::wstring::npos) ShowStudentProfile();
@@ -5015,14 +5584,25 @@ LRESULT CALLBACK ChartProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_PAINT: {
         PAINTSTRUCT ps{};
         HDC hdc = BeginPaint(hwnd, &ps);
-        PaintStatsChart(hwnd, hdc);
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        int width = std::max(1, (int)(rc.right - rc.left));
+        int height = std::max(1, (int)(rc.bottom - rc.top));
+        HDC memDc = CreateCompatibleDC(hdc);
+        HBITMAP bitmap = CreateCompatibleBitmap(hdc, width, height);
+        HGDIOBJ oldBitmap = SelectObject(memDc, bitmap);
+        PaintStatsChart(hwnd, memDc);
+        BitBlt(hdc, 0, 0, width, height, memDc, 0, 0, SRCCOPY);
+        SelectObject(memDc, oldBitmap);
+        DeleteObject(bitmap);
+        DeleteDC(memDc);
         EndPaint(hwnd, &ps);
         return 0;
     }
     case WM_ERASEBKGND:
         return 1;
     case WM_APP_ANIMATION_TICK:
-        InvalidateRect(hwnd, nullptr, TRUE);
+        InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     case WM_APP_ANIMATION_DONE:
         DestroyWindow(hwnd);
@@ -5040,7 +5620,7 @@ LRESULT CALLBACK ChartProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 void ShowStatsChart() {
     if (g_chartWindow && IsWindow(g_chartWindow)) {
-        InvalidateRect(g_chartWindow, nullptr, TRUE);
+        InvalidateRect(g_chartWindow, nullptr, FALSE);
         SetForegroundWindow(g_chartWindow);
         return;
     }
@@ -5062,11 +5642,12 @@ void ShowStatsChart() {
     std::wstring chartTitle = Tr(L"Statistics Chart", L"\u7edf\u8ba1\u56fe\u8868");
     g_chartWindow = CreateWindowExW(
         0, className, chartTitle.c_str(),
-        WS_OVERLAPPEDWINDOW,
+        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT, 760, 420,
         g_hwnd, nullptr, instance, nullptr
     );
     ApplyGlassTitleBar(g_chartWindow);
+    CenterOwnedWindow(g_chartWindow, g_hwnd);
     StartWindowReveal(g_chartWindow, 190);
     ShowWindow(g_chartWindow, SW_SHOW);
     UpdateWindow(g_chartWindow);
@@ -5141,6 +5722,7 @@ void ShowToolsMenu(HWND button) {
     std::wstring createFromRoster = Tr(L"Create records from roster", L"\u4ece\u540d\u5355\u521b\u5efa\u70b9\u540d\u8bb0\u5f55");
     std::wstring createLesson = Tr(L"Create today's lesson", L"\u521b\u5efa\u4eca\u65e5\u8bfe\u6b21");
     std::wstring switchLesson = Tr(L"Switch lesson", L"\u5207\u6362\u8bfe\u6b21");
+    std::wstring quickRollCall = Tr(L"Quick roll call", L"\u5feb\u901f\u70b9\u540d");
     std::wstring lessonCompletion = Tr(L"Lesson completion check", L"课次完成检查");
     std::wstring studentProfile = Tr(L"Student profile", L"\u5b66\u751f\u6863\u6848");
     std::wstring advancedFilter = Tr(L"Advanced filter", L"\u9ad8\u7ea7\u7b5b\u9009");
@@ -5166,6 +5748,7 @@ void ShowToolsMenu(HWND button) {
         {IDM_STUDENTS_GENERATE, createFromRoster, false},
         {IDM_LESSON_CREATE_TODAY, createLesson, false},
         {IDM_LESSON_SWITCH, switchLesson, false},
+        {IDM_QUICK_ROLL_CALL, quickRollCall, false},
         {IDM_LESSON_COMPLETION, lessonCompletion, false},
         {IDM_STUDENT_PROFILE, studentProfile, false},
         {IDM_COURSE_DETAILS, courseDetails, false},
@@ -5201,6 +5784,7 @@ void ShowToolsMenu(HWND button) {
     case IDM_STUDENTS_GENERATE: CreateRecordsFromRoster(); break;
     case IDM_LESSON_CREATE_TODAY: CreateTodayLessonFromRoster(); break;
     case IDM_LESSON_SWITCH: SwitchLessonFilter(); break;
+    case IDM_QUICK_ROLL_CALL: ShowQuickRollCall(); break;
     case IDM_LESSON_COMPLETION: ReviewLessonCompletion(); break;
     case IDM_STUDENT_PROFILE: ShowStudentProfile(); break;
     case IDM_COURSE_DETAILS: EditCourseDetails(); break;
@@ -5375,11 +5959,11 @@ void FillSettingsCombos(HWND hwnd) {
     }
     SendMessageW(report, CB_SETCURSEL, (WPARAM)g_reportTemplate, 0);
 
-    RedrawWindow(language, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
-    RedrawWindow(font, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
-    RedrawWindow(animation, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
-    RedrawWindow(particle, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
-    RedrawWindow(report, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+    RedrawWindow(language, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+    RedrawWindow(font, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+    RedrawWindow(animation, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+    RedrawWindow(particle, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+    RedrawWindow(report, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
 }
 
 void ApplySettingsLanguage(HWND hwnd) {
@@ -5430,7 +6014,7 @@ void ApplySettingsFromWindow(HWND hwnd) {
     SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), WM_SETFONT, (WPARAM)g_titleFont, TRUE);
     ApplySettingsLanguage(hwnd);
     SaveSettings();
-    InvalidateRect(hwnd, nullptr, TRUE);
+    InvalidateRect(hwnd, nullptr, FALSE);
 }
 
 void ResizeSettingsLayout(HWND hwnd) {
@@ -5566,7 +6150,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 EnumChildWindows(hwnd, ApplyFontToChild, 0);
                 SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), WM_SETFONT, (WPARAM)g_titleFont, TRUE);
                 ApplySettingsLanguage(hwnd);
-                InvalidateRect(hwnd, nullptr, TRUE);
+                InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
         }
@@ -5597,8 +6181,9 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         HDC hdc = (HDC)wParam;
         HWND control = (HWND)lParam;
         SetTextColor(hdc, GetDlgCtrlID(control) == IDC_SETTINGS_TITLE ? COLOR_TEXT : COLOR_MUTED);
-        SetBkMode(hdc, TRANSPARENT);
-        return (LRESULT)GetStockObject(HOLLOW_BRUSH);
+        SetBkMode(hdc, OPAQUE);
+        SetBkColor(hdc, COLOR_BG);
+        return (LRESULT)g_bgBrush;
     }
     case WM_CTLCOLORBTN: {
         HDC hdc = (HDC)wParam;
@@ -5659,12 +6244,13 @@ void ShowSettingsWindow() {
         WS_EX_CONTROLPARENT,
         className,
         settingsTitle.c_str(),
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT, 560, 690,
         g_hwnd, nullptr, instance, nullptr
     );
     ApplyGlassTitleBar(g_settingsWindow);
     ApplyThemedControls(g_settingsWindow);
+    CenterOwnedWindow(g_settingsWindow, g_hwnd);
     ShowWindow(g_settingsWindow, SW_SHOW);
     UpdateWindow(g_settingsWindow);
 }
@@ -5827,7 +6413,7 @@ void ResizeLayout(HWND hwnd) {
     SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
 
     SendMessageW(hwnd, WM_SETREDRAW, TRUE, 0);
-    UINT redrawFlags = RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN;
+    UINT redrawFlags = RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE;
     if (!g_liveResizing) redrawFlags |= RDW_UPDATENOW;
     RedrawWindow(hwnd, nullptr, nullptr, redrawFlags);
     inLayout = false;
@@ -5886,7 +6472,6 @@ void ScrollMainWindow(HWND hwnd, int bar, int code, int wheelDelta) {
     if (bar == SB_VERT) g_scrollY = next;
     else g_scrollX = next;
     ResizeLayout(hwnd);
-    InvalidateRect(hwnd, nullptr, TRUE);
 }
 
 void ApplyDarkMode(HWND hwnd) {
@@ -5899,7 +6484,7 @@ void ApplyDarkMode(HWND hwnd) {
         HWND header = ListView_GetHeader(g_list);
         if (header) {
             SetWindowTheme(header, L"DarkMode_Explorer", nullptr);
-            InvalidateRect(header, nullptr, TRUE);
+            InvalidateRect(header, nullptr, FALSE);
         }
         ListView_SetBkColor(g_list, COLOR_PANEL);
         ListView_SetTextBkColor(g_list, COLOR_PANEL);
@@ -5936,6 +6521,11 @@ bool IsCoreParticleButton(int id) {
     case IDC_COURSE_OPTIONS:
     case IDC_TOOLS:
     case IDC_SETTINGS:
+    case IDC_QUICK_PRESENT:
+    case IDC_QUICK_ABSENT:
+    case IDC_QUICK_LATE:
+    case IDC_QUICK_OTHER:
+    case IDC_QUICK_FINISH:
         return true;
     default:
         return false;
@@ -5963,11 +6553,20 @@ void TriggerButtonFeedback(HWND hwnd, POINT origin) {
     if (id == IDC_SETTINGS_PARTICLES || id == IDC_SETTINGS_RISK_ALERTS
         || id == IDC_SETTINGS_AUTOSAVE_PROMPT || id == IDC_SETTINGS_COMMAND_PALETTE
         || id == IDC_SETTINGS_ADVANCED_FILTER) return;
+    bool particlesEnabled = g_particlesEnabled && IsCoreParticleButton(id);
+    bool rippleEnabled = g_animationLevel != AnimationLevel::Off;
+    if (!rippleEnabled && !particlesEnabled) {
+        g_buttonEffects.erase(hwnd);
+        return;
+    }
+
     ButtonEffectState state;
     state.origin = origin;
     state.startMs = AnimationNowMs();
+    state.rippleEnabled = rippleEnabled;
+    state.durationMs = rippleEnabled ? 400u : 0u;
 
-    if (g_particlesEnabled && IsCoreParticleButton(id)) {
+    if (particlesEnabled) {
         int minCount = 30;
         int maxCount = 50;
         if (g_particleLevel == ParticleLevel::Low) {
@@ -5992,12 +6591,13 @@ void TriggerButtonFeedback(HWND hwnd, POINT origin) {
             particle.star = RandomInt(0, 5) == 0;
             particle.color = RandomInt(0, 12) == 0 ? RGB(102, 204, 255) : RGB(255, 255, 255);
             state.particles.push_back(particle);
+            state.durationMs = std::max(state.durationMs, particle.lifetimeMs);
         }
     }
 
     g_buttonEffects[hwnd] = std::move(state);
-    RestartAnimation(hwnd, AnimChannel::Effect, 1.0, 1250);
-    RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+    RestartAnimation(hwnd, AnimChannel::Effect, 1.0, g_buttonEffects[hwnd].durationMs + 50);
+    RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
 }
 
 void DrawButtonEffects(const DRAWITEMSTRUCT* draw, const RECT& buttonRc, COLORREF baseFill) {
@@ -6007,7 +6607,7 @@ void DrawButtonEffects(const DRAWITEMSTRUCT* draw, const RECT& buttonRc, COLORRE
     uint64_t now = AnimationNowMs();
     ButtonEffectState& state = it->second;
     uint64_t elapsedMs = now > state.startMs ? now - state.startMs : 0;
-    if (elapsedMs > 1300) {
+    if (elapsedMs > state.durationMs + 40) {
         g_buttonEffects.erase(it);
         return;
     }
@@ -6016,7 +6616,7 @@ void DrawButtonEffects(const DRAWITEMSTRUCT* draw, const RECT& buttonRc, COLORRE
     SelectClipRgn(draw->hDC, clip);
 
     double rippleProgress = std::clamp(elapsedMs / 400.0, 0.0, 1.0);
-    if (rippleProgress < 1.0) {
+    if (state.rippleEnabled && rippleProgress < 1.0) {
         double eased = EaseOut(rippleProgress);
         int radius = (int)std::lround(80.0 * eased);
         double strength = 0.30 * (1.0 - rippleProgress);
@@ -6342,7 +6942,7 @@ LRESULT CALLBACK ComboPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     case WM_ENABLE:
     case WM_THEMECHANGED: {
         LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
-        InvalidateRect(hwnd, nullptr, TRUE);
+        InvalidateRect(hwnd, nullptr, FALSE);
         return result;
     }
     case WM_APP_ANIMATION_TICK: {
@@ -6350,7 +6950,7 @@ LRESULT CALLBACK ComboPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         COMBOBOXINFO info{};
         info.cbSize = sizeof(info);
         if (GetComboBoxInfo(hwnd, &info) && info.hwndList) {
-            RedrawWindow(info.hwndList, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+            RedrawWindow(info.hwndList, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
         }
         return 0;
     }
@@ -6369,8 +6969,8 @@ void ApplyComboDropDownTheme(HWND combo) {
     if (info.hwndItem) SetWindowTheme(info.hwndItem, themeName, nullptr);
     if (info.hwndList) {
         SetWindowTheme(info.hwndList, themeName, nullptr);
-        InvalidateRect(info.hwndList, nullptr, TRUE);
-        RedrawWindow(info.hwndList, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME);
+        InvalidateRect(info.hwndList, nullptr, FALSE);
+        RedrawWindow(info.hwndList, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_NOERASE);
     }
 }
 
@@ -6604,7 +7204,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         ApplyMainLanguage();
         ResizeLayout(hwnd);
         ApplyDarkMode(hwnd);
-        InvalidateRect(hwnd, nullptr, TRUE);
+        InvalidateRect(hwnd, nullptr, FALSE);
         SetTimer(hwnd, 1, 30000, nullptr);
         return 0;
     }
@@ -6782,8 +7382,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             SetTextColor(hdc, COLOR_ACCENT);
         }
         else SetTextColor(hdc, COLOR_MUTED);
-        SetBkMode(hdc, TRANSPARENT);
-        return (LRESULT)GetStockObject(HOLLOW_BRUSH);
+        SetBkMode(hdc, OPAQUE);
+        SetBkColor(hdc, COLOR_BG);
+        return (LRESULT)g_bgBrush;
     }
     case WM_CTLCOLOREDIT:
     case WM_CTLCOLORLISTBOX: {
@@ -6841,7 +7442,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCm
         0,
         className,
         L"AttendanceApp - .attd Roll Call Manager",
-        WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_HSCROLL,
+        WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_HSCROLL | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT, 1600, 900,
         nullptr, nullptr, instance, nullptr
     );
@@ -6865,6 +7466,27 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCm
 
     MSG msg{};
     while (GetMessageW(&msg, nullptr, 0, 0)) {
+        if (g_quickRollCallWindow && IsWindow(g_quickRollCallWindow)
+            && (msg.hwnd == g_quickRollCallWindow || IsChild(g_quickRollCallWindow, msg.hwnd))) {
+            if (msg.message == WM_KEYDOWN) {
+                HWND notes = GetDlgItem(g_quickRollCallWindow, IDC_QUICK_NOTES);
+                bool editingNotes = GetFocus() == notes;
+                bool globalKey = msg.wParam == VK_ESCAPE;
+                bool rollCallKey = msg.wParam == L'1' || msg.wParam == L'2' || msg.wParam == L'3' || msg.wParam == L'4'
+                    || msg.wParam == VK_NUMPAD1 || msg.wParam == VK_NUMPAD2 || msg.wParam == VK_NUMPAD3 || msg.wParam == VK_NUMPAD4
+                    || msg.wParam == VK_LEFT || msg.wParam == VK_RIGHT;
+                if (globalKey || (!editingNotes && rollCallKey)) {
+                    SendMessageW(g_quickRollCallWindow, WM_KEYDOWN, msg.wParam, msg.lParam);
+                    continue;
+                }
+            }
+            if (IsDialogMessageW(g_quickRollCallWindow, &msg)) continue;
+        }
+        if (g_settingsWindow && IsWindow(g_settingsWindow)
+            && (msg.hwnd == g_settingsWindow || IsChild(g_settingsWindow, msg.hwnd))
+            && IsDialogMessageW(g_settingsWindow, &msg)) {
+            continue;
+        }
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
