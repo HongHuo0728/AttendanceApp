@@ -74,6 +74,21 @@ All settings apply immediately when you change a selection or switch. `Apply` sa
 - `Enable Ctrl+K command palette`: enables the quick command entry box. Use it for actions such as `save`, `backup`, `stats`, `lesson`, `rollcall`, `点名`, or `review`.
 - `Enable advanced filter syntax`: enables terms such as `name:`, `status:`, `from:`, `to:`, `thisweek`, and `thismonth` in the search field.
 
+### Advanced Personalization (Experimental)
+
+Settings always opens in the compact basic view. Turn on `Advanced personalization (Experimental)` to open the personalization panel. The program first displays a warning that the experimental feature may make the software unstable; choose `Yes` to continue or `No` to leave the basic view unchanged.
+
+- `Theme`: switches between the default pure-black interface and the pure-white light interface.
+- `Accent tone`: selects Neutral, Muted sage, or Muted cyan accents while keeping text contrast restrained.
+- `Text size`: selects Small, Standard, or Large interface text.
+- `Interface density`: changes control spacing between Compact, Comfortable, and Spacious.
+- `Autosave interval`: turns timed autosave off or runs it every 30 seconds, 1 minute, or 5 minutes.
+- `Show statistics cards`: shows or hides the four summary cards above the record editor.
+- `Show bottom usage hint`: shows or hides the usage hint at the lower-left window edge.
+- `Show table grid lines`: shows or hides separators in the attendance list.
+
+Turning the experimental switch off immediately discards every advanced personalization choice, collapses the panel, and restores the original pure-black theme and default layout. These discarded choices are not retained for the next time the feature is enabled.
+
 ## Search / Filter
 
 Use the search box above the table to filter the current course by date/time, name, status, or notes. `Clear Filter` restores the full table. Editing, double-clicking, and deleting still target the real record even when the table is filtered.

@@ -153,6 +153,19 @@ static constexpr int IDC_SETTINGS_COMMAND_PALETTE = 4018;
 static constexpr int IDC_SETTINGS_REPORT_LABEL = 4019;
 static constexpr int IDC_SETTINGS_REPORT_TEMPLATE = 4020;
 static constexpr int IDC_SETTINGS_ADVANCED_FILTER = 4021;
+static constexpr int IDC_SETTINGS_EXPERIMENTAL = 4022;
+static constexpr int IDC_SETTINGS_ADVANCED_TITLE = 4023;
+static constexpr int IDC_SETTINGS_ACCENT_LABEL = 4024;
+static constexpr int IDC_SETTINGS_ACCENT = 4025;
+static constexpr int IDC_SETTINGS_TEXT_SCALE_LABEL = 4026;
+static constexpr int IDC_SETTINGS_TEXT_SCALE = 4027;
+static constexpr int IDC_SETTINGS_DENSITY_LABEL = 4028;
+static constexpr int IDC_SETTINGS_DENSITY = 4029;
+static constexpr int IDC_SETTINGS_SHOW_STATS = 4030;
+static constexpr int IDC_SETTINGS_SHOW_HINT = 4031;
+static constexpr int IDC_SETTINGS_TABLE_GRID = 4032;
+static constexpr int IDC_SETTINGS_AUTOSAVE_LABEL = 4033;
+static constexpr int IDC_SETTINGS_AUTOSAVE_INTERVAL = 4034;
 static constexpr int IDC_INPUT_EDIT = 5001;
 static constexpr int IDC_INPUT_OK = 5002;
 static constexpr int IDC_INPUT_CANCEL = 5003;
@@ -267,7 +280,10 @@ enum class UiLanguage {
     Vietnamese,
     ChineseTraditionalHongKong
 };
-enum class UiTheme { Dark };
+enum class UiTheme { Dark, Light };
+enum class AccentTone { Neutral, Sage, Cyan };
+enum class TextScale { Small, Standard, Large };
+enum class LayoutDensity { Compact, Comfortable, Spacious };
 enum class AnimationLevel { Off, Standard, Advanced };
 enum class ParticleLevel { Low, Medium, High };
 enum class ReportTemplate { Simple, Teacher, Parent, Complete };
@@ -275,6 +291,9 @@ enum class StatsRange { All, ThisWeek, ThisMonth };
 
 static UiLanguage g_language = UiLanguage::English;
 static UiTheme g_theme = UiTheme::Dark;
+static AccentTone g_accentTone = AccentTone::Neutral;
+static TextScale g_textScale = TextScale::Standard;
+static LayoutDensity g_layoutDensity = LayoutDensity::Comfortable;
 static std::wstring g_fontFamily = L"Segoe UI";
 static std::wstring g_defaultSaveDir;
 static std::vector<std::wstring> g_availableFonts;
@@ -286,6 +305,11 @@ static bool g_riskAlertsEnabled = true;
 static bool g_autosavePromptEnabled = true;
 static bool g_commandPaletteEnabled = true;
 static bool g_advancedFilterEnabled = true;
+static bool g_advancedPersonalizationEnabled = false;
+static bool g_showStatsCards = true;
+static bool g_showFooterHint = true;
+static bool g_showTableGrid = true;
+static int g_autosaveIntervalSeconds = 30;
 static std::wstring g_shortcutSave = L"Ctrl+S";
 static std::wstring g_shortcutImport = L"Ctrl+O";
 static std::wstring g_shortcutUndo = L"Ctrl+Z";
@@ -300,6 +324,12 @@ static COLORREF COLOR_TEXT = RGB(255, 255, 255);
 static COLORREF COLOR_MUTED = RGB(224, 224, 224);
 static COLORREF COLOR_ACCENT = RGB(188, 188, 188);
 static COLORREF COLOR_DANGER = RGB(176, 112, 112);
+static COLORREF COLOR_BORDER = RGB(64, 64, 64);
+static COLORREF COLOR_HOVER = RGB(38, 38, 38);
+static COLORREF COLOR_CARD = RGB(16, 16, 16);
+static COLORREF COLOR_ROW_ALT = RGB(14, 14, 14);
+static COLORREF COLOR_SELECTED = RGB(42, 42, 42);
+static COLORREF COLOR_CHECK_FILL = RGB(0, 0, 0);
 
 enum class AnimChannel : int {
     Hover = 1,
@@ -649,18 +679,22 @@ void CancelMainWindowClose() {
 
 void ApplyGlassTitleBar(HWND hwnd) {
     if (!hwnd) return;
-    BOOL dark = TRUE;
+    BOOL dark = g_theme == UiTheme::Dark ? TRUE : FALSE;
     DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
 
-    COLORREF caption = RGB(0, 0, 0);
-    COLORREF text = RGB(255, 255, 255);
-    COLORREF border = RGB(42, 42, 42);
+    COLORREF caption = COLOR_BG;
+    COLORREF text = COLOR_TEXT;
+    COLORREF border = COLOR_BORDER;
     DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &caption, sizeof(caption));
     DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, &text, sizeof(text));
     DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &border, sizeof(border));
 
     int backdrop = 2; // DWMSBT_MAINWINDOW / Mica on supported Windows builds.
     DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
+    SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+        SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+    RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_NOERASE);
 }
 
 void CenterOwnedWindow(HWND window, HWND owner) {
@@ -705,8 +739,8 @@ LRESULT HandleListCustomDraw(LPARAM lParam) {
         double rowProgress = std::clamp(reveal * 1.25 - item * 0.035, 0.0, 1.0);
 
         COLORREF rowBase = selected
-            ? RGB(42, 42, 42)
-            : (item % 2 == 0 ? COLOR_PANEL : RGB(14, 14, 14));
+            ? COLOR_SELECTED
+            : (item % 2 == 0 ? COLOR_PANEL : COLOR_ROW_ALT);
         draw->clrTextBk = BlendColor(COLOR_BG, rowBase, rowProgress);
         draw->clrText = BlendColor(COLOR_MUTED, COLOR_TEXT, rowProgress);
         return CDRF_NEWFONT;
@@ -1083,7 +1117,7 @@ void DrawAnimatedEditFrame(HWND hwnd) {
     OffsetRect(&rc, -rc.left, -rc.top);
 
     double hover = GetAnimationValue(hwnd, AnimChannel::Hover, GetFocus() == hwnd ? 1.0 : 0.0);
-    COLORREF border = BlendColor(RGB(58, 58, 58), COLOR_ACCENT, hover);
+    COLORREF border = BlendColor(COLOR_BORDER, COLOR_ACCENT, hover);
     HPEN pen = CreatePen(PS_SOLID, 1, border);
     HGDIOBJ oldPen = SelectObject(hdc, pen);
     HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
@@ -1335,7 +1369,7 @@ int ThemedMessageBox(HWND owner, const std::wstring& message, const std::wstring
         return state.result;
     }
 
-    BOOL dark = TRUE;
+    BOOL dark = g_theme == UiTheme::Dark ? TRUE : FALSE;
     DwmSetWindowAttribute(dialog, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
     ApplyGlassTitleBar(dialog);
     CenterOwnedWindow(dialog, parent);
@@ -2208,6 +2242,12 @@ HFONT CreateUiFont(int height, int weight) {
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, g_fontFamily.c_str());
 }
 
+int ComboItemHeight() {
+    if (g_textScale == TextScale::Small) return 28;
+    if (g_textScale == TextScale::Large) return 36;
+    return 30;
+}
+
 int CALLBACK EnumFontFamilyProc(const LOGFONTW* logFont, const TEXTMETRICW*, DWORD, LPARAM lParam) {
     auto* fonts = reinterpret_cast<std::set<std::wstring>*>(lParam);
     if (logFont && logFont->lfFaceName[0]) {
@@ -2331,6 +2371,15 @@ void SaveSettings() {
     std::ofstream file(path, std::ios::binary);
     if (!file) return;
     file << "language=" << LanguageToString(g_language) << "\n";
+    file << "advanced_personalization=" << BoolSetting(g_advancedPersonalizationEnabled) << "\n";
+    file << "theme=" << (int)g_theme << "\n";
+    file << "accent_tone=" << (int)g_accentTone << "\n";
+    file << "text_scale=" << (int)g_textScale << "\n";
+    file << "layout_density=" << (int)g_layoutDensity << "\n";
+    file << "show_stats_cards=" << BoolSetting(g_showStatsCards) << "\n";
+    file << "show_footer_hint=" << BoolSetting(g_showFooterHint) << "\n";
+    file << "show_table_grid=" << BoolSetting(g_showTableGrid) << "\n";
+    file << "autosave_interval=" << g_autosaveIntervalSeconds << "\n";
     file << "font=" << WideToUtf8(g_fontFamily) << "\n";
     file << "default_save_dir=" << WideToUtf8(g_defaultSaveDir) << "\n";
     file << "particles=" << (g_particlesEnabled ? "1" : "0") << "\n";
@@ -2363,7 +2412,18 @@ void LoadSettings() {
         std::string key = line.substr(0, pos);
         std::string value = line.substr(pos + 1);
         if (key == "language") g_language = LanguageFromString(value);
-        else if (key == "theme") g_theme = UiTheme::Dark;
+        else if (key == "advanced_personalization") g_advancedPersonalizationEnabled = value != "0";
+        else if (key == "theme") g_theme = (value == "light" || value == "1") ? UiTheme::Light : UiTheme::Dark;
+        else if (key == "accent_tone") g_accentTone = (AccentTone)ClampSettingInt(value, 0, 0, 2);
+        else if (key == "text_scale") g_textScale = (TextScale)ClampSettingInt(value, 1, 0, 2);
+        else if (key == "layout_density") g_layoutDensity = (LayoutDensity)ClampSettingInt(value, 1, 0, 2);
+        else if (key == "show_stats_cards") g_showStatsCards = value != "0";
+        else if (key == "show_footer_hint") g_showFooterHint = value != "0";
+        else if (key == "show_table_grid") g_showTableGrid = value != "0";
+        else if (key == "autosave_interval") {
+            int seconds = ClampSettingInt(value, 30, 0, 300);
+            g_autosaveIntervalSeconds = seconds == 0 || seconds == 30 || seconds == 60 || seconds == 300 ? seconds : 30;
+        }
         else if (key == "font" && !value.empty()) g_fontFamily = Utf8ToWide(value);
         else if (key == "default_save_dir") g_defaultSaveDir = Utf8ToWide(value);
         else if (key == "particles") g_particlesEnabled = value != "0";
@@ -2381,7 +2441,16 @@ void LoadSettings() {
         else if (key == "shortcut_command") g_shortcutCommand = NormalizeShortcut(Utf8ToWide(value), L"Ctrl+K");
         else if (key == "shortcut_fullscreen") g_shortcutFullscreen = NormalizeShortcut(Utf8ToWide(value), L"F11");
     }
-    g_theme = UiTheme::Dark;
+    if (!g_advancedPersonalizationEnabled) {
+        g_theme = UiTheme::Dark;
+        g_accentTone = AccentTone::Neutral;
+        g_textScale = TextScale::Standard;
+        g_layoutDensity = LayoutDensity::Comfortable;
+        g_showStatsCards = true;
+        g_showFooterHint = true;
+        g_showTableGrid = true;
+        g_autosaveIntervalSeconds = 30;
+    }
 }
 
 void ResetSettings() {
@@ -2392,6 +2461,9 @@ void ResetSettings() {
     }
     g_language = UiLanguage::English;
     g_theme = UiTheme::Dark;
+    g_accentTone = AccentTone::Neutral;
+    g_textScale = TextScale::Standard;
+    g_layoutDensity = LayoutDensity::Comfortable;
     g_fontFamily = L"Segoe UI";
     g_defaultSaveDir.clear();
     g_particlesEnabled = true;
@@ -2402,6 +2474,11 @@ void ResetSettings() {
     g_autosavePromptEnabled = true;
     g_commandPaletteEnabled = true;
     g_advancedFilterEnabled = true;
+    g_advancedPersonalizationEnabled = false;
+    g_showStatsCards = true;
+    g_showFooterHint = true;
+    g_showTableGrid = true;
+    g_autosaveIntervalSeconds = 30;
     g_shortcutSave = L"Ctrl+S";
     g_shortcutImport = L"Ctrl+O";
     g_shortcutUndo = L"Ctrl+Z";
@@ -2827,7 +2904,7 @@ void RefreshCourseCombo() {
         SendMessageW(g_courseCombo, CB_ADDSTRING, 0, (LPARAM)displayName.c_str());
     }
     SendMessageW(g_courseCombo, CB_SETCURSEL, g_activeSheet, 0);
-    RedrawWindow(g_courseCombo, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+    RedrawWindow(g_courseCombo, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
 }
 
 void SwitchCourse(int index) {
@@ -3017,9 +3094,9 @@ void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState* state) {
     RECT rc{};
     GetClientRect(hwnd, &rc);
     double reveal = GetAnimationValue(hwnd, AnimChannel::Reveal, 1.0);
-    COLORREF fill = BlendColor(RGB(0, 0, 0), RGB(14, 14, 14), reveal);
-    COLORREF border = BlendColor(RGB(28, 28, 28), RGB(68, 68, 68), reveal);
-    COLORREF hover = RGB(36, 36, 36);
+    COLORREF fill = BlendColor(COLOR_BG, COLOR_ROW_ALT, reveal);
+    COLORREF border = BlendColor(COLOR_PANEL, COLOR_BORDER, reveal);
+    COLORREF hover = COLOR_HOVER;
     int blurRadius = (int)std::lround(reveal * 10.0);
 
     HBRUSH bg = CreateSolidBrush(fill);
@@ -3028,7 +3105,7 @@ void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState* state) {
 
     for (int i = 0; i < blurRadius; i += 3) {
         RECT glow{rc.left + i, rc.top + i, rc.right - i, rc.bottom - i};
-        HPEN glowPen = CreatePen(PS_SOLID, 1, BlendColor(RGB(10, 10, 10), RGB(42, 42, 42), reveal * (1.0 - i / 12.0)));
+        HPEN glowPen = CreatePen(PS_SOLID, 1, BlendColor(COLOR_BG, COLOR_SELECTED, reveal * (1.0 - i / 12.0)));
         HGDIOBJ oldGlowPen = SelectObject(hdc, glowPen);
         HGDIOBJ oldGlowBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
         Rectangle(hdc, glow.left, glow.top, glow.right, glow.bottom);
@@ -3073,7 +3150,7 @@ void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState* state) {
 
     if (state->scrollable && state->contentHeight > 0) {
         RECT track{rc.right - 9, rc.top + 8, rc.right - 5, rc.bottom - 8};
-        HBRUSH trackBrush = CreateSolidBrush(RGB(28, 28, 28));
+        HBRUSH trackBrush = CreateSolidBrush(COLOR_PANEL);
         FillRect(hdc, &track, trackBrush);
         DeleteObject(trackBrush);
 
@@ -3087,7 +3164,7 @@ void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState* state) {
             ? (int)std::lround(thumbTravel * (state->scrollY / (double)state->maxScrollY))
             : 0);
         RECT thumb{track.left, thumbTop, track.right, thumbTop + thumbHeight};
-        HBRUSH thumbBrush = CreateSolidBrush(RGB(112, 112, 112));
+        HBRUSH thumbBrush = CreateSolidBrush(COLOR_ACCENT);
         FillRect(hdc, &thumb, thumbBrush);
         DeleteObject(thumbBrush);
     }
@@ -3399,14 +3476,40 @@ void ResetBrushes() {
 }
 
 void ApplyThemePalette() {
-    g_theme = UiTheme::Dark;
-    COLOR_BG = RGB(0, 0, 0);
-    COLOR_PANEL = RGB(18, 18, 18);
-    COLOR_INPUT = RGB(26, 26, 26);
-    COLOR_TEXT = RGB(255, 255, 255);
-    COLOR_MUTED = RGB(224, 224, 224);
-    COLOR_ACCENT = RGB(188, 188, 188);
-    COLOR_DANGER = RGB(176, 112, 112);
+    if (!g_advancedPersonalizationEnabled) g_theme = UiTheme::Dark;
+    if (g_theme == UiTheme::Light) {
+        COLOR_BG = RGB(255, 255, 255);
+        COLOR_PANEL = RGB(246, 246, 246);
+        COLOR_INPUT = RGB(250, 250, 250);
+        COLOR_TEXT = RGB(0, 0, 0);
+        COLOR_MUTED = RGB(58, 58, 58);
+        COLOR_DANGER = RGB(150, 74, 74);
+        COLOR_BORDER = RGB(194, 194, 194);
+        COLOR_HOVER = RGB(232, 232, 232);
+        COLOR_CARD = RGB(250, 250, 250);
+        COLOR_ROW_ALT = RGB(240, 240, 240);
+        COLOR_SELECTED = RGB(220, 228, 230);
+        COLOR_CHECK_FILL = RGB(255, 255, 255);
+        if (g_accentTone == AccentTone::Sage) COLOR_ACCENT = RGB(76, 112, 96);
+        else if (g_accentTone == AccentTone::Cyan) COLOR_ACCENT = RGB(52, 112, 128);
+        else COLOR_ACCENT = RGB(78, 78, 78);
+    } else {
+        COLOR_BG = RGB(0, 0, 0);
+        COLOR_PANEL = RGB(18, 18, 18);
+        COLOR_INPUT = RGB(26, 26, 26);
+        COLOR_TEXT = RGB(255, 255, 255);
+        COLOR_MUTED = RGB(224, 224, 224);
+        COLOR_DANGER = RGB(176, 112, 112);
+        COLOR_BORDER = RGB(64, 64, 64);
+        COLOR_HOVER = RGB(38, 38, 38);
+        COLOR_CARD = RGB(16, 16, 16);
+        COLOR_ROW_ALT = RGB(14, 14, 14);
+        COLOR_SELECTED = RGB(42, 42, 42);
+        COLOR_CHECK_FILL = RGB(0, 0, 0);
+        if (g_accentTone == AccentTone::Sage) COLOR_ACCENT = RGB(142, 166, 154);
+        else if (g_accentTone == AccentTone::Cyan) COLOR_ACCENT = RGB(112, 174, 188);
+        else COLOR_ACCENT = RGB(188, 188, 188);
+    }
     ResetBrushes();
 }
 
@@ -3425,20 +3528,32 @@ void PaintAppBackgroundSlice(HWND child, HDC hdc) {
 
 BOOL CALLBACK ApplyFontToChild(HWND child, LPARAM) {
     SendMessageW(child, WM_SETFONT, (WPARAM)g_font, TRUE);
+    wchar_t className[32]{};
+    GetClassNameW(child, className, 32);
+    if (lstrcmpiW(className, L"ComboBox") == 0) {
+        int itemHeight = ComboItemHeight();
+        SendMessageW(child, CB_SETITEMHEIGHT, (WPARAM)-1, itemHeight);
+        SendMessageW(child, CB_SETITEMHEIGHT, 0, itemHeight);
+    }
     return TRUE;
 }
 
 void RecreateFonts() {
-    if (g_font) DeleteObject(g_font);
-    if (g_titleFont) DeleteObject(g_titleFont);
-    if (g_smallFont) DeleteObject(g_smallFont);
+    HFONT oldFont = g_font;
+    HFONT oldTitleFont = g_titleFont;
+    HFONT oldSmallFont = g_smallFont;
 
-    g_font = CreateUiFont(20, FW_NORMAL);
-    g_titleFont = CreateUiFont(30, FW_SEMIBOLD);
-    g_smallFont = CreateUiFont(17, FW_NORMAL);
+    double scale = g_textScale == TextScale::Small ? 0.90
+        : g_textScale == TextScale::Large ? 1.15 : 1.0;
+    g_font = CreateUiFont((int)std::lround(20 * scale), FW_NORMAL);
+    g_titleFont = CreateUiFont((int)std::lround(30 * scale), FW_SEMIBOLD);
+    g_smallFont = CreateUiFont((int)std::lround(17 * scale), FW_NORMAL);
 
-    if (g_hwnd) {
-        EnumChildWindows(g_hwnd, ApplyFontToChild, 0);
+    const HWND roots[] = {g_hwnd, g_settingsWindow, g_chartWindow, g_quickRollCallWindow};
+    for (HWND root : roots) {
+        if (root && IsWindow(root)) EnumChildWindows(root, ApplyFontToChild, 0);
+    }
+    if (g_hwnd && IsWindow(g_hwnd)) {
         SendMessageW(GetDlgItem(g_hwnd, IDC_TITLE), WM_SETFONT, (WPARAM)g_titleFont, TRUE);
         SendMessageW(GetDlgItem(g_hwnd, IDC_SUBTITLE), WM_SETFONT, (WPARAM)g_smallFont, TRUE);
         SendMessageW(GetDlgItem(g_hwnd, IDC_STATS), WM_SETFONT, (WPARAM)g_smallFont, TRUE);
@@ -3448,10 +3563,23 @@ void RecreateFonts() {
         SendMessageW(GetDlgItem(g_hwnd, IDC_STAT_ISSUES), WM_SETFONT, (WPARAM)g_smallFont, TRUE);
         SendMessageW(GetDlgItem(g_hwnd, IDC_STAT_VISIBLE), WM_SETFONT, (WPARAM)g_smallFont, TRUE);
     }
+    if (g_settingsWindow && IsWindow(g_settingsWindow)) {
+        SendMessageW(GetDlgItem(g_settingsWindow, IDC_SETTINGS_TITLE), WM_SETFONT, (WPARAM)g_titleFont, TRUE);
+        SendMessageW(GetDlgItem(g_settingsWindow, IDC_SETTINGS_ADVANCED_TITLE), WM_SETFONT, (WPARAM)g_titleFont, TRUE);
+    }
+    if (g_quickRollCallWindow && IsWindow(g_quickRollCallWindow)) {
+        SendMessageW(GetDlgItem(g_quickRollCallWindow, IDC_QUICK_TITLE), WM_SETFONT, (WPARAM)g_titleFont, TRUE);
+        SendMessageW(GetDlgItem(g_quickRollCallWindow, IDC_QUICK_STUDENT), WM_SETFONT, (WPARAM)g_titleFont, TRUE);
+        SendMessageW(GetDlgItem(g_quickRollCallWindow, IDC_QUICK_HINT), WM_SETFONT, (WPARAM)g_smallFont, TRUE);
+    }
+
+    if (oldFont) DeleteObject(oldFont);
+    if (oldTitleFont) DeleteObject(oldTitleFont);
+    if (oldSmallFont) DeleteObject(oldSmallFont);
 }
 
 BOOL CALLBACK ApplyThemeToChild(HWND child, LPARAM) {
-    SetWindowTheme(child, L"DarkMode_Explorer", nullptr);
+    SetWindowTheme(child, g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
     wchar_t className[32]{};
     GetClassNameW(child, className, 32);
     if (lstrcmpiW(className, L"ComboBox") == 0) ApplyComboDropDownTheme(child);
@@ -3461,7 +3589,7 @@ BOOL CALLBACK ApplyThemeToChild(HWND child, LPARAM) {
 
 void ApplyThemedControls(HWND root) {
     if (!root) return;
-    SetWindowTheme(root, L"DarkMode_Explorer", nullptr);
+    SetWindowTheme(root, g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
     EnumChildWindows(root, ApplyThemeToChild, 0);
 }
 
@@ -3518,14 +3646,31 @@ void ApplyVisualSettings() {
     if (g_list) {
         ApplyDarkMode(g_hwnd);
     }
-    BOOL dark = TRUE;
+    BOOL dark = g_theme == UiTheme::Dark ? TRUE : FALSE;
     if (g_hwnd) DwmSetWindowAttribute(g_hwnd, 20, &dark, sizeof(dark));
     if (g_settingsWindow) DwmSetWindowAttribute(g_settingsWindow, 20, &dark, sizeof(dark));
     if (g_chartWindow) DwmSetWindowAttribute(g_chartWindow, 20, &dark, sizeof(dark));
     ApplyGlassTitleBar(g_hwnd);
+    ApplyGlassTitleBar(g_settingsWindow);
+    ApplyGlassTitleBar(g_chartWindow);
+    ApplyGlassTitleBar(g_quickRollCallWindow);
     ApplyThemedControls(g_hwnd);
     ApplyThemedControls(g_settingsWindow);
+    ApplyThemedControls(g_chartWindow);
+    ApplyThemedControls(g_quickRollCallWindow);
+    if (g_settingsWindow) RedrawWindow(g_settingsWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_NOERASE);
+    if (g_chartWindow) RedrawWindow(g_chartWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_NOERASE);
+    if (g_quickRollCallWindow) RedrawWindow(g_quickRollCallWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_NOERASE);
     if (g_hwnd) {
+        ShowWindow(GetDlgItem(g_hwnd, IDC_STAT_TOTAL), g_showStatsCards ? SW_SHOW : SW_HIDE);
+        ShowWindow(GetDlgItem(g_hwnd, IDC_STAT_ATTENDANCE), g_showStatsCards ? SW_SHOW : SW_HIDE);
+        ShowWindow(GetDlgItem(g_hwnd, IDC_STAT_ISSUES), g_showStatsCards ? SW_SHOW : SW_HIDE);
+        ShowWindow(GetDlgItem(g_hwnd, IDC_STAT_VISIBLE), g_showStatsCards ? SW_SHOW : SW_HIDE);
+        ShowWindow(GetDlgItem(g_hwnd, IDC_HINT), g_showFooterHint ? SW_SHOW : SW_HIDE);
+        KillTimer(g_hwnd, 1);
+        if (g_autosaveIntervalSeconds > 0) {
+            SetTimer(g_hwnd, 1, (UINT)g_autosaveIntervalSeconds * 1000, nullptr);
+        }
         InvalidateRect(g_hwnd, nullptr, FALSE);
         ResizeLayout(g_hwnd);
     }
@@ -5562,7 +5707,7 @@ void PaintStatsChart(HWND hwnd, HDC hdc) {
         std::wstring label = Tr(labels[i], labels[i]);
         TextOutW(hdc, labelX, y + 6, label.c_str(), (int)label.size());
         RECT barBg{barX, y, barX + barMaxW, y + 30};
-        HBRUSH bg = CreateSolidBrush(RGB(24, 24, 24));
+        HBRUSH bg = CreateSolidBrush(COLOR_PANEL);
         FillRect(hdc, &barBg, bg);
         DeleteObject(bg);
 
@@ -5883,8 +6028,8 @@ HWND MakeControl(const wchar_t* cls, const wchar_t* text, DWORD style, int id) {
     if (lstrcmpiW(cls, L"STATIC") != 0) EnableInteractiveAnimation(hwnd);
     if (lstrcmpiW(cls, L"EDIT") == 0) EnableEditShortcuts(hwnd);
     if (lstrcmpiW(cls, L"COMBOBOX") == 0 && (style & CBS_OWNERDRAWFIXED)) {
-        SendMessageW(hwnd, CB_SETITEMHEIGHT, (WPARAM)-1, 30);
-        SendMessageW(hwnd, CB_SETITEMHEIGHT, 0, 30);
+        SendMessageW(hwnd, CB_SETITEMHEIGHT, (WPARAM)-1, ComboItemHeight());
+        SendMessageW(hwnd, CB_SETITEMHEIGHT, 0, ComboItemHeight());
         SendMessageW(hwnd, CB_SETMINVISIBLE, 12, 0);
         EnableComboPaint(hwnd);
     }
@@ -5908,8 +6053,8 @@ HWND MakeSettingsControl(HWND parent, const wchar_t* cls, const wchar_t* text, D
     if (lstrcmpiW(cls, L"STATIC") != 0) EnableInteractiveAnimation(hwnd);
     if (lstrcmpiW(cls, L"EDIT") == 0) EnableEditShortcuts(hwnd);
     if (lstrcmpiW(cls, L"COMBOBOX") == 0 && (style & CBS_OWNERDRAWFIXED)) {
-        SendMessageW(hwnd, CB_SETITEMHEIGHT, (WPARAM)-1, 30);
-        SendMessageW(hwnd, CB_SETITEMHEIGHT, 0, 30);
+        SendMessageW(hwnd, CB_SETITEMHEIGHT, (WPARAM)-1, ComboItemHeight());
+        SendMessageW(hwnd, CB_SETITEMHEIGHT, 0, ComboItemHeight());
         SendMessageW(hwnd, CB_SETMINVISIBLE, 12, 0);
         EnableComboPaint(hwnd);
     }
@@ -5922,6 +6067,11 @@ void FillSettingsCombos(HWND hwnd) {
     HWND animation = GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LEVEL);
     HWND particle = GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL);
     HWND report = GetDlgItem(hwnd, IDC_SETTINGS_REPORT_TEMPLATE);
+    HWND theme = GetDlgItem(hwnd, IDC_SETTINGS_THEME);
+    HWND accent = GetDlgItem(hwnd, IDC_SETTINGS_ACCENT);
+    HWND textScale = GetDlgItem(hwnd, IDC_SETTINGS_TEXT_SCALE);
+    HWND density = GetDlgItem(hwnd, IDC_SETTINGS_DENSITY);
+    HWND autosave = GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_INTERVAL);
 
     SendMessageW(language, CB_RESETCONTENT, 0, 0);
     for (int i = 0; i <= (int)UiLanguage::ChineseTraditionalHongKong; ++i) {
@@ -5959,11 +6109,48 @@ void FillSettingsCombos(HWND hwnd) {
     }
     SendMessageW(report, CB_SETCURSEL, (WPARAM)g_reportTemplate, 0);
 
+    SendMessageW(theme, CB_RESETCONTENT, 0, 0);
+    SendMessageW(theme, CB_ADDSTRING, 0, (LPARAM)Tr(L"Pure black", L"\u7eaf\u9ed1").c_str());
+    SendMessageW(theme, CB_ADDSTRING, 0, (LPARAM)Tr(L"Pure white", L"\u7eaf\u767d").c_str());
+    SendMessageW(theme, CB_SETCURSEL, (WPARAM)g_theme, 0);
+
+    SendMessageW(accent, CB_RESETCONTENT, 0, 0);
+    SendMessageW(accent, CB_ADDSTRING, 0, (LPARAM)Tr(L"Neutral", L"\u4e2d\u6027\u7070").c_str());
+    SendMessageW(accent, CB_ADDSTRING, 0, (LPARAM)Tr(L"Muted sage", L"\u4f4e\u9971\u548c\u9f20\u5c3e\u8349").c_str());
+    SendMessageW(accent, CB_ADDSTRING, 0, (LPARAM)Tr(L"Muted cyan", L"\u4f4e\u9971\u548c\u9752\u8272").c_str());
+    SendMessageW(accent, CB_SETCURSEL, (WPARAM)g_accentTone, 0);
+
+    SendMessageW(textScale, CB_RESETCONTENT, 0, 0);
+    SendMessageW(textScale, CB_ADDSTRING, 0, (LPARAM)Tr(L"Small", L"\u5c0f").c_str());
+    SendMessageW(textScale, CB_ADDSTRING, 0, (LPARAM)Tr(L"Standard", L"\u6807\u51c6").c_str());
+    SendMessageW(textScale, CB_ADDSTRING, 0, (LPARAM)Tr(L"Large", L"\u5927").c_str());
+    SendMessageW(textScale, CB_SETCURSEL, (WPARAM)g_textScale, 0);
+
+    SendMessageW(density, CB_RESETCONTENT, 0, 0);
+    SendMessageW(density, CB_ADDSTRING, 0, (LPARAM)Tr(L"Compact", L"\u7d27\u51d1").c_str());
+    SendMessageW(density, CB_ADDSTRING, 0, (LPARAM)Tr(L"Comfortable", L"\u8212\u9002").c_str());
+    SendMessageW(density, CB_ADDSTRING, 0, (LPARAM)Tr(L"Spacious", L"\u5bbd\u677e").c_str());
+    SendMessageW(density, CB_SETCURSEL, (WPARAM)g_layoutDensity, 0);
+
+    SendMessageW(autosave, CB_RESETCONTENT, 0, 0);
+    SendMessageW(autosave, CB_ADDSTRING, 0, (LPARAM)Tr(L"Off", L"\u5173\u95ed").c_str());
+    SendMessageW(autosave, CB_ADDSTRING, 0, (LPARAM)Tr(L"30 seconds", L"30 \u79d2").c_str());
+    SendMessageW(autosave, CB_ADDSTRING, 0, (LPARAM)Tr(L"1 minute", L"1 \u5206\u949f").c_str());
+    SendMessageW(autosave, CB_ADDSTRING, 0, (LPARAM)Tr(L"5 minutes", L"5 \u5206\u949f").c_str());
+    int autosaveIndex = g_autosaveIntervalSeconds == 0 ? 0 : g_autosaveIntervalSeconds == 60 ? 2 : g_autosaveIntervalSeconds == 300 ? 3 : 1;
+    SendMessageW(autosave, CB_SETCURSEL, autosaveIndex, 0);
+
     RedrawWindow(language, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
     RedrawWindow(font, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
     RedrawWindow(animation, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
     RedrawWindow(particle, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
     RedrawWindow(report, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+    RedrawWindow(theme, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+    RedrawWindow(accent, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+    RedrawWindow(textScale, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+    RedrawWindow(density, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+    RedrawWindow(autosave, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+    EnableWindow(particle, g_particlesEnabled ? TRUE : FALSE);
 }
 
 void ApplySettingsLanguage(HWND hwnd) {
@@ -5980,6 +6167,16 @@ void ApplySettingsLanguage(HWND hwnd) {
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_PROMPT), Tr(L"Prompt for autosave recovery", L"\u542f\u52a8\u65f6\u63d0\u793a\u6062\u590d\u81ea\u52a8\u4fdd\u5b58"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_COMMAND_PALETTE), Tr(L"Enable Ctrl+K command palette", L"\u542f\u7528 Ctrl+K \u547d\u4ee4\u9762\u677f"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_ADVANCED_FILTER), Tr(L"Enable advanced filter syntax", L"\u542f\u7528\u9ad8\u7ea7\u7b5b\u9009\u8bed\u6cd5"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_EXPERIMENTAL), Tr(L"Advanced personalization (Experimental)", L"\u9ad8\u7ea7\u4e2a\u6027\u5316\uff08\u5b9e\u9a8c\u6027\uff09"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_ADVANCED_TITLE), Tr(L"Advanced personalization", L"\u9ad8\u7ea7\u4e2a\u6027\u5316"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_THEME_LABEL), Tr(L"Theme", L"\u4e3b\u9898"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_ACCENT_LABEL), Tr(L"Accent tone", L"\u5f3a\u8c03\u8272\u8c03"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_TEXT_SCALE_LABEL), Tr(L"Text size", L"\u6587\u5b57\u5927\u5c0f"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_DENSITY_LABEL), Tr(L"Interface density", L"\u754c\u9762\u5bc6\u5ea6"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_LABEL), Tr(L"Autosave interval", L"\u81ea\u52a8\u4fdd\u5b58\u95f4\u9694"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_SHOW_STATS), Tr(L"Show statistics cards", L"\u663e\u793a\u7edf\u8ba1\u5361\u7247"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_SHOW_HINT), Tr(L"Show bottom usage hint", L"\u663e\u793a\u5e95\u90e8\u4f7f\u7528\u63d0\u793a"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_TABLE_GRID), Tr(L"Show table grid lines", L"\u663e\u793a\u8868\u683c\u7f51\u683c\u7ebf"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_APPLY), Tr(L"Apply", L"\u5e94\u7528"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_CLOSE), Tr(L"Close", L"\u5173\u95ed"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_RESET), Tr(L"Reset All Settings", L"\u91cd\u7f6e\u6240\u6709\u8bbe\u7f6e"));
@@ -5988,6 +6185,10 @@ void ApplySettingsLanguage(HWND hwnd) {
     SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_PROMPT), BM_SETCHECK, g_autosavePromptEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_COMMAND_PALETTE), BM_SETCHECK, g_commandPaletteEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_ADVANCED_FILTER), BM_SETCHECK, g_advancedFilterEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_EXPERIMENTAL), BM_SETCHECK, g_advancedPersonalizationEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_SHOW_STATS), BM_SETCHECK, g_showStatsCards ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_SHOW_HINT), BM_SETCHECK, g_showFooterHint ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TABLE_GRID), BM_SETCHECK, g_showTableGrid ? BST_CHECKED : BST_UNCHECKED, 0);
     FillSettingsCombos(hwnd);
 }
 
@@ -5997,13 +6198,27 @@ void ApplySettingsFromWindow(HWND hwnd) {
     int animationIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LEVEL), CB_GETCURSEL, 0, 0);
     int particleIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL), CB_GETCURSEL, 0, 0);
     int reportIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_REPORT_TEMPLATE), CB_GETCURSEL, 0, 0);
+    int themeIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_THEME), CB_GETCURSEL, 0, 0);
+    int accentIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_ACCENT), CB_GETCURSEL, 0, 0);
+    int textScaleIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TEXT_SCALE), CB_GETCURSEL, 0, 0);
+    int densityIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_DENSITY), CB_GETCURSEL, 0, 0);
+    int autosaveIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_INTERVAL), CB_GETCURSEL, 0, 0);
 
     if (language < 0 || language > (int)UiLanguage::ChineseTraditionalHongKong) language = 0;
     g_language = (UiLanguage)language;
-    g_theme = UiTheme::Dark;
     if (animationIndex >= 0 && animationIndex <= 2) g_animationLevel = (AnimationLevel)animationIndex;
     if (particleIndex >= 0 && particleIndex <= 2) g_particleLevel = (ParticleLevel)particleIndex;
     if (reportIndex >= 0 && reportIndex <= 3) g_reportTemplate = (ReportTemplate)reportIndex;
+    if (g_advancedPersonalizationEnabled) {
+        if (themeIndex >= 0 && themeIndex <= 1) g_theme = (UiTheme)themeIndex;
+        if (accentIndex >= 0 && accentIndex <= 2) g_accentTone = (AccentTone)accentIndex;
+        if (textScaleIndex >= 0 && textScaleIndex <= 2) g_textScale = (TextScale)textScaleIndex;
+        if (densityIndex >= 0 && densityIndex <= 2) g_layoutDensity = (LayoutDensity)densityIndex;
+        static const int autosaveSeconds[] = {0, 30, 60, 300};
+        if (autosaveIndex >= 0 && autosaveIndex <= 3) g_autosaveIntervalSeconds = autosaveSeconds[autosaveIndex];
+    } else {
+        g_theme = UiTheme::Dark;
+    }
 
     if (fontIndex >= 0) {
         std::wstring fontName = GetComboSelectedText(GetDlgItem(hwnd, IDC_SETTINGS_FONT));
@@ -6052,11 +6267,72 @@ void ResizeSettingsLayout(HWND hwnd) {
     MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_COMMAND_PALETTE), x, y, labelW + comboW, 30, TRUE);
     y += 38;
     MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_ADVANCED_FILTER), x, y, labelW + comboW, 30, TRUE);
-    y += 46;
+    y += 36;
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_EXPERIMENTAL), x, y, labelW + comboW, 30, TRUE);
+    y += 42;
     MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_RESET), x, y, labelW + comboW, 36, TRUE);
-    y += 48;
+    y += 44;
     MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_APPLY), comboX + comboW - 230, y, 110, 38, TRUE);
     MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_CLOSE), comboX + comboW - 110, y, 110, 38, TRUE);
+
+    int advancedX = 584;
+    int advancedComboX = advancedX + 170;
+    int advancedY = 22;
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_ADVANCED_TITLE), advancedX, advancedY, 430, 34, TRUE);
+    advancedY += 56;
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_THEME_LABEL), advancedX, advancedY + 6, 170, rowH, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_THEME), advancedComboX, advancedY, comboW, 120, TRUE);
+    advancedY += 48;
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_ACCENT_LABEL), advancedX, advancedY + 6, 170, rowH, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_ACCENT), advancedComboX, advancedY, comboW, 140, TRUE);
+    advancedY += 48;
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_TEXT_SCALE_LABEL), advancedX, advancedY + 6, 170, rowH, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_TEXT_SCALE), advancedComboX, advancedY, comboW, 140, TRUE);
+    advancedY += 48;
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_DENSITY_LABEL), advancedX, advancedY + 6, 170, rowH, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_DENSITY), advancedComboX, advancedY, comboW, 140, TRUE);
+    advancedY += 48;
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_LABEL), advancedX, advancedY + 6, 170, rowH, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_INTERVAL), advancedComboX, advancedY, comboW, 160, TRUE);
+    advancedY += 54;
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_SHOW_STATS), advancedX, advancedY, 430, 30, TRUE);
+    advancedY += 38;
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_SHOW_HINT), advancedX, advancedY, 430, 30, TRUE);
+    advancedY += 38;
+    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_TABLE_GRID), advancedX, advancedY, 430, 30, TRUE);
+}
+
+void ResetAdvancedPersonalizationValues() {
+    g_theme = UiTheme::Dark;
+    g_accentTone = AccentTone::Neutral;
+    g_textScale = TextScale::Standard;
+    g_layoutDensity = LayoutDensity::Comfortable;
+    g_showStatsCards = true;
+    g_showFooterHint = true;
+    g_showTableGrid = true;
+    g_autosaveIntervalSeconds = 30;
+}
+
+void SetSettingsAdvancedExpanded(HWND hwnd, bool expanded) {
+    const int advancedIds[] = {
+        IDC_SETTINGS_ADVANCED_TITLE, IDC_SETTINGS_THEME_LABEL, IDC_SETTINGS_THEME,
+        IDC_SETTINGS_ACCENT_LABEL, IDC_SETTINGS_ACCENT, IDC_SETTINGS_TEXT_SCALE_LABEL,
+        IDC_SETTINGS_TEXT_SCALE, IDC_SETTINGS_DENSITY_LABEL, IDC_SETTINGS_DENSITY,
+        IDC_SETTINGS_AUTOSAVE_LABEL, IDC_SETTINGS_AUTOSAVE_INTERVAL,
+        IDC_SETTINGS_SHOW_STATS, IDC_SETTINGS_SHOW_HINT, IDC_SETTINGS_TABLE_GRID
+    };
+    for (int id : advancedIds) {
+        HWND control = GetDlgItem(hwnd, id);
+        if (control) ShowWindow(control, expanded ? SW_SHOW : SW_HIDE);
+    }
+    RECT rc{};
+    GetWindowRect(hwnd, &rc);
+    int targetWidth = expanded ? 1060 : 560;
+    SetWindowPos(hwnd, nullptr, rc.left, rc.top, targetWidth, 690,
+        SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+    CenterOwnedWindow(hwnd, g_hwnd);
+    ResizeSettingsLayout(hwnd);
+    InvalidateRect(hwnd, nullptr, FALSE);
 }
 
 LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -6064,26 +6340,44 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_CREATE: {
         MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_TITLE);
         MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_LANG_LABEL);
-        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_FONT_LABEL);
-        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_ANIMATION_LABEL);
-        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_PARTICLE_LABEL);
-        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_REPORT_LABEL);
         MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_LANGUAGE);
+        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_FONT_LABEL);
         MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_FONT);
+        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_ANIMATION_LABEL);
         MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_ANIMATION_LEVEL);
+        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_PARTICLE_LABEL);
         MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_PARTICLE_LEVEL);
+        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_REPORT_LABEL);
         MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_REPORT_TEMPLATE);
-        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW, IDC_SETTINGS_PARTICLES);
-        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW, IDC_SETTINGS_RISK_ALERTS);
-        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW, IDC_SETTINGS_AUTOSAVE_PROMPT);
-        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW, IDC_SETTINGS_COMMAND_PALETTE);
-        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW, IDC_SETTINGS_ADVANCED_FILTER);
+        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_PARTICLES);
+        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_RISK_ALERTS);
+        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_AUTOSAVE_PROMPT);
+        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_COMMAND_PALETTE);
+        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_ADVANCED_FILTER);
+        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_EXPERIMENTAL);
+
+        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_ADVANCED_TITLE);
+        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_THEME_LABEL);
+        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_THEME);
+        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_ACCENT_LABEL);
+        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_ACCENT);
+        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_TEXT_SCALE_LABEL);
+        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_TEXT_SCALE);
+        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_DENSITY_LABEL);
+        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_DENSITY);
+        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_AUTOSAVE_LABEL);
+        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_AUTOSAVE_INTERVAL);
+        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_SHOW_STATS);
+        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_SHOW_HINT);
+        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_TABLE_GRID);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_RESET);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_APPLY);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_CLOSE);
         SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), WM_SETFONT, (WPARAM)g_titleFont, TRUE);
+        SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_ADVANCED_TITLE), WM_SETFONT, (WPARAM)g_titleFont, TRUE);
         ApplySettingsLanguage(hwnd);
         ResizeSettingsLayout(hwnd);
+        SetSettingsAdvancedExpanded(hwnd, g_advancedPersonalizationEnabled);
         return 0;
     }
     case WM_SIZE:
@@ -6099,16 +6393,51 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             StartAnimation((HWND)lParam, AnimChannel::ComboOpen, 0.0, 220);
             return 0;
         }
-        if (LOWORD(wParam) == IDC_SETTINGS_FONT && HIWORD(wParam) == CBN_SELCHANGE) {
+        if ((LOWORD(wParam) == IDC_SETTINGS_LANGUAGE || LOWORD(wParam) == IDC_SETTINGS_FONT)
+            && HIWORD(wParam) == CBN_SELCHANGE) {
             CommitComboSelectionNow((HWND)lParam);
             ApplySettingsFromWindow(hwnd);
             return 0;
         }
         if ((LOWORD(wParam) == IDC_SETTINGS_ANIMATION_LEVEL
             || LOWORD(wParam) == IDC_SETTINGS_PARTICLE_LEVEL
-            || LOWORD(wParam) == IDC_SETTINGS_REPORT_TEMPLATE) && HIWORD(wParam) == CBN_SELCHANGE) {
+            || LOWORD(wParam) == IDC_SETTINGS_REPORT_TEMPLATE
+            || LOWORD(wParam) == IDC_SETTINGS_THEME
+            || LOWORD(wParam) == IDC_SETTINGS_ACCENT
+            || LOWORD(wParam) == IDC_SETTINGS_TEXT_SCALE
+            || LOWORD(wParam) == IDC_SETTINGS_DENSITY
+            || LOWORD(wParam) == IDC_SETTINGS_AUTOSAVE_INTERVAL) && HIWORD(wParam) == CBN_SELCHANGE) {
             CommitComboSelectionNow((HWND)lParam);
             ApplySettingsFromWindow(hwnd);
+            return 0;
+        }
+        if (LOWORD(wParam) == IDC_SETTINGS_EXPERIMENTAL && HIWORD(wParam) == BN_CLICKED) {
+            HWND toggle = GetDlgItem(hwnd, IDC_SETTINGS_EXPERIMENTAL);
+            if (!g_advancedPersonalizationEnabled) {
+                int result = ThemedMessageBox(hwnd,
+                    Tr(L"This feature is experimental and may make the software unstable. Enable it?",
+                       L"\u6b64\u529f\u80fd\u4e3a\u5b9e\u9a8c\u6027\uff0c\u53ef\u80fd\u4f1a\u9020\u6210\u8f6f\u4ef6\u7684\u4e0d\u7a33\u5b9a\u3002\u662f\u5426\u542f\u7528\uff1f"),
+                    Tr(L"Experimental feature", L"\u5b9e\u9a8c\u6027\u529f\u80fd"), true);
+                if (result != IDYES) {
+                    SendMessageW(toggle, BM_SETCHECK, BST_UNCHECKED, 0);
+                    InvalidateRect(toggle, nullptr, FALSE);
+                    return 0;
+                }
+                g_advancedPersonalizationEnabled = true;
+                SendMessageW(toggle, BM_SETCHECK, BST_CHECKED, 0);
+                SaveSettings();
+                SetSettingsAdvancedExpanded(hwnd, true);
+                FillSettingsCombos(hwnd);
+            } else {
+                g_advancedPersonalizationEnabled = false;
+                ResetAdvancedPersonalizationValues();
+                SendMessageW(toggle, BM_SETCHECK, BST_UNCHECKED, 0);
+                ApplyVisualSettings();
+                SaveSettings();
+                ApplySettingsLanguage(hwnd);
+                SetSettingsAdvancedExpanded(hwnd, false);
+            }
+            InvalidateRect(toggle, nullptr, FALSE);
             return 0;
         }
         if ((LOWORD(wParam) == IDC_SETTINGS_PARTICLES
@@ -6129,8 +6458,26 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 : id == IDC_SETTINGS_COMMAND_PALETTE ? g_commandPaletteEnabled
                 : g_advancedFilterEnabled;
             SendMessageW(toggle, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
+            if (id == IDC_SETTINGS_PARTICLES) {
+                EnableWindow(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL), checked ? TRUE : FALSE);
+            }
             SaveSettings();
             InvalidateRect(toggle, nullptr, FALSE);
+            return 0;
+        }
+        if ((LOWORD(wParam) == IDC_SETTINGS_SHOW_STATS
+            || LOWORD(wParam) == IDC_SETTINGS_SHOW_HINT
+            || LOWORD(wParam) == IDC_SETTINGS_TABLE_GRID) && HIWORD(wParam) == BN_CLICKED) {
+            int id = LOWORD(wParam);
+            if (id == IDC_SETTINGS_SHOW_STATS) g_showStatsCards = !g_showStatsCards;
+            else if (id == IDC_SETTINGS_SHOW_HINT) g_showFooterHint = !g_showFooterHint;
+            else g_showTableGrid = !g_showTableGrid;
+            bool checked = id == IDC_SETTINGS_SHOW_STATS ? g_showStatsCards
+                : id == IDC_SETTINGS_SHOW_HINT ? g_showFooterHint : g_showTableGrid;
+            SendMessageW((HWND)lParam, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
+            ApplyVisualSettings();
+            SaveSettings();
+            InvalidateRect((HWND)lParam, nullptr, FALSE);
             return 0;
         }
         if (LOWORD(wParam) == IDC_SETTINGS_APPLY) {
@@ -6150,6 +6497,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 EnumChildWindows(hwnd, ApplyFontToChild, 0);
                 SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), WM_SETFONT, (WPARAM)g_titleFont, TRUE);
                 ApplySettingsLanguage(hwnd);
+                SetSettingsAdvancedExpanded(hwnd, false);
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
@@ -6158,7 +6506,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_MEASUREITEM: {
         auto* measure = reinterpret_cast<MEASUREITEMSTRUCT*>(lParam);
         if (measure->CtlType == ODT_COMBOBOX) {
-            measure->itemHeight = 30;
+            measure->itemHeight = ComboItemHeight();
             return TRUE;
         }
         break;
@@ -6180,7 +6528,8 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_CTLCOLORSTATIC: {
         HDC hdc = (HDC)wParam;
         HWND control = (HWND)lParam;
-        SetTextColor(hdc, GetDlgCtrlID(control) == IDC_SETTINGS_TITLE ? COLOR_TEXT : COLOR_MUTED);
+        int id = GetDlgCtrlID(control);
+        SetTextColor(hdc, (id == IDC_SETTINGS_TITLE || id == IDC_SETTINGS_ADVANCED_TITLE) ? COLOR_TEXT : COLOR_MUTED);
         SetBkMode(hdc, OPAQUE);
         SetBkColor(hdc, COLOR_BG);
         return (LRESULT)g_bgBrush;
@@ -6200,6 +6549,12 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     }
     case WM_ERASEBKGND:
         return 1;
+    case WM_KEYDOWN:
+        if (wParam == VK_ESCAPE) {
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        break;
     case WM_APP_ANIMATION_TICK:
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
@@ -6301,7 +6656,9 @@ void ResizeLayout(HWND hwnd) {
     g_scrollX = std::clamp(g_scrollX, 0, std::max(0, g_contentW - w));
     g_scrollY = std::clamp(g_scrollY, 0, std::max(0, g_contentH - h));
 
-    int pad = 28;
+    const bool compact = g_layoutDensity == LayoutDensity::Compact;
+    const bool spacious = g_layoutDensity == LayoutDensity::Spacious;
+    int pad = compact ? 20 : spacious ? 36 : 28;
     auto move = [&](int id, int x, int y, int width, int height) {
         HWND child = GetDlgItem(hwnd, id);
         if (child) MoveWindow(child, x - g_scrollX, y - g_scrollY, width, height, FALSE);
@@ -6310,7 +6667,7 @@ void ResizeLayout(HWND hwnd) {
         if (child) MoveWindow(child, x - g_scrollX, y - g_scrollY, width, height, FALSE);
     };
 
-    int titleY = 20;
+    int titleY = compact ? 14 : spacious ? 28 : 20;
     move(IDC_TITLE, pad, titleY, 430, 38);
     move(IDC_SUBTITLE, pad, titleY + 42, std::min(720, layoutW - pad * 2), 26);
 
@@ -6320,9 +6677,9 @@ void ResizeLayout(HWND hwnd) {
     moveHwnd(g_courseCombo, courseX, titleY + 6, courseW, 430);
     move(IDC_COURSE_OPTIONS, courseX + courseW + 12, titleY + 6, courseBtnW, 38);
 
-    int statsY = 104;
-    int statsGap = 16;
-    int statsH = 92;
+    int statsY = compact ? 90 : spacious ? 120 : 104;
+    int statsGap = compact ? 12 : spacious ? 22 : 16;
+    int statsH = g_showStatsCards ? (compact ? 78 : spacious ? 108 : 92) : 0;
     int statW = std::max(180, (layoutW - pad * 2 - statsGap * 3) / 4);
     int statX = pad;
     move(IDC_STAT_TOTAL, statX, statsY, statW, statsH);
@@ -6330,39 +6687,50 @@ void ResizeLayout(HWND hwnd) {
     move(IDC_STAT_ISSUES, statX + (statW + statsGap) * 2, statsY, statW, statsH);
     move(IDC_STAT_VISIBLE, statX + (statW + statsGap) * 3, statsY, statW, statsH);
 
-    int filterY = statsY + statsH + 18;
+    int sectionGap = compact ? 12 : spacious ? 24 : 18;
+    int filterY = g_showStatsCards ? statsY + statsH + sectionGap : statsY;
     int listX = pad;
     int listW = std::max(720, layoutW - pad * 2);
     int clearW = 136;
     int filterLabelW = 74;
     int filterW = std::min(460, std::max(240, listW / 3));
-    move(IDC_FILTER_LABEL, listX, filterY + 8, filterLabelW, 24);
-    moveHwnd(g_filterEdit, listX + filterLabelW, filterY, filterW, 36);
-    move(IDC_CLEAR_FILTER, listX + filterLabelW + filterW + 12, filterY - 1, clearW, 38);
+    int fieldH = compact ? 32 : spacious ? 44 : 36;
+    int fieldLabelOffset = std::max(4, (fieldH - 24) / 2);
+    move(IDC_FILTER_LABEL, listX, filterY + fieldLabelOffset, filterLabelW, 24);
+    moveHwnd(g_filterEdit, listX + filterLabelW, filterY, filterW, fieldH);
+    move(IDC_CLEAR_FILTER, listX + filterLabelW + filterW + 12, filterY, clearW, fieldH);
 
-    int dockPrimaryH = 56;
-    int drawerH = 40;
-    int drawerY = std::max(filterY + 430, layoutH - 68);
-    int dockY = drawerY - 72;
-    int composerY = dockY - 66;
-    int listY = filterY + 52;
-    int listH = std::max(260, composerY - listY - 20);
+    int dockPrimaryH = g_layoutDensity == LayoutDensity::Compact ? 50
+        : g_layoutDensity == LayoutDensity::Spacious ? 64 : 56;
+    int drawerH = g_layoutDensity == LayoutDensity::Compact ? 36
+        : g_layoutDensity == LayoutDensity::Spacious ? 44 : 40;
+    int bottomPad = compact ? 22 : spacious ? 36 : 28;
+    int dockGap = compact ? 10 : spacious ? 22 : 16;
+    int composerGap = compact ? 54 : spacious ? 82 : 66;
+    int listGap = compact ? 42 : spacious ? 64 : 52;
+    int listBottomGap = compact ? 14 : spacious ? 28 : 20;
+    int drawerY = std::max(filterY + 430, layoutH - drawerH - bottomPad);
+    int dockY = drawerY - dockPrimaryH - dockGap;
+    int composerY = dockY - composerGap;
+    int listY = filterY + listGap;
+    int listH = std::max(260, composerY - listY - listBottomGap);
     moveHwnd(g_list, listX, listY, listW, listH);
 
     int composerW = std::min(1060, layoutW - pad * 2);
     int composerX = pad + (layoutW - pad * 2 - composerW) / 2;
-    int labelY = composerY - 18;
+    int labelY = composerY - (compact ? 16 : spacious ? 22 : 18);
     int dateW = std::max(210, composerW / 4);
     int nameW = std::max(240, composerW / 4);
     int otherW = composerW - dateW - nameW - 32;
     move(2001, composerX, labelY, dateW, 18);
-    moveHwnd(g_dateEdit, composerX, composerY, dateW, 38);
+    int editorH = compact ? 34 : spacious ? 46 : 38;
+    moveHwnd(g_dateEdit, composerX, composerY, dateW, editorH);
     move(2002, composerX + dateW + 16, labelY, nameW, 18);
-    moveHwnd(g_nameEdit, composerX + dateW + 16, composerY, nameW, 38);
+    moveHwnd(g_nameEdit, composerX + dateW + 16, composerY, nameW, editorH);
     move(2003, composerX + dateW + nameW + 32, labelY, otherW, 18);
-    moveHwnd(g_otherEdit, composerX + dateW + nameW + 32, composerY, otherW, 38);
+    moveHwnd(g_otherEdit, composerX + dateW + nameW + 32, composerY, otherW, editorH);
 
-    int primaryGap = 12;
+    int primaryGap = compact ? 8 : spacious ? 18 : 12;
     int primaryW = std::clamp((layoutW - pad * 2 - primaryGap * 5) / 6, 128, 168);
     int primaryTotalW = primaryW * 6 + primaryGap * 5;
     int primaryX = pad + (layoutW - pad * 2 - primaryTotalW) / 2;
@@ -6373,7 +6741,7 @@ void ResizeLayout(HWND hwnd) {
     move(IDC_SAVE, primaryX + (primaryW + primaryGap) * 4, dockY, primaryW, dockPrimaryH);
     move(IDC_EXPORT_CSV, primaryX + (primaryW + primaryGap) * 5, dockY, primaryW, dockPrimaryH);
 
-    int drawerGap = 10;
+    int drawerGap = compact ? 6 : spacious ? 14 : 10;
     int drawerW = std::clamp((layoutW - pad * 2 - drawerGap * 7) / 8, 112, 148);
     int drawerTotalW = drawerW * 8 + drawerGap * 7;
     int drawerX = pad + (layoutW - pad * 2 - drawerTotalW) / 2;
@@ -6386,9 +6754,11 @@ void ResizeLayout(HWND hwnd) {
     move(IDC_TOOLS, drawerX + (drawerW + drawerGap) * 6, drawerY, drawerW, drawerH);
     move(IDC_SETTINGS, drawerX + (drawerW + drawerGap) * 7, drawerY, drawerW, drawerH);
 
-    move(IDC_HINT, pad, layoutH - 24, std::max(260, layoutW / 2), 22);
     int footerStatsW = std::min(720, std::max(420, layoutW - pad * 2));
-    move(IDC_STATS, std::max(pad, layoutW - footerStatsW - 12), layoutH - 22, footerStatsW, 20);
+    int footerStatsX = std::max(6, layoutW - footerStatsW - 6);
+    int hintW = std::max(260, footerStatsX - 18);
+    move(IDC_HINT, 6, layoutH - 20, hintW, 18);
+    move(IDC_STATS, footerStatsX, layoutH - 20, footerStatsW, 18);
 
     int widths[4] = {
         std::max(210, listW / 5),
@@ -6475,21 +6845,23 @@ void ScrollMainWindow(HWND hwnd, int bar, int code, int wheelDelta) {
 }
 
 void ApplyDarkMode(HWND hwnd) {
-    BOOL value = TRUE;
+    BOOL value = g_theme == UiTheme::Dark ? TRUE : FALSE;
     if (hwnd) DwmSetWindowAttribute(hwnd, 20, &value, sizeof(value));
     if (hwnd == g_hwnd) ApplyGlassTitleBar(hwnd);
     ApplyThemedControls(hwnd);
     if (g_list) {
-        SetWindowTheme(g_list, L"DarkMode_Explorer", nullptr);
+        SetWindowTheme(g_list, g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
         HWND header = ListView_GetHeader(g_list);
         if (header) {
-            SetWindowTheme(header, L"DarkMode_Explorer", nullptr);
+            SetWindowTheme(header, g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
             InvalidateRect(header, nullptr, FALSE);
         }
         ListView_SetBkColor(g_list, COLOR_PANEL);
         ListView_SetTextBkColor(g_list, COLOR_PANEL);
         ListView_SetTextColor(g_list, COLOR_TEXT);
-        ListView_SetExtendedListViewStyle(g_list, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER | LVS_EX_INFOTIP);
+        DWORD listStyle = LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_INFOTIP;
+        if (g_showTableGrid) listStyle |= LVS_EX_GRIDLINES;
+        ListView_SetExtendedListViewStyle(g_list, listStyle);
     }
 }
 
@@ -6552,7 +6924,9 @@ void TriggerButtonFeedback(HWND hwnd, POINT origin) {
     int id = GetDlgCtrlID(hwnd);
     if (id == IDC_SETTINGS_PARTICLES || id == IDC_SETTINGS_RISK_ALERTS
         || id == IDC_SETTINGS_AUTOSAVE_PROMPT || id == IDC_SETTINGS_COMMAND_PALETTE
-        || id == IDC_SETTINGS_ADVANCED_FILTER) return;
+        || id == IDC_SETTINGS_ADVANCED_FILTER || id == IDC_SETTINGS_EXPERIMENTAL
+        || id == IDC_SETTINGS_SHOW_STATS || id == IDC_SETTINGS_SHOW_HINT
+        || id == IDC_SETTINGS_TABLE_GRID) return;
     bool particlesEnabled = g_particlesEnabled && IsCoreParticleButton(id);
     bool rippleEnabled = g_animationLevel != AnimationLevel::Off;
     if (!rippleEnabled && !particlesEnabled) {
@@ -6589,7 +6963,9 @@ void TriggerButtonFeedback(HWND hwnd, POINT origin) {
             particle.radius = RandomRange(1.0, 3.0);
             particle.lifetimeMs = (uint32_t)RandomInt(800, 1200);
             particle.star = RandomInt(0, 5) == 0;
-            particle.color = RandomInt(0, 12) == 0 ? RGB(102, 204, 255) : RGB(255, 255, 255);
+            particle.color = RandomInt(0, 12) == 0
+                ? COLOR_ACCENT
+                : (g_theme == UiTheme::Dark ? RGB(255, 255, 255) : RGB(0, 0, 0));
             state.particles.push_back(particle);
             state.durationMs = std::max(state.durationMs, particle.lifetimeMs);
         }
@@ -6620,7 +6996,8 @@ void DrawButtonEffects(const DRAWITEMSTRUCT* draw, const RECT& buttonRc, COLORRE
         double eased = EaseOut(rippleProgress);
         int radius = (int)std::lround(80.0 * eased);
         double strength = 0.30 * (1.0 - rippleProgress);
-        COLORREF rippleColor = BlendColor(baseFill, RGB(255, 255, 255), strength);
+        COLORREF rippleTarget = g_theme == UiTheme::Dark ? RGB(255, 255, 255) : RGB(0, 0, 0);
+        COLORREF rippleColor = BlendColor(baseFill, rippleTarget, strength);
         HPEN ripplePen = CreatePen(PS_SOLID, 2, rippleColor);
         HGDIOBJ oldPen = SelectObject(draw->hDC, ripplePen);
         HGDIOBJ oldBrush = SelectObject(draw->hDC, GetStockObject(HOLLOW_BRUSH));
@@ -6641,7 +7018,7 @@ void DrawButtonEffects(const DRAWITEMSTRUCT* draw, const RECT& buttonRc, COLORRE
         double size = particle.radius * (1.0 + 0.5 * progress);
         int r = std::max(1, (int)std::lround(size));
         double opacity = std::pow(1.0 - progress, 1.35);
-        COLORREF color = BlendColor(particle.color, RGB(136, 136, 136), progress);
+        COLORREF color = BlendColor(particle.color, COLOR_MUTED, progress);
         color = BlendColor(baseFill, color, opacity);
 
         HBRUSH brush = CreateSolidBrush(color);
@@ -6676,6 +7053,10 @@ bool DrawParticleToggleItem(const DRAWITEMSTRUCT* draw) {
     else if (draw->CtlID == IDC_SETTINGS_AUTOSAVE_PROMPT) value = &g_autosavePromptEnabled;
     else if (draw->CtlID == IDC_SETTINGS_COMMAND_PALETTE) value = &g_commandPaletteEnabled;
     else if (draw->CtlID == IDC_SETTINGS_ADVANCED_FILTER) value = &g_advancedFilterEnabled;
+    else if (draw->CtlID == IDC_SETTINGS_EXPERIMENTAL) value = &g_advancedPersonalizationEnabled;
+    else if (draw->CtlID == IDC_SETTINGS_SHOW_STATS) value = &g_showStatsCards;
+    else if (draw->CtlID == IDC_SETTINGS_SHOW_HINT) value = &g_showFooterHint;
+    else if (draw->CtlID == IDC_SETTINGS_TABLE_GRID) value = &g_showTableGrid;
     else return false;
 
     wchar_t text[160]{};
@@ -6688,7 +7069,8 @@ bool DrawParticleToggleItem(const DRAWITEMSTRUCT* draw) {
 
     bool checked = *value;
     double hover = GetAnimationValue(draw->hwndItem, AnimChannel::Hover, 0.0);
-    COLORREF border = BlendColor(RGB(51, 51, 51), RGB(85, 85, 85), hover);
+    bool focused = (draw->itemState & ODS_FOCUS) != 0;
+    COLORREF border = BlendColor(COLOR_BORDER, COLOR_ACCENT, focused ? 1.0 : hover);
 
     int box = 18;
     int boxTop = (int)rc.top + std::max(0, ((int)(rc.bottom - rc.top) - box) / 2);
@@ -6699,7 +7081,7 @@ bool DrawParticleToggleItem(const DRAWITEMSTRUCT* draw) {
         boxTop + box
     };
 
-    HBRUSH fill = CreateSolidBrush(RGB(0, 0, 0));
+    HBRUSH fill = CreateSolidBrush(COLOR_CHECK_FILL);
     HPEN borderPen = CreatePen(PS_SOLID, 1, border);
     HGDIOBJ oldBrush = SelectObject(draw->hDC, fill);
     HGDIOBJ oldPen = SelectObject(draw->hDC, borderPen);
@@ -6740,8 +7122,8 @@ bool DrawButtonItem(const DRAWITEMSTRUCT* draw) {
     double hover = GetAnimationValue(draw->hwndItem, AnimChannel::Hover, focused ? 1.0 : 0.0);
     double press = std::max(pressedState ? 1.0 : 0.0, GetAnimationValue(draw->hwndItem, AnimChannel::Press, 0.0));
 
-    COLORREF fill = BlendColor(COLOR_INPUT, RGB(38, 38, 38), hover);
-    COLORREF border = BlendColor(RGB(64, 64, 64), COLOR_ACCENT, focused ? 1.0 : hover);
+    COLORREF fill = BlendColor(COLOR_INPUT, COLOR_HOVER, hover);
+    COLORREF border = BlendColor(COLOR_BORDER, COLOR_ACCENT, focused ? 1.0 : hover);
     COLORREF buttonText = BlendColor(COLOR_MUTED, COLOR_TEXT, std::clamp(0.45 + hover * 0.55, 0.0, 1.0));
 
     bool isDanger = draw->CtlID == IDC_DELETE || draw->CtlID == IDC_SETTINGS_RESET;
@@ -6749,18 +7131,20 @@ bool DrawButtonItem(const DRAWITEMSTRUCT* draw) {
     bool isBlue = draw->CtlID == IDC_IMPORT || draw->CtlID == IDC_NEW || draw->CtlID == IDC_EXPORT_CSV;
 
     if (isDanger) {
-        fill = BlendColor(RGB(36, 24, 24), RGB(58, 38, 38), hover);
-        border = BlendColor(RGB(92, 64, 64), COLOR_DANGER, focused ? 1.0 : hover);
-        buttonText = RGB(255, 238, 238);
+        COLORREF dangerBase = BlendColor(COLOR_INPUT, COLOR_DANGER, g_theme == UiTheme::Dark ? 0.12 : 0.08);
+        fill = BlendColor(dangerBase, COLOR_DANGER, hover * 0.18);
+        border = BlendColor(COLOR_BORDER, COLOR_DANGER, focused ? 1.0 : 0.45 + hover * 0.55);
+        buttonText = COLOR_TEXT;
     } else if (isGreen) {
-        fill = BlendColor(RGB(24, 30, 28), RGB(38, 48, 44), hover);
-        border = BlendColor(RGB(68, 78, 74), RGB(146, 166, 156), focused ? 1.0 : hover);
+        COLORREF success = g_theme == UiTheme::Dark ? RGB(146, 166, 156) : RGB(74, 112, 92);
+        fill = BlendColor(COLOR_INPUT, success, 0.08 + hover * 0.12);
+        border = BlendColor(COLOR_BORDER, success, focused ? 1.0 : 0.35 + hover * 0.65);
     } else if (isBlue) {
-        fill = BlendColor(RGB(25, 25, 25), RGB(44, 44, 44), hover);
-        border = BlendColor(RGB(72, 72, 72), COLOR_ACCENT, focused ? 1.0 : hover);
+        fill = BlendColor(COLOR_INPUT, COLOR_ACCENT, 0.04 + hover * 0.10);
+        border = BlendColor(COLOR_BORDER, COLOR_ACCENT, focused ? 1.0 : hover);
     }
 
-    fill = BlendColor(fill, RGB(50, 50, 50), press * 0.45);
+    fill = BlendColor(fill, COLOR_SELECTED, press * 0.45);
 
     HBRUSH outerBrush = CreateSolidBrush(COLOR_BG);
     FillRect(draw->hDC, &draw->rcItem, outerBrush);
@@ -6791,7 +7175,9 @@ bool DrawButtonItem(const DRAWITEMSTRUCT* draw) {
 
     SetBkMode(draw->hDC, TRANSPARENT);
     SetTextColor(draw->hDC, buttonText);
+    HGDIOBJ oldFont = g_font ? SelectObject(draw->hDC, g_font) : nullptr;
     DrawTextW(draw->hDC, text, -1, &buttonRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (oldFont) SelectObject(draw->hDC, oldFont);
     return true;
 }
 
@@ -6807,7 +7193,7 @@ bool DrawComboItem(const DRAWITEMSTRUCT* draw) {
     bool selected = (draw->itemState & ODS_SELECTED) != 0;
     double open = GetAnimationValue(draw->hwndItem, AnimChannel::ComboOpen, 1.0);
     double itemProgress = ElasticOut(std::clamp((open - (double)std::min<UINT>(draw->itemID, 10) * 0.075) / 0.55, 0.0, 1.0));
-    COLORREF rowFill = selected ? RGB(42, 42, 42) : COLOR_INPUT;
+    COLORREF rowFill = selected ? COLOR_SELECTED : COLOR_INPUT;
     COLORREF fill = BlendColor(COLOR_BG, rowFill, itemProgress);
     COLORREF textColor = BlendColor(COLOR_MUTED, COLOR_TEXT, itemProgress);
 
@@ -6831,7 +7217,9 @@ bool DrawComboItem(const DRAWITEMSTRUCT* draw) {
     rc.right -= 8;
     SetBkMode(draw->hDC, TRANSPARENT);
     SetTextColor(draw->hDC, textColor);
+    HGDIOBJ oldFont = g_font ? SelectObject(draw->hDC, g_font) : nullptr;
     DrawTextW(draw->hDC, text.c_str(), -1, &rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (oldFont) SelectObject(draw->hDC, oldFont);
     return true;
 }
 
@@ -6844,9 +7232,9 @@ void PaintComboClosed(HWND hwnd, HDC hdc) {
     double open = GetAnimationValue(hwnd, AnimChannel::ComboOpen, 0.0);
 
     double active = std::clamp(std::max(hover, open), 0.0, 1.0);
-    COLORREF fill = enabled ? BlendColor(COLOR_INPUT, RGB(36, 36, 36), active) : RGB(18, 18, 18);
-    COLORREF border = BlendColor(RGB(64, 64, 64), COLOR_ACCENT, focused ? 1.0 : active);
-    COLORREF arrowFill = BlendColor(RGB(20, 20, 20), RGB(42, 42, 42), active);
+    COLORREF fill = enabled ? BlendColor(COLOR_INPUT, COLOR_HOVER, active) : COLOR_PANEL;
+    COLORREF border = BlendColor(COLOR_BORDER, COLOR_ACCENT, focused ? 1.0 : active);
+    COLORREF arrowFill = BlendColor(COLOR_PANEL, COLOR_SELECTED, active);
     COLORREF textColor = enabled ? COLOR_TEXT : COLOR_MUTED;
 
     HBRUSH bg = CreateSolidBrush(fill);
@@ -6964,7 +7352,7 @@ void ApplyComboDropDownTheme(HWND combo) {
     info.cbSize = sizeof(info);
     if (!GetComboBoxInfo(combo, &info)) return;
 
-    const wchar_t* themeName = L"DarkMode_Explorer";
+    const wchar_t* themeName = g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer";
     SetWindowTheme(combo, themeName, nullptr);
     if (info.hwndItem) SetWindowTheme(info.hwndItem, themeName, nullptr);
     if (info.hwndList) {
@@ -6983,8 +7371,8 @@ void EnableComboPaint(HWND combo) {
 void PaintHeaderControl(HWND hwnd, HDC hdc) {
     RECT full{};
     GetClientRect(hwnd, &full);
-    COLORREF fill = RGB(18, 18, 18);
-    COLORREF border = RGB(68, 68, 68);
+    COLORREF fill = COLOR_PANEL;
+    COLORREF border = COLOR_BORDER;
     HBRUSH bg = CreateSolidBrush(fill);
     FillRect(hdc, &full, bg);
     DeleteObject(bg);
@@ -6993,7 +7381,7 @@ void PaintHeaderControl(HWND hwnd, HDC hdc) {
     HGDIOBJ oldPen = SelectObject(hdc, pen);
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, COLOR_TEXT);
-    SelectObject(hdc, g_font);
+    HGDIOBJ oldFont = g_font ? SelectObject(hdc, g_font) : nullptr;
 
     int count = Header_GetItemCount(hwnd);
     for (int i = 0; i < count; ++i) {
@@ -7016,6 +7404,7 @@ void PaintHeaderControl(HWND hwnd, HDC hdc) {
         DrawTextW(hdc, text, -1, &rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
 
+    if (oldFont) SelectObject(hdc, oldFont);
     SelectObject(hdc, oldPen);
     DeleteObject(pen);
 }
@@ -7065,8 +7454,8 @@ LRESULT CALLBACK StatsPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
             RECT cardRc = rc;
             InflateRect(&cardRc, -1, -1);
-            HBRUSH fill = CreateSolidBrush(RGB(16, 16, 16));
-            HPEN pen = CreatePen(PS_SOLID, 1, RGB(16, 16, 16));
+            HBRUSH fill = CreateSolidBrush(COLOR_CARD);
+            HPEN pen = CreatePen(PS_SOLID, 1, COLOR_CARD);
             HGDIOBJ oldBrush = SelectObject(hdc, fill);
             HGDIOBJ oldPen = SelectObject(hdc, pen);
             RoundRect(hdc, cardRc.left, cardRc.top, cardRc.right, cardRc.bottom, 8, 8);
@@ -7077,7 +7466,8 @@ LRESULT CALLBACK StatsPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
             for (int glow = 0; glow < 8; ++glow) {
                 double amount = 0.050 * (1.0 - glow / 8.0);
-                COLORREF glowColor = BlendColor(RGB(16, 16, 16), RGB(255, 255, 255), amount);
+                COLORREF glowTarget = g_theme == UiTheme::Dark ? RGB(255, 255, 255) : RGB(0, 0, 0);
+                COLORREF glowColor = BlendColor(COLOR_CARD, glowTarget, amount);
                 HPEN glowPen = CreatePen(PS_SOLID, 1, glowColor);
                 HGDIOBJ oldGlowPen = SelectObject(hdc, glowPen);
                 HGDIOBJ oldGlowBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
@@ -7205,7 +7595,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         ResizeLayout(hwnd);
         ApplyDarkMode(hwnd);
         InvalidateRect(hwnd, nullptr, FALSE);
-        SetTimer(hwnd, 1, 30000, nullptr);
+        if (g_autosaveIntervalSeconds > 0) {
+            SetTimer(hwnd, 1, (UINT)g_autosaveIntervalSeconds * 1000, nullptr);
+        }
         return 0;
     }
     case WM_SIZE:
@@ -7255,7 +7647,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         if (LOWORD(wParam) == IDC_FILTER && HIWORD(wParam) == EN_CHANGE) {
             g_filterText = LowerText(GetText(g_filterEdit));
-            RefreshList();
+            SetTimer(hwnd, 2, 120, nullptr);
             return 0;
         }
         switch (LOWORD(wParam)) {
@@ -7273,7 +7665,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case IDC_SAVE: SaveAttendance(); return 0;
         case IDC_IMPORT: ImportAttendance(); return 0;
         case IDC_CLEAR_FILTER:
+            KillTimer(hwnd, 2);
             SetText(g_filterEdit, L"");
+            KillTimer(hwnd, 2);
             g_filterText.clear();
             RefreshList();
             return 0;
@@ -7331,12 +7725,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         break;
     case WM_TIMER:
-        AutoSaveNow();
+        if (wParam == 1) AutoSaveNow();
+        else if (wParam == 2) {
+            KillTimer(hwnd, 2);
+            RefreshList();
+        }
         return 0;
     case WM_MEASUREITEM: {
         auto* measure = reinterpret_cast<MEASUREITEMSTRUCT*>(lParam);
         if (measure->CtlType == ODT_COMBOBOX) {
-            measure->itemHeight = 30;
+            measure->itemHeight = ComboItemHeight();
             return TRUE;
         }
         break;
@@ -7405,6 +7803,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     case WM_DESTROY:
         KillTimer(hwnd, 1);
+        KillTimer(hwnd, 2);
         AutoSaveNow();
         RemoveAnimationState(hwnd);
         StopAnimationThread();
@@ -7483,9 +7882,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCm
             if (IsDialogMessageW(g_quickRollCallWindow, &msg)) continue;
         }
         if (g_settingsWindow && IsWindow(g_settingsWindow)
-            && (msg.hwnd == g_settingsWindow || IsChild(g_settingsWindow, msg.hwnd))
-            && IsDialogMessageW(g_settingsWindow, &msg)) {
-            continue;
+            && (msg.hwnd == g_settingsWindow || IsChild(g_settingsWindow, msg.hwnd))) {
+            if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE) {
+                SendMessageW(g_settingsWindow, WM_KEYDOWN, msg.wParam, msg.lParam);
+                continue;
+            }
+            if (IsDialogMessageW(g_settingsWindow, &msg)) continue;
         }
         TranslateMessage(&msg);
         DispatchMessageW(&msg);

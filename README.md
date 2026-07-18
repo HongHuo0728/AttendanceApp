@@ -21,7 +21,7 @@ AttendanceApp is a standalone C++/Win32 desktop application for roll call and at
 - Export attendance records to CSV.
 - Print or export to PDF through a generated printable HTML report with selectable report templates.
 - PowerPoint `.pptx` export with a pure-black report theme, summary cards, status charts, trend charts, and template/range-aware summaries.
-- Autosave every 30 seconds to `%APPDATA%\AttendanceApp\autosave.attd`.
+- Configurable autosave to `%APPDATA%\AttendanceApp\autosave.attd` (off, 30 seconds, 1 minute, or 5 minutes through experimental personalization).
 - Restore, inspect, ignore, or delete autosave files on startup when available.
 - Backup and restore the latest attendance workbook from AppData, with timestamped backup history.
 - Reopen the most recently saved or imported attendance file.
@@ -32,7 +32,8 @@ AttendanceApp is a standalone C++/Win32 desktop application for roll call and at
 - Command palette for quick save/import/export/backup/statistics/settings actions, lesson review, and `rollcall` / `点名` launch.
 - Database mirror export to `%APPDATA%\AttendanceApp\attendance.attddb`.
 - Persistent settings saved to `%APPDATA%\AttendanceApp\settings.ini`.
-- Pure-black interface theme, interface font selection, animation/particle intensity controls, and multilingual UI.
+- Pure-black default theme with an opt-in experimental personalization panel for pure-white mode, restrained accent tones, text size, interface density, autosave timing, statistics cards, footer hint, and table grid visibility.
+- Experimental personalization is warning-gated; switching it off discards its values and immediately restores the original pure-black interface.
 - Bounded, scrollable Tools menu with a local double-buffered refresh path, keyboard navigation, and a slim position indicator.
 - Supported languages: English, Simplified Chinese, Maltese, Japanese, French, German, Russian, Traditional Chinese Taiwan, Spanish, Italian, Mongolian, Esperanto, Classical Chinese, Thai, Filipino, Turkish, Lithuanian, Norwegian, Vietnamese, Traditional Chinese Hong Kong Cantonese.
 - Default window size: `1600x900`; resizable with `F11` fullscreen.
