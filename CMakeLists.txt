@@ -14,6 +14,7 @@ target_include_directories(AttendanceApp PRIVATE include)
 target_compile_definitions(AttendanceApp PRIVATE UNICODE _UNICODE)
 if (MSVC)
     target_compile_options(AttendanceApp PRIVATE /utf-8)
+    target_link_options(AttendanceApp PRIVATE /MANIFEST:NO)
 endif()
 
 target_link_libraries(AttendanceApp PRIVATE user32 gdi32 comdlg32 comctl32 shell32 ole32 uxtheme dwmapi msimg32)
