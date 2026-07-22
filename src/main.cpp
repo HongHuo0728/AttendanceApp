@@ -5,6 +5,7 @@
 #include <dwmapi.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <shobjidl.h>
 #include <uxtheme.h>
 
 #include <algorithm>
@@ -229,6 +230,11 @@ static int g_openThemedPopupMenus = 0;
 static std::wstring g_filterText;
 static constexpr int MIN_LAYOUT_W = 1180;
 static constexpr int MIN_LAYOUT_H = 820;
+static constexpr uintmax_t MAX_ATTD_FILE_BYTES = 64ull * 1024ull * 1024ull;
+static constexpr size_t MAX_SHEET_COUNT = 10000;
+static constexpr size_t MAX_STUDENTS_PER_SHEET = 1000000;
+static constexpr size_t MAX_RECORDS_PER_SHEET = 1000000;
+static constexpr size_t MAX_TOTAL_RECORDS = 2000000;
 static constexpr UINT WM_APP_ANIMATION_TICK = WM_APP + 41;
 static constexpr UINT WM_APP_ANIMATION_DONE = WM_APP + 42;
 
@@ -392,7 +398,7 @@ void EnableComboPaint(HWND combo);
 void ApplyComboDropDownTheme(HWND combo);
 std::string WideToUtf8(const std::wstring& input);
 std::wstring Utf8ToWide(const std::string& input);
-bool LoadAttendanceFile(const std::wstring& path, bool showSuccess);
+bool LoadAttendanceFile(const std::wstring& path, bool showSuccess, bool rememberRecent = true, bool preserveAutosave = false);
 void PushUndo();
 HWND MakeSettingsControl(HWND parent, const wchar_t* cls, const wchar_t* text, DWORD style, int id);
 std::wstring Tr(const wchar_t* english, const wchar_t* chinese);
@@ -2304,6 +2310,79 @@ std::filesystem::path SettingsFilePath() {
     return result;
 }
 
+bool EnsureParentDirectory(const std::filesystem::path& path) {
+    try {
+        const auto parent = path.parent_path();
+        if (parent.empty()) return true;
+        std::error_code ec;
+        std::filesystem::create_directories(parent, ec);
+        return !ec;
+    } catch (const std::filesystem::filesystem_error&) {
+        return false;
+    }
+}
+
+std::filesystem::path TemporarySiblingPath(const std::filesystem::path& path) {
+    std::wstring suffix = L".tmp-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64());
+    return path.parent_path() / (path.filename().wstring() + suffix);
+}
+
+bool WriteBinaryFileAtomically(const std::filesystem::path& path, const std::string& data) {
+    try {
+        if (path.empty() || !EnsureParentDirectory(path)) return false;
+        const auto temporary = TemporarySiblingPath(path);
+        {
+            std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+            if (!file) return false;
+            file.write(data.data(), static_cast<std::streamsize>(data.size()));
+            file.flush();
+            if (!file) {
+                file.close();
+                std::error_code ec;
+                std::filesystem::remove(temporary, ec);
+                return false;
+            }
+            file.close();
+            if (file.fail()) {
+                std::error_code ec;
+                std::filesystem::remove(temporary, ec);
+                return false;
+            }
+        }
+
+        if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+            std::error_code ec;
+            std::filesystem::remove(temporary, ec);
+            return false;
+        }
+        return true;
+    } catch (const std::filesystem::filesystem_error&) {
+        return false;
+    }
+}
+
+bool ReadBinaryFileLimited(const std::filesystem::path& path, std::string& output, uintmax_t maximumBytes) {
+    output.clear();
+    try {
+        std::error_code ec;
+        const uintmax_t size = std::filesystem::file_size(path, ec);
+        if (ec || size > maximumBytes) return false;
+        std::ifstream file(path, std::ios::binary);
+        if (!file) return false;
+        output.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+        return file.good() || file.eof();
+    } catch (const std::filesystem::filesystem_error&) {
+        output.clear();
+        return false;
+    }
+}
+
+bool FileExistsNoThrow(const std::filesystem::path& path) {
+    if (path.empty()) return false;
+    std::error_code ec;
+    return std::filesystem::exists(path, ec) && !ec;
+}
+
 std::string LanguageToString(UiLanguage language) {
     switch (language) {
     case UiLanguage::ChineseSimplified: return "zh-CN";
@@ -2367,40 +2446,39 @@ std::string BoolSetting(bool value) {
 void SaveSettings() {
     auto path = SettingsFilePath();
     if (path.empty()) return;
-    std::filesystem::create_directories(path.parent_path());
-    std::ofstream file(path, std::ios::binary);
-    if (!file) return;
-    file << "language=" << LanguageToString(g_language) << "\n";
-    file << "advanced_personalization=" << BoolSetting(g_advancedPersonalizationEnabled) << "\n";
-    file << "theme=" << (int)g_theme << "\n";
-    file << "accent_tone=" << (int)g_accentTone << "\n";
-    file << "text_scale=" << (int)g_textScale << "\n";
-    file << "layout_density=" << (int)g_layoutDensity << "\n";
-    file << "show_stats_cards=" << BoolSetting(g_showStatsCards) << "\n";
-    file << "show_footer_hint=" << BoolSetting(g_showFooterHint) << "\n";
-    file << "show_table_grid=" << BoolSetting(g_showTableGrid) << "\n";
-    file << "autosave_interval=" << g_autosaveIntervalSeconds << "\n";
-    file << "font=" << WideToUtf8(g_fontFamily) << "\n";
-    file << "default_save_dir=" << WideToUtf8(g_defaultSaveDir) << "\n";
-    file << "particles=" << (g_particlesEnabled ? "1" : "0") << "\n";
-    file << "animation_level=" << (int)g_animationLevel << "\n";
-    file << "particle_level=" << (int)g_particleLevel << "\n";
-    file << "report_template=" << (int)g_reportTemplate << "\n";
-    file << "risk_alerts=" << BoolSetting(g_riskAlertsEnabled) << "\n";
-    file << "autosave_prompt=" << BoolSetting(g_autosavePromptEnabled) << "\n";
-    file << "command_palette=" << BoolSetting(g_commandPaletteEnabled) << "\n";
-    file << "advanced_filter=" << BoolSetting(g_advancedFilterEnabled) << "\n";
-    file << "shortcut_save=" << WideToUtf8(g_shortcutSave) << "\n";
-    file << "shortcut_import=" << WideToUtf8(g_shortcutImport) << "\n";
-    file << "shortcut_undo=" << WideToUtf8(g_shortcutUndo) << "\n";
-    file << "shortcut_redo=" << WideToUtf8(g_shortcutRedo) << "\n";
-    file << "shortcut_command=" << WideToUtf8(g_shortcutCommand) << "\n";
-    file << "shortcut_fullscreen=" << WideToUtf8(g_shortcutFullscreen) << "\n";
+    std::ostringstream data;
+    data << "language=" << LanguageToString(g_language) << "\n";
+    data << "advanced_personalization=" << BoolSetting(g_advancedPersonalizationEnabled) << "\n";
+    data << "theme=" << (int)g_theme << "\n";
+    data << "accent_tone=" << (int)g_accentTone << "\n";
+    data << "text_scale=" << (int)g_textScale << "\n";
+    data << "layout_density=" << (int)g_layoutDensity << "\n";
+    data << "show_stats_cards=" << BoolSetting(g_showStatsCards) << "\n";
+    data << "show_footer_hint=" << BoolSetting(g_showFooterHint) << "\n";
+    data << "show_table_grid=" << BoolSetting(g_showTableGrid) << "\n";
+    data << "autosave_interval=" << g_autosaveIntervalSeconds << "\n";
+    data << "font=" << WideToUtf8(g_fontFamily) << "\n";
+    data << "default_save_dir=" << WideToUtf8(g_defaultSaveDir) << "\n";
+    data << "particles=" << (g_particlesEnabled ? "1" : "0") << "\n";
+    data << "animation_level=" << (int)g_animationLevel << "\n";
+    data << "particle_level=" << (int)g_particleLevel << "\n";
+    data << "report_template=" << (int)g_reportTemplate << "\n";
+    data << "risk_alerts=" << BoolSetting(g_riskAlertsEnabled) << "\n";
+    data << "autosave_prompt=" << BoolSetting(g_autosavePromptEnabled) << "\n";
+    data << "command_palette=" << BoolSetting(g_commandPaletteEnabled) << "\n";
+    data << "advanced_filter=" << BoolSetting(g_advancedFilterEnabled) << "\n";
+    data << "shortcut_save=" << WideToUtf8(g_shortcutSave) << "\n";
+    data << "shortcut_import=" << WideToUtf8(g_shortcutImport) << "\n";
+    data << "shortcut_undo=" << WideToUtf8(g_shortcutUndo) << "\n";
+    data << "shortcut_redo=" << WideToUtf8(g_shortcutRedo) << "\n";
+    data << "shortcut_command=" << WideToUtf8(g_shortcutCommand) << "\n";
+    data << "shortcut_fullscreen=" << WideToUtf8(g_shortcutFullscreen) << "\n";
+    WriteBinaryFileAtomically(path, data.str());
 }
 
 void LoadSettings() {
     auto path = SettingsFilePath();
-    if (path.empty() || !std::filesystem::exists(path)) return;
+    if (!FileExistsNoThrow(path)) return;
 
     std::ifstream file(path, std::ios::binary);
     if (!file) return;
@@ -2588,6 +2666,7 @@ bool DeserializeRecords(const std::string& plainText, std::vector<AttendanceReco
     } catch (...) {
         return false;
     }
+    if (count > MAX_RECORDS_PER_SHEET) return false;
 
     std::vector<AttendanceRecord> records;
     for (size_t i = 0; i < count; ++i) {
@@ -2653,11 +2732,12 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
     std::istringstream ss(plainText);
     std::string header;
     std::getline(ss, header);
-    g_loadedActiveSheet = 0;
+    int loadedActiveSheet = 0;
     if (header == "ATTENDANCE_V1") {
         std::vector<AttendanceRecord> records;
         if (!DeserializeRecords(plainText, records)) return false;
         output = {MakeSheet(L"Default Course", std::move(records))};
+        g_loadedActiveSheet = 0;
         return true;
     }
     if (header != "ATTENDANCE_V2" && header != "ATTENDANCE_V3" && header != "ATTENDANCE_V4" && header != "ATTENDANCE_V5") return false;
@@ -2667,9 +2747,9 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
         std::string activeLine;
         std::getline(ss, activeLine);
         try {
-            g_loadedActiveSheet = std::stoi(activeLine);
+            loadedActiveSheet = std::stoi(activeLine);
         } catch (...) {
-            g_loadedActiveSheet = 0;
+            loadedActiveSheet = 0;
         }
     }
     std::getline(ss, countLine);
@@ -2679,8 +2759,10 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
     } catch (...) {
         return false;
     }
+    if (sheetCount > MAX_SHEET_COUNT) return false;
 
     std::vector<AttendanceSheet> sheets;
+    size_t totalRecords = 0;
     for (size_t s = 0; s < sheetCount; ++s) {
         std::string nameLine;
         std::string recordCountLine;
@@ -2707,6 +2789,7 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
             } catch (...) {
                 return false;
             }
+            if (studentCount > MAX_STUDENTS_PER_SHEET) return false;
             for (size_t i = 0; i < studentCount; ++i) {
                 std::string studentLine;
                 if (!std::getline(ss, studentLine)) return false;
@@ -2721,6 +2804,8 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
         } catch (...) {
             return false;
         }
+        if (recordCount > MAX_RECORDS_PER_SHEET || recordCount > MAX_TOTAL_RECORDS - totalRecords) return false;
+        totalRecords += recordCount;
         for (size_t i = 0; i < recordCount; ++i) {
             std::string line;
             if (!std::getline(ss, line)) return false;
@@ -2738,6 +2823,7 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
 
     if (sheets.empty()) sheets.push_back(MakeSheet(L"Default Course"));
     output = std::move(sheets);
+    g_loadedActiveSheet = loadedActiveSheet;
     return true;
 }
 
@@ -2824,6 +2910,14 @@ void ShowMessage(const std::wstring& text, const std::wstring& title = L"Attenda
     ThemedMessageBox(g_hwnd, text, title, false);
 }
 
+std::wstring StatusDisplayText(const std::wstring& status) {
+    if (status == L"Present") return Tr(L"Present", L"\u51fa\u5e2d");
+    if (status == L"Absent") return Tr(L"Absent", L"\u7f3a\u5e2d");
+    if (status == L"Late") return Tr(L"Late", L"\u8fdf\u5230");
+    if (status == L"Other") return Tr(L"Other", L"\u5176\u4ed6");
+    return status;
+}
+
 void UpdateStats() {
     int present = 0;
     int absent = 0;
@@ -2886,7 +2980,8 @@ void RefreshList() {
         item.pszText = const_cast<wchar_t*>(g_records[i].dateTime.c_str());
         ListView_InsertItem(g_list, &item);
         ListView_SetItemText(g_list, visibleIndex, 1, const_cast<wchar_t*>(g_records[i].name.c_str()));
-        ListView_SetItemText(g_list, visibleIndex, 2, const_cast<wchar_t*>(g_records[i].status.c_str()));
+        std::wstring statusText = StatusDisplayText(g_records[i].status);
+        ListView_SetItemText(g_list, visibleIndex, 2, statusText.data());
         ListView_SetItemText(g_list, visibleIndex, 3, const_cast<wchar_t*>(g_records[i].other.c_str()));
     }
     UpdateStats();
@@ -3727,7 +3822,7 @@ void LoadRecordIntoEditor(int index) {
 void UpdateSelectedRecord() {
     int selected = VisibleToRecordIndex(ListView_GetNextItem(g_list, -1, LVNI_SELECTED));
     if (selected < 0 || selected >= (int)g_records.size()) {
-        AddOrUpdateRecord(L"Present");
+        ShowMessage(Tr(L"Please select a record to edit.", L"\u8bf7\u9009\u62e9\u8981\u7f16\u8f91\u7684\u8bb0\u5f55\u3002"));
         return;
     }
 
@@ -3866,107 +3961,133 @@ void ShowDeleteMenu(HWND button) {
     }
 }
 
+std::wstring ModernFileDialog(bool save, const std::wstring& defaultName, const std::wstring& defaultExtension,
+                              const std::vector<std::pair<std::wstring, std::wstring>>& entries) {
+    IFileDialog* dialog = nullptr;
+    const CLSID& classId = save ? CLSID_FileSaveDialog : CLSID_FileOpenDialog;
+    HRESULT hr = CoCreateInstance(classId, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
+    if (FAILED(hr) || !dialog) return {};
+
+    DWORD options = 0;
+    dialog->GetOptions(&options);
+    options |= FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST;
+    options |= save ? FOS_OVERWRITEPROMPT : FOS_FILEMUSTEXIST;
+    dialog->SetOptions(options);
+
+    std::vector<std::wstring> names;
+    names.reserve(entries.size());
+    for (const auto& entry : entries) names.push_back(entry.first + L" (" + entry.second + L")");
+    std::vector<COMDLG_FILTERSPEC> filters;
+    filters.reserve(entries.size());
+    for (size_t i = 0; i < entries.size(); ++i) filters.push_back({names[i].c_str(), entries[i].second.c_str()});
+    if (!filters.empty()) dialog->SetFileTypes(static_cast<UINT>(filters.size()), filters.data());
+    if (!defaultExtension.empty()) dialog->SetDefaultExtension(defaultExtension.c_str());
+    if (!defaultName.empty()) dialog->SetFileName(defaultName.c_str());
+
+    if (save && !g_defaultSaveDir.empty()) {
+        IShellItem* folder = nullptr;
+        if (SUCCEEDED(SHCreateItemFromParsingName(g_defaultSaveDir.c_str(), nullptr, IID_PPV_ARGS(&folder)))) {
+            dialog->SetFolder(folder);
+            folder->Release();
+        }
+    }
+
+    std::wstring path;
+    if (SUCCEEDED(dialog->Show(g_hwnd))) {
+        IShellItem* result = nullptr;
+        if (SUCCEEDED(dialog->GetResult(&result)) && result) {
+            PWSTR value = nullptr;
+            if (SUCCEEDED(result->GetDisplayName(SIGDN_FILESYSPATH, &value)) && value) {
+                path = value;
+                CoTaskMemFree(value);
+            }
+            result->Release();
+        }
+    }
+    dialog->Release();
+    return path;
+}
+
 std::wstring SaveFileDialog() {
-    wchar_t fileName[MAX_PATH] = L"attendance.attd";
-    OPENFILENAMEW ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = g_hwnd;
-    ofn.lpstrFilter = L"Attendance Files (*.attd)\0*.attd\0All Files (*.*)\0*.*\0";
-    ofn.lpstrFile = fileName;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrDefExt = L"attd";
-    if (!g_defaultSaveDir.empty()) ofn.lpstrInitialDir = g_defaultSaveDir.c_str();
-    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
-    return GetSaveFileNameW(&ofn) ? fileName : L"";
+    return ModernFileDialog(true, L"attendance.attd", L"attd", {
+        {Tr(L"Attendance Files", L"\u70b9\u540d\u6587\u4ef6"), L"*.attd"},
+        {Tr(L"All Files", L"\u6240\u6709\u6587\u4ef6"), L"*.*"}
+    });
 }
 
 std::wstring SaveCsvFileDialog() {
-    wchar_t fileName[MAX_PATH] = L"attendance.csv";
-    OPENFILENAMEW ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = g_hwnd;
-    ofn.lpstrFilter = L"CSV Files (*.csv)\0*.csv\0All Files (*.*)\0*.*\0";
-    ofn.lpstrFile = fileName;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrDefExt = L"csv";
-    if (!g_defaultSaveDir.empty()) ofn.lpstrInitialDir = g_defaultSaveDir.c_str();
-    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
-    return GetSaveFileNameW(&ofn) ? fileName : L"";
+    return ModernFileDialog(true, L"attendance.csv", L"csv", {
+        {Tr(L"CSV Files", L"CSV \u6587\u4ef6"), L"*.csv"},
+        {Tr(L"All Files", L"\u6240\u6709\u6587\u4ef6"), L"*.*"}
+    });
 }
 
 std::wstring OpenFileDialog() {
-    wchar_t fileName[MAX_PATH] = L"";
-    OPENFILENAMEW ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = g_hwnd;
-    ofn.lpstrFilter = L"Attendance Files (*.attd)\0*.attd\0All Files (*.*)\0*.*\0";
-    ofn.lpstrFile = fileName;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-    return GetOpenFileNameW(&ofn) ? fileName : L"";
+    return ModernFileDialog(false, L"", L"attd", {
+        {Tr(L"Attendance Files", L"\u70b9\u540d\u6587\u4ef6"), L"*.attd"},
+        {Tr(L"All Files", L"\u6240\u6709\u6587\u4ef6"), L"*.*"}
+    });
 }
 
 std::wstring OpenCsvFileDialog() {
-    wchar_t fileName[MAX_PATH] = L"";
-    OPENFILENAMEW ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = g_hwnd;
-    ofn.lpstrFilter = L"CSV Files (*.csv)\0*.csv\0Text Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0";
-    ofn.lpstrFile = fileName;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-    return GetOpenFileNameW(&ofn) ? fileName : L"";
+    return ModernFileDialog(false, L"", L"csv", {
+        {Tr(L"CSV Files", L"CSV \u6587\u4ef6"), L"*.csv"},
+        {Tr(L"Text Files", L"\u6587\u672c\u6587\u4ef6"), L"*.txt"},
+        {Tr(L"All Files", L"\u6240\u6709\u6587\u4ef6"), L"*.*"}
+    });
 }
 
 std::wstring SaveHtmlFileDialog() {
-    wchar_t fileName[MAX_PATH] = L"attendance-print.html";
-    OPENFILENAMEW ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = g_hwnd;
-    ofn.lpstrFilter = L"HTML Files (*.html)\0*.html\0All Files (*.*)\0*.*\0";
-    ofn.lpstrFile = fileName;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrDefExt = L"html";
-    if (!g_defaultSaveDir.empty()) ofn.lpstrInitialDir = g_defaultSaveDir.c_str();
-    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
-    return GetSaveFileNameW(&ofn) ? fileName : L"";
+    return ModernFileDialog(true, L"attendance-print.html", L"html", {
+        {Tr(L"HTML Files", L"HTML \u6587\u4ef6"), L"*.html"},
+        {Tr(L"All Files", L"\u6240\u6709\u6587\u4ef6"), L"*.*"}
+    });
 }
 
 std::wstring SavePptxFileDialog() {
-    wchar_t fileName[MAX_PATH] = L"attendance-report.pptx";
-    OPENFILENAMEW ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = g_hwnd;
-    ofn.lpstrFilter = L"PowerPoint Files (*.pptx)\0*.pptx\0All Files (*.*)\0*.*\0";
-    ofn.lpstrFile = fileName;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrDefExt = L"pptx";
-    if (!g_defaultSaveDir.empty()) ofn.lpstrInitialDir = g_defaultSaveDir.c_str();
-    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
-    return GetSaveFileNameW(&ofn) ? fileName : L"";
+    return ModernFileDialog(true, L"attendance-report.pptx", L"pptx", {
+        {Tr(L"PowerPoint Files", L"PowerPoint \u6587\u4ef6"), L"*.pptx"},
+        {Tr(L"All Files", L"\u6240\u6709\u6587\u4ef6"), L"*.*"}
+    });
 }
 
 std::wstring ChooseFolderDialog() {
-    BROWSEINFOW bi{};
-    bi.hwndOwner = g_hwnd;
+    IFileDialog* dialog = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))) || !dialog) return {};
+    DWORD options = 0;
+    dialog->GetOptions(&options);
+    dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
     std::wstring title = Tr(L"Set default save folder", L"\u8bbe\u7f6e\u9ed8\u8ba4\u4fdd\u5b58\u6587\u4ef6\u5939");
-    bi.lpszTitle = title.c_str();
-    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
-    PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi);
-    if (!pidl) return {};
-    wchar_t path[MAX_PATH]{};
-    bool ok = SHGetPathFromIDListW(pidl, path) != FALSE;
-    CoTaskMemFree(pidl);
-    return ok ? std::wstring(path) : L"";
+    dialog->SetTitle(title.c_str());
+    std::wstring path;
+    if (SUCCEEDED(dialog->Show(g_hwnd))) {
+        IShellItem* result = nullptr;
+        if (SUCCEEDED(dialog->GetResult(&result)) && result) {
+            PWSTR value = nullptr;
+            if (SUCCEEDED(result->GetDisplayName(SIGDN_FILESYSPATH, &value)) && value) {
+                path = value;
+                CoTaskMemFree(value);
+            }
+            result->Release();
+        }
+    }
+    dialog->Release();
+    return path;
 }
 
 std::filesystem::path AppDataFilePath(const wchar_t* fileName) {
     PWSTR roamingPath = nullptr;
     std::filesystem::path result;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, KF_FLAG_CREATE, nullptr, &roamingPath))) {
-        result = std::filesystem::path(roamingPath) / L"AttendanceApp" / fileName;
+        try {
+            result = std::filesystem::path(roamingPath) / L"AttendanceApp" / fileName;
+            std::error_code ec;
+            std::filesystem::create_directories(result.parent_path(), ec);
+            if (ec) result.clear();
+        } catch (const std::filesystem::filesystem_error&) {
+            result.clear();
+        }
         CoTaskMemFree(roamingPath);
-        std::filesystem::create_directories(result.parent_path());
     }
     return result;
 }
@@ -5025,9 +5146,16 @@ std::wstring TimestampForFileName() {
 std::vector<std::filesystem::path> ListBackupFiles() {
     std::vector<std::filesystem::path> files;
     auto dir = BackupDirectoryPath();
-    if (dir.empty() || !std::filesystem::exists(dir)) return files;
-    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
-        if (entry.is_regular_file() && entry.path().extension() == L".attd") files.push_back(entry.path());
+    if (!FileExistsNoThrow(dir)) return files;
+    std::error_code ec;
+    std::filesystem::directory_iterator iterator(dir, ec);
+    const std::filesystem::directory_iterator end;
+    while (!ec && iterator != end) {
+        std::error_code entryEc;
+        if (iterator->is_regular_file(entryEc) && !entryEc && iterator->path().extension() == L".attd") {
+            files.push_back(iterator->path());
+        }
+        iterator.increment(ec);
     }
     std::sort(files.begin(), files.end(), std::greater<std::filesystem::path>());
     return files;
@@ -5053,7 +5181,7 @@ void ShowBackupManager() {
     try { index = std::stoi(choice) - 1; } catch (...) { return; }
     if (index < 0 || index >= (int)files.size()) return;
     if (!ConfirmDiscardUnsaved(Tr(L"Restore backup", L"\u6062\u590d\u5907\u4efd"))) return;
-    LoadAttendanceFile(files[index].wstring(), true);
+    LoadAttendanceFile(files[index].wstring(), true, false);
 }
 
 void ShowReportTemplateMenu(HWND button) {
@@ -5513,13 +5641,12 @@ std::filesystem::path RecentFileRecordPath() {
 void SaveRecentFilePath(const std::wstring& path) {
     auto recent = RecentFileRecordPath();
     if (recent.empty()) return;
-    std::ofstream file(recent, std::ios::binary);
-    if (file) file << WideToUtf8(path);
+    WriteBinaryFileAtomically(recent, WideToUtf8(path));
 }
 
 std::wstring LoadRecentFilePath() {
     auto recent = RecentFileRecordPath();
-    if (recent.empty() || !std::filesystem::exists(recent)) return {};
+    if (!FileExistsNoThrow(recent)) return {};
     std::ifstream file(recent, std::ios::binary);
     std::string value((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     return Utf8ToWide(value);
@@ -5529,25 +5656,28 @@ std::filesystem::path LatestBackupPath() {
     return AppDataFilePath(L"backup-latest.attd");
 }
 
+void ClearAutosaveFile() {
+    auto path = AppDataFilePath(L"autosave.attd");
+    if (path.empty()) return;
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+}
+
 void BackupNow() {
     SyncActiveSheet();
     auto path = LatestBackupPath();
     if (path.empty()) return;
-    std::ofstream file(path, std::ios::binary);
-    if (!file) {
+    std::string payload = EncodeAttd(SerializeWorkbook());
+    if (!WriteBinaryFileAtomically(path, payload)) {
         ShowMessage(Tr(L"Could not save the file.", L"\u65e0\u6cd5\u4fdd\u5b58\u6587\u4ef6\u3002"));
         return;
     }
-    std::string payload = EncodeAttd(SerializeWorkbook());
-    file << payload;
-    file.close();
 
     auto backupDir = BackupDirectoryPath();
     std::filesystem::path timestamped;
     if (!backupDir.empty()) {
         timestamped = backupDir / (L"backup-" + TimestampForFileName() + L".attd");
-        std::ofstream history(timestamped, std::ios::binary);
-        if (history) history << payload;
+        if (!WriteBinaryFileAtomically(timestamped, payload)) timestamped.clear();
     }
     std::wstring message = Tr(L"Backup created:", L"\u5907\u4efd\u5df2\u521b\u5efa\uff1a") + L"\n" + path.wstring();
     if (!timestamped.empty()) message += L"\n" + timestamped.wstring();
@@ -5556,17 +5686,17 @@ void BackupNow() {
 
 void RestoreLatestBackup() {
     auto path = LatestBackupPath();
-    if (path.empty() || !std::filesystem::exists(path)) {
+    if (!FileExistsNoThrow(path)) {
         ShowMessage(Tr(L"No backup file was found.", L"\u672a\u627e\u5230\u5907\u4efd\u6587\u4ef6\u3002"));
         return;
     }
     if (!ConfirmDiscardUnsaved(Tr(L"Restore latest backup", L"\u6062\u590d\u6700\u65b0\u5907\u4efd"))) return;
-    LoadAttendanceFile(path.wstring(), true);
+    LoadAttendanceFile(path.wstring(), true, false);
 }
 
 void OpenRecentFile() {
     std::wstring path = LoadRecentFilePath();
-    if (path.empty() || !std::filesystem::exists(path)) {
+    if (!FileExistsNoThrow(path)) {
         ShowMessage(Tr(L"No recent file was found.", L"\u672a\u627e\u5230\u6700\u8fd1\u6587\u4ef6\u3002"));
         return;
     }
@@ -5609,25 +5739,23 @@ void AutoSaveNow() {
     SyncActiveSheet();
     auto path = AppDataFilePath(L"autosave.attd");
     if (path.empty()) return;
-    std::ofstream file(path, std::ios::binary);
-    if (!file) return;
-    file << EncodeAttd(SerializeWorkbook());
+    WriteBinaryFileAtomically(path, EncodeAttd(SerializeWorkbook()));
 }
 
 void OpenAutosave() {
     auto path = AppDataFilePath(L"autosave.attd");
-    if (path.empty() || !std::filesystem::exists(path)) {
+    if (!FileExistsNoThrow(path)) {
         ShowMessage(Tr(L"No autosave file was found.", L"\u672a\u627e\u5230\u81ea\u52a8\u4fdd\u5b58\u6587\u4ef6\u3002"));
         return;
     }
     if (!ConfirmDiscardUnsaved(Tr(L"Open autosave", L"\u6253\u5f00\u81ea\u52a8\u4fdd\u5b58"))) return;
-    LoadAttendanceFile(path.wstring(), true);
+    LoadAttendanceFile(path.wstring(), true, false, true);
 }
 
 void PromptRestoreAutosave() {
     if (!g_autosavePromptEnabled) return;
     auto path = AppDataFilePath(L"autosave.attd");
-    if (path.empty() || !std::filesystem::exists(path)) return;
+    if (!FileExistsNoThrow(path)) return;
     std::wstring choice = L"1";
     std::wstring restoreTitle = Tr(L"Restore Autosave", L"\u6062\u590d\u81ea\u52a8\u4fdd\u5b58");
     std::wstring restoreMsg =
@@ -5643,7 +5771,7 @@ void PromptRestoreAutosave() {
     }
     choice = TrimWide(choice);
     if (choice == L"1") {
-        LoadAttendanceFile(path.wstring(), false);
+        LoadAttendanceFile(path.wstring(), false, false, true);
     } else if (choice == L"2") {
         ShowMessage(path.wstring(), Tr(L"Autosave file", L"\u81ea\u52a8\u4fdd\u5b58\u6587\u4ef6"));
         g_allowAutosaveOverwrite = false;
@@ -5960,26 +6088,24 @@ void SaveAttendance() {
     std::wstring path = SaveFileDialog();
     if (path.empty()) return;
 
-    std::ofstream file(std::filesystem::path(path), std::ios::binary);
-    if (!file) {
+    if (!WriteBinaryFileAtomically(std::filesystem::path(path), EncodeAttd(SerializeWorkbook()))) {
         ShowMessage(Tr(L"Could not save the file.", L"\u65e0\u6cd5\u4fdd\u5b58\u6587\u4ef6\u3002"));
         return;
     }
-    file << EncodeAttd(SerializeWorkbook());
     g_dirty = false;
     g_allowAutosaveOverwrite = true;
+    ClearAutosaveFile();
     SaveRecentFilePath(path);
     ShowMessage(Tr(L"Saved successfully.", L"\u4fdd\u5b58\u6210\u529f\u3002"));
 }
 
-bool LoadAttendanceFile(const std::wstring& path, bool showSuccess) {
-    std::ifstream file(std::filesystem::path(path), std::ios::binary);
-    if (!file) {
+bool LoadAttendanceFile(const std::wstring& path, bool showSuccess, bool rememberRecent, bool preserveAutosave) {
+    std::string fileText;
+    if (!ReadBinaryFileLimited(std::filesystem::path(path), fileText, MAX_ATTD_FILE_BYTES)) {
         ShowMessage(Tr(L"Could not open the file.", L"\u65e0\u6cd5\u6253\u5f00\u6587\u4ef6\u3002"));
         return false;
     }
 
-    std::string fileText((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     std::string plainText;
     std::vector<AttendanceSheet> imported;
     if (!DecodeAttd(fileText, plainText) || !DeserializeWorkbook(plainText, imported)) {
@@ -5988,7 +6114,7 @@ bool LoadAttendanceFile(const std::wstring& path, bool showSuccess) {
     }
     if (plainText.rfind("ATTENDANCE_V5\n", 0) != 0) {
         std::filesystem::path backupPath = std::filesystem::path(path).wstring() + L".pre-v5.bak";
-        if (!std::filesystem::exists(backupPath)) {
+        if (!FileExistsNoThrow(backupPath)) {
             std::error_code ec;
             std::filesystem::copy_file(std::filesystem::path(path), backupPath, std::filesystem::copy_options::skip_existing, ec);
         }
@@ -5999,9 +6125,10 @@ bool LoadAttendanceFile(const std::wstring& path, bool showSuccess) {
     g_records = g_sheets[g_activeSheet].records;
     g_undoStack.clear();
     g_redoStack.clear();
-    g_dirty = false;
+    g_dirty = preserveAutosave;
     g_allowAutosaveOverwrite = true;
-    SaveRecentFilePath(path);
+    if (!preserveAutosave) ClearAutosaveFile();
+    if (rememberRecent) SaveRecentFilePath(path);
     RefreshCourseCombo();
     RefreshList();
     if (showSuccess) ShowMessage(Tr(L"Imported successfully.", L"\u5bfc\u5165\u6210\u529f\u3002"));
@@ -7529,6 +7656,23 @@ void EnableStatsPaint(HWND stats) {
     if (stats) SetWindowSubclass(stats, StatsPaintProc, 4, 0);
 }
 
+bool ExecuteMainShortcut(WPARAM key) {
+    CancelMainWindowClose();
+    if (ShortcutMatches(g_shortcutSave, key)) SaveAttendance();
+    else if (ShortcutMatches(g_shortcutImport, key)) ImportAttendance();
+    else if (ShortcutMatches(g_shortcutUndo, key)) UndoLast();
+    else if (ShortcutMatches(g_shortcutRedo, key)) RedoLast();
+    else if (ShortcutMatches(g_shortcutFullscreen, key)) ToggleFullscreen(g_hwnd);
+    else return false;
+    return true;
+}
+
+bool HandleMainShortcutMessage(const MSG& msg) {
+    if (msg.message != WM_KEYDOWN && msg.message != WM_SYSKEYDOWN) return false;
+    if (!msg.hwnd || GetAncestor(msg.hwnd, GA_ROOT) != g_hwnd) return false;
+    return ExecuteMainShortcut(msg.wParam);
+}
+
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_CREATE: {
@@ -7561,12 +7705,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         g_courseCombo = MakeControl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_COURSE_COMBO);
         MakeButton(L"Courses", IDC_COURSE_OPTIONS);
         MakeControl(L"STATIC", L"Date/Time", 0, 2001);
-        MakeControl(L"STATIC", L"Name", 0, 2002);
-        MakeControl(L"STATIC", L"Other", 0, 2003);
-        MakeControl(L"STATIC", L"Search", 0, IDC_FILTER_LABEL);
         g_dateEdit = MakeControl(L"EDIT", CurrentDateTimeText().c_str(), WS_TABSTOP | ES_AUTOHSCROLL, IDC_DATE);
+        MakeControl(L"STATIC", L"Name", 0, 2002);
         g_nameEdit = MakeControl(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, IDC_NAME);
+        MakeControl(L"STATIC", L"Other", 0, 2003);
         g_otherEdit = MakeControl(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, IDC_OTHER);
+        MakeControl(L"STATIC", L"Search", 0, IDC_FILTER_LABEL);
         g_filterEdit = MakeControl(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, IDC_FILTER);
 
         MakeButton(L"Present", IDC_PRESENT);
@@ -7698,29 +7842,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         break;
     }
     case WM_KEYDOWN:
-        CancelMainWindowClose();
-        if (ShortcutMatches(g_shortcutSave, wParam)) {
-            SaveAttendance();
-            return 0;
-        }
-        if (ShortcutMatches(g_shortcutImport, wParam)) {
-            ImportAttendance();
-            return 0;
-        }
-        if (ShortcutMatches(g_shortcutUndo, wParam)) {
-            UndoLast();
-            return 0;
-        }
-        if (ShortcutMatches(g_shortcutRedo, wParam)) {
-            RedoLast();
-            return 0;
-        }
+        if (ExecuteMainShortcut(wParam)) return 0;
         if (ShortcutMatches(g_shortcutCommand, wParam)) {
             RunCommandPalette();
-            return 0;
-        }
-        if (ShortcutMatches(g_shortcutFullscreen, wParam)) {
-            ToggleFullscreen(hwnd);
             return 0;
         }
         break;
@@ -7820,6 +7944,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 }
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCmd) {
+    HRESULT comInitialization = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    const bool uninitializeCom = SUCCEEDED(comInitialization);
     LoadSettings();
 
     INITCOMMONCONTROLSEX icc{};
@@ -7846,7 +7972,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCm
         nullptr, nullptr, instance, nullptr
     );
 
-    if (!hwnd) return 1;
+    if (!hwnd) {
+        if (uninitializeCom) CoUninitialize();
+        return 1;
+    }
     SendMessageW(hwnd, WM_SETICON, ICON_BIG, (LPARAM)LoadIconW(instance, MAKEINTRESOURCEW(IDI_APP_ICON)));
     SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)LoadIconW(instance, MAKEINTRESOURCEW(IDI_APP_ICON)));
     ApplyGlassTitleBar(hwnd);
@@ -7864,7 +7993,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCm
     if (!loadedFromArg) PromptRestoreAutosave();
 
     MSG msg{};
-    while (GetMessageW(&msg, nullptr, 0, 0)) {
+    int exitCode = 0;
+    while (true) {
+        int result = GetMessageW(&msg, nullptr, 0, 0);
+        if (result == 0) {
+            exitCode = static_cast<int>(msg.wParam);
+            break;
+        }
+        if (result == -1) {
+            exitCode = 1;
+            break;
+        }
+        if (HandleMainShortcutMessage(msg)) continue;
         if (g_quickRollCallWindow && IsWindow(g_quickRollCallWindow)
             && (msg.hwnd == g_quickRollCallWindow || IsChild(g_quickRollCallWindow, msg.hwnd))) {
             if (msg.message == WM_KEYDOWN) {
@@ -7892,5 +8032,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCm
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
-    return 0;
+    if (uninitializeCom) CoUninitialize();
+    return exitCode;
 }
