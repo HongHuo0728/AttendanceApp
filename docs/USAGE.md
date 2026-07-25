@@ -73,12 +73,13 @@ All settings apply immediately when you change a selection or switch. `Apply` sa
 - `Prompt for autosave recovery`: checks for a recoverable autosave when the program starts, so unsaved work can be restored.
 - `Enable Ctrl+K command palette`: enables the quick command entry box. Use it for actions such as `save`, `backup`, `stats`, `lesson`, `rollcall`, `点名`, or `review`.
 - `Enable advanced filter syntax`: enables terms such as `name:`, `status:`, `from:`, `to:`, `thisweek`, and `thismonth` in the search field.
+- `Enable smooth dropdown scrolling`: adds responsive animated scrolling to combo-box dropdowns and custom popup menus. New wheel or touchpad input immediately updates the current movement, so controls remain usable while scrolling.
 
 ### Advanced Personalization (Experimental)
 
 Settings always opens in the compact basic view. Turn on `Advanced personalization (Experimental)` to open the personalization panel. The program first displays a warning that the experimental feature may make the software unstable; choose `Yes` to continue or `No` to leave the basic view unchanged.
 
-- `Theme`: switches between the default pure-black interface and the pure-white light interface.
+- `Theme`: switches between the default pure-black interface and the pure-white light interface with a synchronized transition across the window and its controls.
 - `Accent tone`: selects Neutral, Muted sage, or Muted cyan accents while keeping text contrast restrained.
 - `Text size`: selects Small, Standard, or Large interface text.
 - `Interface density`: changes control spacing between Compact, Comfortable, and Spacious.

@@ -12,6 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <cwctype>
 #include <filesystem>
@@ -45,6 +46,9 @@
 #endif
 #ifndef DWMWA_SYSTEMBACKDROP_TYPE
 #define DWMWA_SYSTEMBACKDROP_TYPE 38
+#endif
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
 #endif
 
 struct AttendanceRecord {
@@ -167,6 +171,10 @@ static constexpr int IDC_SETTINGS_SHOW_HINT = 4031;
 static constexpr int IDC_SETTINGS_TABLE_GRID = 4032;
 static constexpr int IDC_SETTINGS_AUTOSAVE_LABEL = 4033;
 static constexpr int IDC_SETTINGS_AUTOSAVE_INTERVAL = 4034;
+static constexpr int IDC_SETTINGS_SMOOTH_SCROLL = 4035;
+static constexpr int IDC_SETTINGS_SCROLL_FPS_LABEL = 4036;
+static constexpr int IDC_SETTINGS_SCROLL_FPS = 4037;
+static constexpr int IDC_SETTINGS_SCROLL_FPS_UNIT = 4038;
 static constexpr int IDC_INPUT_EDIT = 5001;
 static constexpr int IDC_INPUT_OK = 5002;
 static constexpr int IDC_INPUT_CANCEL = 5003;
@@ -216,6 +224,7 @@ static int g_loadedActiveSheet = 0;
 static std::vector<std::string> g_undoStack;
 static std::vector<std::string> g_redoStack;
 static bool g_allowAutosaveOverwrite = true;
+static bool g_autosaveFailurePending = false;
 static bool g_dirty = false;
 static bool g_fullscreen = false;
 static bool g_liveResizing = false;
@@ -224,6 +233,7 @@ static WINDOWPLACEMENT g_previousPlacement{sizeof(g_previousPlacement)};
 static DWORD g_previousStyle = 0;
 static int g_scrollX = 0;
 static int g_scrollY = 0;
+static int g_settingsScrollY = 0;
 static int g_contentW = 0;
 static int g_contentH = 0;
 static int g_openThemedPopupMenus = 0;
@@ -311,6 +321,8 @@ static bool g_riskAlertsEnabled = true;
 static bool g_autosavePromptEnabled = true;
 static bool g_commandPaletteEnabled = true;
 static bool g_advancedFilterEnabled = true;
+static bool g_smoothScrollingEnabled = true;
+static std::atomic_int g_scrollAnimationFps{60};
 static bool g_advancedPersonalizationEnabled = false;
 static bool g_showStatsCards = true;
 static bool g_showFooterHint = true;
@@ -337,6 +349,30 @@ static COLORREF COLOR_ROW_ALT = RGB(14, 14, 14);
 static COLORREF COLOR_SELECTED = RGB(42, 42, 42);
 static COLORREF COLOR_CHECK_FILL = RGB(0, 0, 0);
 
+struct ThemePalette {
+    COLORREF background = RGB(0, 0, 0);
+    COLORREF panel = RGB(18, 18, 18);
+    COLORREF input = RGB(26, 26, 26);
+    COLORREF text = RGB(255, 255, 255);
+    COLORREF muted = RGB(224, 224, 224);
+    COLORREF accent = RGB(188, 188, 188);
+    COLORREF danger = RGB(176, 112, 112);
+    COLORREF border = RGB(64, 64, 64);
+    COLORREF hover = RGB(38, 38, 38);
+    COLORREF card = RGB(16, 16, 16);
+    COLORREF rowAlt = RGB(14, 14, 14);
+    COLORREF selected = RGB(42, 42, 42);
+    COLORREF checkFill = RGB(0, 0, 0);
+};
+
+struct ThemeTransitionState {
+    ThemePalette start;
+    ThemePalette target;
+    bool active = false;
+};
+
+static ThemeTransitionState g_themeTransition;
+
 enum class AnimChannel : int {
     Hover = 1,
     Press = 2,
@@ -344,7 +380,9 @@ enum class AnimChannel : int {
     Reveal = 4,
     Close = 5,
     ListReveal = 6,
-    Effect = 7
+    Effect = 7,
+    ThemeTransition = 8,
+    SmoothScroll = 9
 };
 
 struct AnimValue {
@@ -359,8 +397,13 @@ struct AnimValue {
 
 static std::mutex g_animMutex;
 static std::map<HWND, std::map<int, AnimValue>> g_animations;
+static std::set<HWND> g_pendingAnimationTicks;
 static std::atomic_bool g_animationShutdown{false};
 static std::thread g_animationThread;
+static HANDLE g_animationWakeEvent = nullptr;
+static std::condition_variable g_animationWakeCondition;
+static std::mutex g_animationWakeMutex;
+static std::atomic_uint64_t g_animationWakeGeneration{0};
 
 struct ButtonParticle {
     double x = 0.0;
@@ -386,9 +429,11 @@ static std::mt19937 g_effectRng{std::random_device{}()};
 
 void ResizeLayout(HWND hwnd);
 void ScrollMainWindow(HWND hwnd, int bar, int code, int wheelDelta = 0);
-void ApplyVisualSettings();
+void ApplyVisualSettings(bool preserveThemeTransition = false);
 void ApplyDarkMode(HWND hwnd);
 void ApplyThemedControls(HWND root);
+void BeginThemeTransition(UiTheme targetTheme);
+void UpdateThemeTransitionFrame();
 void PaintAppBackground(HWND hwnd, HDC hdc);
 bool DrawButtonItem(const DRAWITEMSTRUCT* draw);
 bool DrawComboItem(const DRAWITEMSTRUCT* draw);
@@ -396,6 +441,7 @@ void PaintComboClosed(HWND hwnd, HDC hdc);
 void EnableHeaderPaint(HWND header);
 void EnableComboPaint(HWND combo);
 void ApplyComboDropDownTheme(HWND combo);
+void StopSmoothScrollingNow();
 std::string WideToUtf8(const std::wstring& input);
 std::wstring Utf8ToWide(const std::string& input);
 bool LoadAttendanceFile(const std::wstring& path, bool showSuccess, bool rememberRecent = true, bool preserveAutosave = false);
@@ -423,6 +469,8 @@ COLORREF BlendColor(COLORREF from, COLORREF to, double amount);
 double EaseInOut(double value);
 double EaseOut(double value);
 double ElasticOut(double value);
+double CubicBezierEase(double value, double x1, double y1, double x2, double y2);
+void AcknowledgeAnimationTick(HWND hwnd);
 void StartListTransition();
 LRESULT HandleListCustomDraw(LPARAM lParam);
 void StopAnimationThread();
@@ -438,6 +486,7 @@ void DrawSoftDivider(HDC hdc, int left, int right, int y);
 int ThemedMessageBox(HWND owner, const std::wstring& message, const std::wstring& title, bool yesNo);
 bool DrawParticleToggleItem(const DRAWITEMSTRUCT* draw);
 std::wstring ParticleEffectsLabel();
+std::wstring ScrollFrameRateLabel();
 std::wstring AnimationLevelName(AnimationLevel level);
 std::wstring ParticleLevelName(ParticleLevel level);
 std::wstring ReportTemplateName(ReportTemplate templateType);
@@ -471,6 +520,16 @@ struct ThemedMenuState {
     bool hasMousePoint = false;
     bool done = false;
     bool closing = false;
+    double smoothScrollStartY = 0.0;
+    double smoothScrollCurrentY = 0.0;
+    double smoothScrollTargetY = 0.0;
+    uint64_t smoothScrollStartMs = 0;
+    uint32_t smoothScrollDurationMs = 220;
+    HDC bufferDc = nullptr;
+    HBITMAP bufferBitmap = nullptr;
+    HGDIOBJ bufferOldBitmap = nullptr;
+    int bufferWidth = 0;
+    int bufferHeight = 0;
 };
 
 static constexpr int THEMED_MENU_PAD_Y = 8;
@@ -484,7 +543,6 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem>& items);
 
 void MarkDirty() {
     g_dirty = true;
-    g_allowAutosaveOverwrite = true;
 }
 
 std::wstring GetText(HWND hwnd) {
@@ -540,6 +598,25 @@ double EaseOut(double value) {
     return 1.0 - std::pow(1.0 - value, 3.0);
 }
 
+double CubicBezierEase(double value, double x1, double y1, double x2, double y2) {
+    value = std::clamp(value, 0.0, 1.0);
+    auto sample = [](double t, double p1, double p2) {
+        double inverse = 1.0 - t;
+        return 3.0 * inverse * inverse * t * p1
+            + 3.0 * inverse * t * t * p2
+            + t * t * t;
+    };
+    double low = 0.0;
+    double high = 1.0;
+    double t = value;
+    for (int i = 0; i < 12; ++i) {
+        t = (low + high) * 0.5;
+        if (sample(t, x1, x2) < value) low = t;
+        else high = t;
+    }
+    return sample(t, y1, y2);
+}
+
 double ElasticOut(double value) {
     value = std::clamp(value, 0.0, 1.0);
     if (value <= 0.0 || value >= 1.0) return value;
@@ -558,16 +635,132 @@ COLORREF BlendColor(COLORREF from, COLORREF to, double amount) {
         mix(GetBValue(from), GetBValue(to)));
 }
 
+void SignalAnimationScheduler() {
+    g_animationWakeGeneration.fetch_add(1);
+    if (g_animationWakeEvent) SetEvent(g_animationWakeEvent);
+    g_animationWakeCondition.notify_all();
+}
+
 void EnsureAnimationThread() {
     if (g_animationThread.joinable()) return;
     g_animationShutdown = false;
+    g_animationWakeEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     g_animationThread = std::thread([] {
+        HANDLE timer = CreateWaitableTimerExW(
+            nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+        if (!timer) timer = CreateWaitableTimerW(nullptr, FALSE, nullptr);
+
+        using Clock = std::chrono::steady_clock;
+        Clock::time_point nextDeadline{};
+        Clock::time_point nextStandardDeadline{};
+        int scheduledFps = 0;
+        auto waitForFallbackWake = [&](Clock::time_point deadline) {
+            uint64_t generation = g_animationWakeGeneration.load();
+            std::unique_lock<std::mutex> lock(g_animationWakeMutex);
+            if (deadline == Clock::time_point::max()) {
+                g_animationWakeCondition.wait(lock, [&] {
+                    return g_animationShutdown.load()
+                        || g_animationWakeGeneration.load() != generation;
+                });
+            } else {
+                g_animationWakeCondition.wait_until(lock, deadline, [&] {
+                    return g_animationShutdown.load()
+                        || g_animationWakeGeneration.load() != generation;
+                });
+            }
+            return g_animationShutdown.load()
+                || g_animationWakeGeneration.load() != generation;
+        };
+
         while (!g_animationShutdown.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+            bool hasActiveAnimation = false;
+            bool hasSmoothScroll = false;
+            {
+                std::lock_guard<std::mutex> lock(g_animMutex);
+                for (const auto& hwndEntry : g_animations) {
+                    for (const auto& channelEntry : hwndEntry.second) {
+                        if (!channelEntry.second.active) continue;
+                        hasActiveAnimation = true;
+                        if (channelEntry.first == (int)AnimChannel::SmoothScroll) {
+                            hasSmoothScroll = true;
+                        }
+                    }
+                }
+            }
+
+            if (!hasActiveAnimation) {
+                scheduledFps = 0;
+                nextDeadline = {};
+                nextStandardDeadline = {};
+                if (g_animationWakeEvent) {
+                    WaitForSingleObject(g_animationWakeEvent, INFINITE);
+                } else {
+                    waitForFallbackWake(Clock::time_point::max());
+                }
+                continue;
+            }
+
+            int targetFps = hasSmoothScroll
+                ? std::clamp(g_scrollAnimationFps.load(), 60, 240)
+                : 60;
+            auto frameDuration = std::chrono::duration_cast<Clock::duration>(
+                std::chrono::duration<double>(1.0 / targetFps));
+            auto nowClock = Clock::now();
+            if (scheduledFps != targetFps || nextDeadline.time_since_epoch().count() == 0) {
+                nextDeadline = nowClock + frameDuration;
+                scheduledFps = targetFps;
+            } else if (nextDeadline <= nowClock) {
+                do {
+                    nextDeadline += frameDuration;
+                } while (nextDeadline <= nowClock);
+            }
+
+            bool wakeRequested = false;
+            if (timer) {
+                auto waitDuration = nextDeadline - Clock::now();
+                LONGLONG ticks100ns = std::max<LONGLONG>(
+                    1, std::chrono::duration_cast<std::chrono::nanoseconds>(waitDuration).count() / 100);
+                LARGE_INTEGER due{};
+                due.QuadPart = -ticks100ns;
+                if (SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) {
+                    if (g_animationWakeEvent) {
+                        HANDLE handles[] = {g_animationWakeEvent, timer};
+                        wakeRequested = WaitForMultipleObjects(2, handles, FALSE, INFINITE)
+                            == WAIT_OBJECT_0;
+                    } else {
+                        WaitForSingleObject(timer, INFINITE);
+                    }
+                } else {
+                    wakeRequested = waitForFallbackWake(nextDeadline);
+                }
+            } else {
+                wakeRequested = waitForFallbackWake(nextDeadline);
+            }
+
+            if (g_animationShutdown.load()) break;
+            if (wakeRequested) {
+                scheduledFps = 0;
+                continue;
+            }
 
             std::vector<HWND> tickWindows;
             std::vector<HWND> doneWindows;
             uint64_t now = AnimationNowMs();
+            auto frameClock = Clock::now();
+            const auto standardFrameDuration = std::chrono::duration_cast<Clock::duration>(
+                std::chrono::duration<double>(1.0 / 60.0));
+            bool updateStandardChannels = !hasSmoothScroll
+                || nextStandardDeadline.time_since_epoch().count() == 0
+                || frameClock >= nextStandardDeadline;
+            if (updateStandardChannels) {
+                if (nextStandardDeadline.time_since_epoch().count() == 0) {
+                    nextStandardDeadline = frameClock + standardFrameDuration;
+                } else {
+                    do {
+                        nextStandardDeadline += standardFrameDuration;
+                    } while (nextStandardDeadline <= frameClock);
+                }
+            }
             {
                 std::lock_guard<std::mutex> lock(g_animMutex);
                 for (auto& hwndEntry : g_animations) {
@@ -575,6 +768,9 @@ void EnsureAnimationThread() {
                     for (auto& channelEntry : hwndEntry.second) {
                         AnimValue& anim = channelEntry.second;
                         if (!anim.active) continue;
+                        bool smoothChannel =
+                            channelEntry.first == (int)AnimChannel::SmoothScroll;
+                        if (!smoothChannel && !updateStandardChannels) continue;
                         double t = anim.durationMs == 0
                             ? 1.0
                             : (double)(now - anim.startMs) / (double)anim.durationMs;
@@ -584,14 +780,20 @@ void EnsureAnimationThread() {
                             changed = true;
                             if (anim.closeOnDone) doneWindows.push_back(hwndEntry.first);
                         } else {
-                            double eased = (channelEntry.first == (int)AnimChannel::Reveal || channelEntry.first == (int)AnimChannel::Close)
-                                ? EaseOut(t)
-                                : EaseInOut(t);
+                            double eased = channelEntry.first == (int)AnimChannel::ThemeTransition
+                                || channelEntry.first == (int)AnimChannel::SmoothScroll
+                                ? CubicBezierEase(t, 0.22, 1.0, 0.36, 1.0)
+                                : (channelEntry.first == (int)AnimChannel::Reveal
+                                    || channelEntry.first == (int)AnimChannel::Close)
+                                    ? EaseOut(t)
+                                    : EaseInOut(t);
                             anim.current = anim.start + (anim.target - anim.start) * eased;
                             changed = true;
                         }
                     }
-                    if (changed) tickWindows.push_back(hwndEntry.first);
+                    if (changed && g_pendingAnimationTicks.insert(hwndEntry.first).second) {
+                        tickWindows.push_back(hwndEntry.first);
+                    }
                 }
             }
 
@@ -601,19 +803,35 @@ void EnsureAnimationThread() {
             for (HWND hwnd : doneWindows) {
                 PostMessageW(hwnd, WM_APP_ANIMATION_DONE, 0, 0);
             }
+
+            nowClock = Clock::now();
+            do {
+                nextDeadline += frameDuration;
+            } while (nextDeadline <= nowClock);
         }
+
+        if (timer) CloseHandle(timer);
     });
 }
 
 void StopAnimationThread() {
     g_animationShutdown = true;
+    SignalAnimationScheduler();
     if (g_animationThread.joinable()) g_animationThread.join();
+    if (g_animationWakeEvent) {
+        CloseHandle(g_animationWakeEvent);
+        g_animationWakeEvent = nullptr;
+    }
 }
 
 uint32_t EffectiveAnimationDuration(AnimChannel channel, uint32_t durationMs) {
     // Particle frames must follow their physical lifetime, independently of
     // the interface animation preset. Shortening this channel freezes effects.
-    if (channel == AnimChannel::Effect) return durationMs;
+    if (channel == AnimChannel::Effect
+        || channel == AnimChannel::ThemeTransition
+        || channel == AnimChannel::SmoothScroll) {
+        return durationMs;
+    }
     if (g_animationLevel == AnimationLevel::Off) return 0;
     if (g_animationLevel == AnimationLevel::Standard) return std::min<uint32_t>(durationMs, 160);
     return durationMs;
@@ -623,34 +841,43 @@ void StartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t dura
     if (!hwnd) return;
     durationMs = EffectiveAnimationDuration(channel, durationMs);
     EnsureAnimationThread();
-    std::lock_guard<std::mutex> lock(g_animMutex);
-    AnimValue& anim = g_animations[hwnd][(int)channel];
-    target = std::clamp(target, 0.0, 1.0);
-    if (std::abs(anim.target - target) <= 0.001 && (anim.active || std::abs(anim.current - target) <= 0.001)) {
-        return;
+    bool schedulerChanged = false;
+    {
+        std::lock_guard<std::mutex> lock(g_animMutex);
+        AnimValue& anim = g_animations[hwnd][(int)channel];
+        target = std::clamp(target, 0.0, 1.0);
+        if (std::abs(anim.target - target) <= 0.001
+            && (anim.active || std::abs(anim.current - target) <= 0.001)) {
+            return;
+        }
+        anim.start = anim.current;
+        anim.target = target;
+        anim.startMs = AnimationNowMs();
+        anim.durationMs = durationMs;
+        anim.active = durationMs > 0 && std::abs(anim.target - anim.start) > 0.001;
+        anim.closeOnDone = closeOnDone;
+        if (!anim.active) anim.current = anim.target;
+        schedulerChanged = anim.active;
     }
-    anim.start = anim.current;
-    anim.target = target;
-    anim.startMs = AnimationNowMs();
-    anim.durationMs = durationMs;
-    anim.active = durationMs > 0 && std::abs(anim.target - anim.start) > 0.001;
-    anim.closeOnDone = closeOnDone;
-    if (!anim.active) anim.current = anim.target;
+    if (schedulerChanged) SignalAnimationScheduler();
 }
 
 void RestartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t durationMs) {
     if (!hwnd) return;
     durationMs = EffectiveAnimationDuration(channel, durationMs);
     EnsureAnimationThread();
-    std::lock_guard<std::mutex> lock(g_animMutex);
-    AnimValue& anim = g_animations[hwnd][(int)channel];
-    anim.current = 0.0;
-    anim.start = 0.0;
-    anim.target = std::clamp(target, 0.0, 1.0);
-    anim.startMs = AnimationNowMs();
-    anim.durationMs = durationMs;
-    anim.active = durationMs > 0;
-    anim.closeOnDone = false;
+    {
+        std::lock_guard<std::mutex> lock(g_animMutex);
+        AnimValue& anim = g_animations[hwnd][(int)channel];
+        anim.current = 0.0;
+        anim.start = 0.0;
+        anim.target = std::clamp(target, 0.0, 1.0);
+        anim.startMs = AnimationNowMs();
+        anim.durationMs = durationMs;
+        anim.active = durationMs > 0;
+        anim.closeOnDone = false;
+    }
+    if (durationMs > 0) SignalAnimationScheduler();
 }
 
 double GetAnimationValue(HWND hwnd, AnimChannel channel, double fallback) {
@@ -665,8 +892,31 @@ double GetAnimationValue(HWND hwnd, AnimChannel channel, double fallback) {
 
 void RemoveAnimationState(HWND hwnd) {
     if (!hwnd) return;
+    {
+        std::lock_guard<std::mutex> lock(g_animMutex);
+        g_animations.erase(hwnd);
+        g_pendingAnimationTicks.erase(hwnd);
+    }
+    SignalAnimationScheduler();
+}
+
+void AcknowledgeAnimationTick(HWND hwnd) {
+    if (!hwnd) return;
     std::lock_guard<std::mutex> lock(g_animMutex);
-    g_animations.erase(hwnd);
+    g_pendingAnimationTicks.erase(hwnd);
+}
+
+void CancelAnimationChannel(AnimChannel channel) {
+    {
+        std::lock_guard<std::mutex> lock(g_animMutex);
+        for (auto& windowEntry : g_animations) {
+            auto channelIt = windowEntry.second.find((int)channel);
+            if (channelIt == windowEntry.second.end()) continue;
+            channelIt->second.current = channelIt->second.target;
+            channelIt->second.active = false;
+        }
+    }
+    SignalAnimationScheduler();
 }
 
 void StartWindowReveal(HWND hwnd, uint32_t durationMs) {
@@ -1177,6 +1427,7 @@ LRESULT CALLBACK InteractiveControlProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         return result;
     }
     case WM_APP_ANIMATION_TICK:
+        AcknowledgeAnimationTick(hwnd);
         RedrawAnimatedControl(hwnd);
         return 0;
     }
@@ -1324,6 +1575,7 @@ LRESULT CALLBACK MessageDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
     case WM_ERASEBKGND:
         return 1;
     case WM_APP_ANIMATION_TICK:
+        AcknowledgeAnimationTick(hwnd);
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     case WM_APP_ANIMATION_DONE:
@@ -1384,7 +1636,13 @@ int ThemedMessageBox(HWND owner, const std::wstring& message, const std::wstring
     SetFocus(GetDlgItem(dialog, state.yesNo ? IDC_MESSAGE_NO : IDC_MESSAGE_OK));
 
     MSG msg{};
-    while (!state.done && IsWindow(dialog) && GetMessageW(&msg, nullptr, 0, 0) > 0) {
+    while (!state.done && IsWindow(dialog)) {
+        int messageResult = GetMessageW(&msg, nullptr, 0, 0);
+        if (messageResult == 0) {
+            PostQuitMessage((int)msg.wParam);
+            break;
+        }
+        if (messageResult == -1) break;
         if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE) {
             SendMessageW(dialog, WM_CLOSE, 0, 0);
             continue;
@@ -1498,6 +1756,7 @@ LRESULT CALLBACK InputDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         return (LRESULT)g_inputBrush;
     }
     case WM_APP_ANIMATION_TICK:
+        AcknowledgeAnimationTick(hwnd);
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     case WM_APP_ANIMATION_DONE:
@@ -1547,7 +1806,13 @@ bool PromptText(const std::wstring& title, const std::wstring& prompt, std::wstr
     UpdateWindow(dialog);
 
     MSG msg{};
-    while (IsWindow(dialog) && GetMessageW(&msg, nullptr, 0, 0)) {
+    while (IsWindow(dialog)) {
+        int messageResult = GetMessageW(&msg, nullptr, 0, 0);
+        if (messageResult == 0) {
+            PostQuitMessage((int)msg.wParam);
+            break;
+        }
+        if (messageResult == -1) break;
         if (msg.message == WM_KEYDOWN && (msg.hwnd == dialog || IsChild(dialog, msg.hwnd))) {
             if (msg.wParam == VK_RETURN || msg.wParam == VK_ESCAPE) {
                 SendMessageW(dialog, WM_KEYDOWN, msg.wParam, msg.lParam);
@@ -2210,6 +2475,56 @@ std::wstring ParticleEffectsLabel() {
     }
 }
 
+std::wstring SmoothDropdownScrollingLabel() {
+    switch (g_language) {
+    case UiLanguage::ChineseSimplified: return L"\u542f\u7528\u4e0b\u62c9\u83dc\u5355\u5e73\u6ed1\u6eda\u52a8";
+    case UiLanguage::Maltese: return L"Ippermetti skrolljar lixx fil-listi";
+    case UiLanguage::Japanese: return L"\u30c9\u30ed\u30c3\u30d7\u30c0\u30a6\u30f3\u306e\u30b9\u30e0\u30fc\u30ba\u30b9\u30af\u30ed\u30fc\u30eb\u3092\u6709\u52b9\u306b\u3059\u308b";
+    case UiLanguage::French: return L"Activer le d\u00e9filement fluide des listes";
+    case UiLanguage::German: return L"Sanftes Scrollen in Dropdownlisten aktivieren";
+    case UiLanguage::Russian: return L"\u0412\u043a\u043b\u044e\u0447\u0438\u0442\u044c \u043f\u043b\u0430\u0432\u043d\u0443\u044e \u043f\u0440\u043e\u043a\u0440\u0443\u0442\u043a\u0443 \u0441\u043f\u0438\u0441\u043a\u043e\u0432";
+    case UiLanguage::ChineseTraditional: return L"\u555f\u7528\u4e0b\u62c9\u9078\u55ae\u5e73\u6ed1\u6372\u52d5";
+    case UiLanguage::Spanish: return L"Activar desplazamiento suave en listas";
+    case UiLanguage::Italian: return L"Attiva scorrimento fluido nei menu";
+    case UiLanguage::Mongolian: return L"\u0423\u043d\u0436\u0434\u0430\u0433 \u0436\u0430\u0433\u0441\u0430\u0430\u043b\u0442\u044b\u043d \u0436\u0438\u0433\u0434 \u0433\u04af\u0439\u043b\u0433\u044d\u043b\u0442\u0438\u0439\u0433 \u0438\u0434\u044d\u0432\u0445\u0436\u04af\u04af\u043b\u044d\u0445";
+    case UiLanguage::Esperanto: return L"\u015calti glatan ruladon de falmenuoj";
+    case UiLanguage::ClassicalChinese: return L"\u555f\u4e0b\u62c9\u55ae\u4e4b\u5e73\u6ed1\u6372\u52d5";
+    case UiLanguage::Thai: return L"\u0e40\u0e1b\u0e34\u0e14\u0e43\u0e0a\u0e49\u0e01\u0e32\u0e23\u0e40\u0e25\u0e37\u0e48\u0e2d\u0e19\u0e23\u0e32\u0e22\u0e01\u0e32\u0e23\u0e41\u0e1a\u0e1a\u0e25\u0e37\u0e48\u0e19\u0e44\u0e2b\u0e25";
+    case UiLanguage::Filipino: return L"I-enable ang maayos na pag-scroll ng dropdown";
+    case UiLanguage::Turkish: return L"A\u00e7\u0131l\u0131r listelerde yumu\u015fak kayd\u0131rmay\u0131 etkinle\u015ftir";
+    case UiLanguage::Lithuanian: return L"\u012ejungti skland\u0173 i\u0161skleid\u017eiam\u0173j\u0173 s\u0105ra\u0161\u0173 slinkim\u0105";
+    case UiLanguage::Norwegian: return L"Aktiver jevn rulling i nedtrekkslister";
+    case UiLanguage::Vietnamese: return L"B\u1eadt cu\u1ed9n m\u01b0\u1ee3t trong danh s\u00e1ch th\u1ea3 xu\u1ed1ng";
+    case UiLanguage::ChineseTraditionalHongKong: return L"\u555f\u7528\u4e0b\u62c9\u9078\u55ae\u5e73\u6ed1\u6372\u52d5";
+    default: return L"Enable smooth dropdown scrolling";
+    }
+}
+
+std::wstring ScrollFrameRateLabel() {
+    switch (g_language) {
+    case UiLanguage::ChineseSimplified: return L"\u4e0b\u62c9\u6eda\u52a8\u5e27\u7387\uff0860-240\uff09";
+    case UiLanguage::Maltese: return L"Rata tal-frejms tal-iskrolljar (60-240)";
+    case UiLanguage::Japanese: return L"\u30c9\u30ed\u30c3\u30d7\u30c0\u30a6\u30f3\u306e\u30b9\u30af\u30ed\u30fc\u30ebFPS\uff0860-240\uff09";
+    case UiLanguage::French: return L"Fr\u00e9quence du d\u00e9filement (60-240)";
+    case UiLanguage::German: return L"Bildrate beim Dropdown-Scrollen (60-240)";
+    case UiLanguage::Russian: return L"\u0427\u0430\u0441\u0442\u043e\u0442\u0430 \u043f\u0440\u043e\u043a\u0440\u0443\u0442\u043a\u0438 \u0441\u043f\u0438\u0441\u043a\u043e\u0432 (60-240)";
+    case UiLanguage::ChineseTraditional: return L"\u4e0b\u62c9\u6372\u52d5\u5e40\u7387\uff0860-240\uff09";
+    case UiLanguage::Spanish: return L"FPS del desplazamiento (60-240)";
+    case UiLanguage::Italian: return L"FPS dello scorrimento (60-240)";
+    case UiLanguage::Mongolian: return L"\u0416\u0430\u0433\u0441\u0430\u0430\u043b\u0442\u044b\u043d \u0433\u04af\u0439\u043b\u0433\u044d\u0445 FPS (60-240)";
+    case UiLanguage::Esperanto: return L"Bildrapido de falmenua rulado (60-240)";
+    case UiLanguage::ClassicalChinese: return L"\u4e0b\u62c9\u6372\u52d5\u5e40\u7387\uff0860-240\uff09";
+    case UiLanguage::Thai: return L"FPS \u0e01\u0e32\u0e23\u0e40\u0e25\u0e37\u0e48\u0e2d\u0e19\u0e23\u0e32\u0e22\u0e01\u0e32\u0e23 (60-240)";
+    case UiLanguage::Filipino: return L"FPS ng dropdown scroll (60-240)";
+    case UiLanguage::Turkish: return L"A\u00e7\u0131l\u0131r liste kayd\u0131rma FPS'i (60-240)";
+    case UiLanguage::Lithuanian: return L"I\u0161skleid\u017eiamojo slinkimo FPS (60-240)";
+    case UiLanguage::Norwegian: return L"Bildefrekvens for rullegardin (60-240)";
+    case UiLanguage::Vietnamese: return L"FPS cu\u1ed9n danh s\u00e1ch th\u1ea3 xu\u1ed1ng (60-240)";
+    case UiLanguage::ChineseTraditionalHongKong: return L"\u4e0b\u62c9\u6372\u52d5\u5e40\u7387\uff0860-240\uff09";
+    default: return L"Dropdown scroll frame rate (60-240)";
+    }
+}
+
 std::wstring AnimationLevelName(AnimationLevel level) {
     switch (level) {
     case AnimationLevel::Off: return Tr(L"Off", L"\u5173\u95ed");
@@ -2292,11 +2607,11 @@ std::wstring GetComboSelectedText(HWND combo) {
 
 void CommitComboSelectionNow(HWND combo) {
     if (!combo) return;
-    RedrawWindow(combo, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+    InvalidateRect(combo, nullptr, FALSE);
     COMBOBOXINFO info{};
     info.cbSize = sizeof(info);
     if (GetComboBoxInfo(combo, &info) && info.hwndList) {
-        RedrawWindow(info.hwndList, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+        InvalidateRect(info.hwndList, nullptr, FALSE);
     }
 }
 
@@ -2327,16 +2642,18 @@ std::filesystem::path TemporarySiblingPath(const std::filesystem::path& path) {
     return path.parent_path() / (path.filename().wstring() + suffix);
 }
 
-bool WriteBinaryFileAtomically(const std::filesystem::path& path, const std::string& data) {
+bool WriteStreamFileAtomically(
+    const std::filesystem::path& path,
+    const std::function<bool(std::ofstream&)>& writer) {
     try {
         if (path.empty() || !EnsureParentDirectory(path)) return false;
         const auto temporary = TemporarySiblingPath(path);
         {
             std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
             if (!file) return false;
-            file.write(data.data(), static_cast<std::streamsize>(data.size()));
+            bool writerSucceeded = writer(file);
             file.flush();
-            if (!file) {
+            if (!writerSucceeded || !file) {
                 file.close();
                 std::error_code ec;
                 std::filesystem::remove(temporary, ec);
@@ -2359,6 +2676,13 @@ bool WriteBinaryFileAtomically(const std::filesystem::path& path, const std::str
     } catch (const std::filesystem::filesystem_error&) {
         return false;
     }
+}
+
+bool WriteBinaryFileAtomically(const std::filesystem::path& path, const std::string& data) {
+    return WriteStreamFileAtomically(path, [&](std::ofstream& file) {
+        file.write(data.data(), static_cast<std::streamsize>(data.size()));
+        return file.good();
+    });
 }
 
 bool ReadBinaryFileLimited(const std::filesystem::path& path, std::string& output, uintmax_t maximumBytes) {
@@ -2443,9 +2767,9 @@ std::string BoolSetting(bool value) {
     return value ? "1" : "0";
 }
 
-void SaveSettings() {
+bool SaveSettings() {
     auto path = SettingsFilePath();
-    if (path.empty()) return;
+    if (path.empty()) return false;
     std::ostringstream data;
     data << "language=" << LanguageToString(g_language) << "\n";
     data << "advanced_personalization=" << BoolSetting(g_advancedPersonalizationEnabled) << "\n";
@@ -2467,13 +2791,15 @@ void SaveSettings() {
     data << "autosave_prompt=" << BoolSetting(g_autosavePromptEnabled) << "\n";
     data << "command_palette=" << BoolSetting(g_commandPaletteEnabled) << "\n";
     data << "advanced_filter=" << BoolSetting(g_advancedFilterEnabled) << "\n";
+    data << "smooth_scrolling=" << BoolSetting(g_smoothScrollingEnabled) << "\n";
+    data << "scroll_animation_fps=" << g_scrollAnimationFps.load() << "\n";
     data << "shortcut_save=" << WideToUtf8(g_shortcutSave) << "\n";
     data << "shortcut_import=" << WideToUtf8(g_shortcutImport) << "\n";
     data << "shortcut_undo=" << WideToUtf8(g_shortcutUndo) << "\n";
     data << "shortcut_redo=" << WideToUtf8(g_shortcutRedo) << "\n";
     data << "shortcut_command=" << WideToUtf8(g_shortcutCommand) << "\n";
     data << "shortcut_fullscreen=" << WideToUtf8(g_shortcutFullscreen) << "\n";
-    WriteBinaryFileAtomically(path, data.str());
+    return WriteBinaryFileAtomically(path, data.str());
 }
 
 void LoadSettings() {
@@ -2512,6 +2838,10 @@ void LoadSettings() {
         else if (key == "autosave_prompt") g_autosavePromptEnabled = value != "0";
         else if (key == "command_palette") g_commandPaletteEnabled = value != "0";
         else if (key == "advanced_filter") g_advancedFilterEnabled = value != "0";
+        else if (key == "smooth_scrolling") g_smoothScrollingEnabled = value != "0";
+        else if (key == "scroll_animation_fps") {
+            g_scrollAnimationFps.store(ClampSettingInt(value, 60, 60, 240));
+        }
         else if (key == "shortcut_save") g_shortcutSave = NormalizeShortcut(Utf8ToWide(value), L"Ctrl+S");
         else if (key == "shortcut_import") g_shortcutImport = NormalizeShortcut(Utf8ToWide(value), L"Ctrl+O");
         else if (key == "shortcut_undo") g_shortcutUndo = NormalizeShortcut(Utf8ToWide(value), L"Ctrl+Z");
@@ -2528,6 +2858,7 @@ void LoadSettings() {
         g_showFooterHint = true;
         g_showTableGrid = true;
         g_autosaveIntervalSeconds = 30;
+        g_scrollAnimationFps.store(60);
     }
 }
 
@@ -2552,11 +2883,14 @@ void ResetSettings() {
     g_autosavePromptEnabled = true;
     g_commandPaletteEnabled = true;
     g_advancedFilterEnabled = true;
+    g_smoothScrollingEnabled = true;
     g_advancedPersonalizationEnabled = false;
     g_showStatsCards = true;
     g_showFooterHint = true;
     g_showTableGrid = true;
     g_autosaveIntervalSeconds = 30;
+    g_scrollAnimationFps.store(60);
+    SignalAnimationScheduler();
     g_shortcutSave = L"Ctrl+S";
     g_shortcutImport = L"Ctrl+O";
     g_shortcutUndo = L"Ctrl+Z";
@@ -2910,6 +3244,15 @@ void ShowMessage(const std::wstring& text, const std::wstring& title = L"Attenda
     ThemedMessageBox(g_hwnd, text, title, false);
 }
 
+bool SaveSettingsWithFeedback(HWND owner = nullptr) {
+    if (SaveSettings()) return true;
+    ThemedMessageBox(owner ? owner : g_hwnd,
+        Tr(L"Could not save the settings file. Your changes will remain active only for this session.",
+            L"\u65e0\u6cd5\u4fdd\u5b58\u8bbe\u7f6e\u6587\u4ef6\u3002\u672c\u6b21\u66f4\u6539\u53ea\u4f1a\u5728\u5f53\u524d\u4f1a\u8bdd\u4e2d\u751f\u6548\u3002"),
+        Tr(L"Settings could not be saved", L"\u8bbe\u7f6e\u65e0\u6cd5\u4fdd\u5b58"), false);
+    return false;
+}
+
 std::wstring StatusDisplayText(const std::wstring& status) {
     if (status == L"Present") return Tr(L"Present", L"\u51fa\u5e2d");
     if (status == L"Absent") return Tr(L"Absent", L"\u7f3a\u5e2d");
@@ -3101,9 +3444,77 @@ void ScrollThemedMenu(HWND hwnd, ThemedMenuState* state, int delta) {
     int next = std::clamp(state->scrollY + delta, 0, state->maxScrollY);
     if (next == state->scrollY) return;
     state->scrollY = next;
+    state->smoothScrollStartY = next;
+    state->smoothScrollCurrentY = next;
+    state->smoothScrollTargetY = next;
+    state->smoothScrollStartMs = 0;
     if (!state->keyboardMode) state->hover = -1;
     StartAnimation(hwnd, AnimChannel::Hover, 0.0, 80);
     InvalidateRect(hwnd, nullptr, FALSE);
+}
+
+int WheelScrollLineCount() {
+    UINT lines = 3;
+    if (!SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0)) return 3;
+    if (lines == WHEEL_PAGESCROLL) return 6;
+    return std::clamp((int)lines, 1, 12);
+}
+
+void QueueThemedMenuSmoothScroll(HWND hwnd, ThemedMenuState* state, int wheelDelta) {
+    if (!hwnd || !state || !state->scrollable || wheelDelta == 0) return;
+    double pixelDelta = -(double)wheelDelta / WHEEL_DELTA
+        * WheelScrollLineCount() * THEMED_MENU_ITEM_H;
+    if (!g_smoothScrollingEnabled) {
+        int immediateDelta = (int)std::lround(pixelDelta);
+        if (immediateDelta == 0) immediateDelta = wheelDelta < 0 ? 1 : -1;
+        ScrollThemedMenu(hwnd, state, immediateDelta);
+        return;
+    }
+
+    uint64_t now = AnimationNowMs();
+    if (state->smoothScrollStartMs != 0 && state->smoothScrollDurationMs > 0) {
+        double elapsed = (double)(now - state->smoothScrollStartMs) / state->smoothScrollDurationMs;
+        double eased = CubicBezierEase(elapsed, 0.22, 1.0, 0.36, 1.0);
+        state->smoothScrollCurrentY = state->smoothScrollStartY
+            + (state->smoothScrollTargetY - state->smoothScrollStartY) * eased;
+    } else {
+        state->smoothScrollCurrentY = state->scrollY;
+    }
+    state->smoothScrollStartY = state->smoothScrollCurrentY;
+    state->smoothScrollTargetY = std::clamp(
+        state->smoothScrollTargetY + pixelDelta, 0.0, (double)state->maxScrollY);
+    if (std::abs(state->smoothScrollTargetY - state->smoothScrollStartY) < 0.5) return;
+    double distance = std::abs(state->smoothScrollTargetY - state->smoothScrollStartY);
+    bool precisionInput = std::abs(wheelDelta) < WHEEL_DELTA;
+    state->smoothScrollDurationMs = precisionInput
+        ? (uint32_t)std::clamp(80.0 + distance * 0.18, 90.0, 150.0)
+        : (uint32_t)std::clamp(170.0 + distance * 0.16, 190.0, 260.0);
+    state->smoothScrollStartMs = now;
+    RestartAnimation(hwnd, AnimChannel::SmoothScroll, 1.0, state->smoothScrollDurationMs);
+    if (!state->keyboardMode) state->hover = -1;
+    StartAnimation(hwnd, AnimChannel::Hover, 0.0, 80);
+}
+
+void UpdateThemedMenuSmoothScroll(HWND hwnd, ThemedMenuState* state) {
+    if (!hwnd || !state || !g_smoothScrollingEnabled) return;
+    uint64_t now = AnimationNowMs();
+    double progress = state->smoothScrollDurationMs == 0
+        ? 1.0
+        : (double)(now - state->smoothScrollStartMs) / state->smoothScrollDurationMs;
+    double eased = CubicBezierEase(progress, 0.22, 1.0, 0.36, 1.0);
+    state->smoothScrollCurrentY = state->smoothScrollStartY
+        + (state->smoothScrollTargetY - state->smoothScrollStartY) * eased;
+    int next = (int)std::lround(state->smoothScrollCurrentY);
+    next = std::clamp(next, 0, state->maxScrollY);
+    if (next != state->scrollY) {
+        state->scrollY = next;
+        InvalidateRect(hwnd, nullptr, FALSE);
+    }
+    if (progress >= 1.0) {
+        state->smoothScrollCurrentY = state->smoothScrollTargetY;
+        state->scrollY = (int)std::lround(state->smoothScrollTargetY);
+        state->smoothScrollStartMs = 0;
+    }
 }
 
 int FindThemedMenuItem(const ThemedMenuState* state, int start, int direction) {
@@ -3127,6 +3538,10 @@ int LastThemedMenuItem(const ThemedMenuState* state) {
 
 void EnsureThemedMenuItemVisible(HWND hwnd, ThemedMenuState* state, int index) {
     if (!hwnd || !state || index < 0 || index >= (int)state->items.size() || !state->scrollable) return;
+    state->smoothScrollStartY = state->scrollY;
+    state->smoothScrollCurrentY = state->scrollY;
+    state->smoothScrollTargetY = state->scrollY;
+    state->smoothScrollStartMs = 0;
     int top = ThemedMenuItemTop(state, index);
     int bottom = top + (state->items[index].separator ? THEMED_MENU_SEPARATOR_H : THEMED_MENU_ITEM_H);
     int viewportHeight = std::max(1, ThemedMenuContentBottom(state) - ThemedMenuContentTop(state));
@@ -3136,6 +3551,10 @@ void EnsureThemedMenuItemVisible(HWND hwnd, ThemedMenuState* state, int index) {
     next = std::clamp(next, 0, state->maxScrollY);
     if (next != state->scrollY) {
         state->scrollY = next;
+        state->smoothScrollStartY = next;
+        state->smoothScrollCurrentY = next;
+        state->smoothScrollTargetY = next;
+        state->smoothScrollStartMs = 0;
         InvalidateRect(hwnd, nullptr, FALSE);
     }
 }
@@ -3194,20 +3613,20 @@ void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState* state) {
     COLORREF hover = COLOR_HOVER;
     int blurRadius = (int)std::lround(reveal * 10.0);
 
-    HBRUSH bg = CreateSolidBrush(fill);
-    FillRect(hdc, &rc, bg);
-    DeleteObject(bg);
+    HBRUSH dcBrush = (HBRUSH)GetStockObject(DC_BRUSH);
+    SetDCBrushColor(hdc, fill);
+    FillRect(hdc, &rc, dcBrush);
 
+    HGDIOBJ oldGlowPen = SelectObject(hdc, GetStockObject(DC_PEN));
+    HGDIOBJ oldGlowBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
     for (int i = 0; i < blurRadius; i += 3) {
         RECT glow{rc.left + i, rc.top + i, rc.right - i, rc.bottom - i};
-        HPEN glowPen = CreatePen(PS_SOLID, 1, BlendColor(COLOR_BG, COLOR_SELECTED, reveal * (1.0 - i / 12.0)));
-        HGDIOBJ oldGlowPen = SelectObject(hdc, glowPen);
-        HGDIOBJ oldGlowBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
+        SetDCPenColor(hdc,
+            BlendColor(COLOR_BG, COLOR_SELECTED, reveal * (1.0 - i / 12.0)));
         Rectangle(hdc, glow.left, glow.top, glow.right, glow.bottom);
-        SelectObject(hdc, oldGlowBrush);
-        SelectObject(hdc, oldGlowPen);
-        DeleteObject(glowPen);
     }
+    SelectObject(hdc, oldGlowBrush);
+    SelectObject(hdc, oldGlowPen);
 
     HGDIOBJ oldFont = SelectObject(hdc, g_font);
     SetBkMode(hdc, TRANSPARENT);
@@ -3230,9 +3649,8 @@ void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState* state) {
         RECT itemRc{0, top, rc.right, top + THEMED_MENU_ITEM_H};
         if (i == state->hover) {
             double hot = GetAnimationValue(hwnd, AnimChannel::Hover, 1.0);
-            HBRUSH hoverBrush = CreateSolidBrush(BlendColor(fill, hover, hot));
-            FillRect(hdc, &itemRc, hoverBrush);
-            DeleteObject(hoverBrush);
+            SetDCBrushColor(hdc, BlendColor(fill, hover, hot));
+            FillRect(hdc, &itemRc, dcBrush);
         }
 
         RECT textRc = itemRc;
@@ -3245,9 +3663,8 @@ void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState* state) {
 
     if (state->scrollable && state->contentHeight > 0) {
         RECT track{rc.right - 9, rc.top + 8, rc.right - 5, rc.bottom - 8};
-        HBRUSH trackBrush = CreateSolidBrush(COLOR_PANEL);
-        FillRect(hdc, &track, trackBrush);
-        DeleteObject(trackBrush);
+        SetDCBrushColor(hdc, COLOR_PANEL);
+        FillRect(hdc, &track, dcBrush);
 
         int trackHeight = std::max(1, (int)(track.bottom - track.top));
         int thumbHeight = std::clamp(
@@ -3259,20 +3676,52 @@ void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState* state) {
             ? (int)std::lround(thumbTravel * (state->scrollY / (double)state->maxScrollY))
             : 0);
         RECT thumb{track.left, thumbTop, track.right, thumbTop + thumbHeight};
-        HBRUSH thumbBrush = CreateSolidBrush(COLOR_ACCENT);
-        FillRect(hdc, &thumb, thumbBrush);
-        DeleteObject(thumbBrush);
+        SetDCBrushColor(hdc, COLOR_ACCENT);
+        FillRect(hdc, &thumb, dcBrush);
     }
 
     SelectObject(hdc, oldFont);
 
-    HPEN borderPen = CreatePen(PS_SOLID, 1, border);
-    HGDIOBJ oldPen = SelectObject(hdc, borderPen);
+    HGDIOBJ oldPen = SelectObject(hdc, GetStockObject(DC_PEN));
     HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
+    SetDCPenColor(hdc, border);
     Rectangle(hdc, rc.left, rc.top, rc.right, rc.bottom);
     SelectObject(hdc, oldBrush);
     SelectObject(hdc, oldPen);
-    DeleteObject(borderPen);
+}
+
+void ReleaseThemedMenuBuffer(ThemedMenuState* state) {
+    if (!state) return;
+    if (state->bufferDc && state->bufferOldBitmap) {
+        SelectObject(state->bufferDc, state->bufferOldBitmap);
+    }
+    if (state->bufferBitmap) DeleteObject(state->bufferBitmap);
+    if (state->bufferDc) DeleteDC(state->bufferDc);
+    state->bufferDc = nullptr;
+    state->bufferBitmap = nullptr;
+    state->bufferOldBitmap = nullptr;
+    state->bufferWidth = 0;
+    state->bufferHeight = 0;
+}
+
+bool EnsureThemedMenuBuffer(HDC target, ThemedMenuState* state, int width, int height) {
+    if (!state || !target || width <= 0 || height <= 0) return false;
+    if (state->bufferDc && state->bufferBitmap
+        && state->bufferWidth == width && state->bufferHeight == height) {
+        return true;
+    }
+    ReleaseThemedMenuBuffer(state);
+    state->bufferDc = CreateCompatibleDC(target);
+    if (!state->bufferDc) return false;
+    state->bufferBitmap = CreateCompatibleBitmap(target, width, height);
+    if (!state->bufferBitmap) {
+        ReleaseThemedMenuBuffer(state);
+        return false;
+    }
+    state->bufferOldBitmap = SelectObject(state->bufferDc, state->bufferBitmap);
+    state->bufferWidth = width;
+    state->bufferHeight = height;
+    return true;
 }
 
 void PaintThemedPopupMenu(HWND hwnd, HDC hdc, ThemedMenuState* state) {
@@ -3281,14 +3730,12 @@ void PaintThemedPopupMenu(HWND hwnd, HDC hdc, ThemedMenuState* state) {
     int width = std::max(1, (int)(rc.right - rc.left));
     int height = std::max(1, (int)(rc.bottom - rc.top));
 
-    HDC memDc = CreateCompatibleDC(hdc);
-    HBITMAP bitmap = CreateCompatibleBitmap(hdc, width, height);
-    HGDIOBJ oldBitmap = SelectObject(memDc, bitmap);
-    PaintThemedPopupMenuContent(hwnd, memDc, state);
-    BitBlt(hdc, 0, 0, width, height, memDc, 0, 0, SRCCOPY);
-    SelectObject(memDc, oldBitmap);
-    DeleteObject(bitmap);
-    DeleteDC(memDc);
+    if (!EnsureThemedMenuBuffer(hdc, state, width, height)) {
+        PaintThemedPopupMenuContent(hwnd, hdc, state);
+        return;
+    }
+    PaintThemedPopupMenuContent(hwnd, state->bufferDc, state);
+    BitBlt(hdc, 0, 0, width, height, state->bufferDc, 0, 0, SRCCOPY);
 }
 
 void CloseThemedPopupMenu(HWND hwnd, ThemedMenuState* state, int selected) {
@@ -3316,6 +3763,10 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     }
     case WM_ERASEBKGND:
         return 1;
+    case WM_SIZE:
+        ReleaseThemedMenuBuffer(state);
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
     case WM_MOUSEMOVE:
         if (state && !state->closing) {
             POINT mouse{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
@@ -3340,15 +3791,16 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         if (state && !state->closing && state->scrollable) {
             state->keyboardMode = false;
             state->hover = -1;
-            int wheel = GET_WHEEL_DELTA_WPARAM(wParam);
-            int rows = wheel / WHEEL_DELTA;
-            if (rows == 0) rows = wheel > 0 ? 1 : -1;
-            ScrollThemedMenu(hwnd, state, -rows * THEMED_MENU_ITEM_H * 2);
+            QueueThemedMenuSmoothScroll(hwnd, state, GET_WHEEL_DELTA_WPARAM(wParam));
             return 0;
         }
         break;
     case WM_LBUTTONDOWN:
         if (state && !state->closing) {
+            state->smoothScrollStartY = state->scrollY;
+            state->smoothScrollCurrentY = state->scrollY;
+            state->smoothScrollTargetY = state->scrollY;
+            state->smoothScrollStartMs = 0;
             POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             RECT rc{};
             GetClientRect(hwnd, &rc);
@@ -3421,15 +3873,23 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
         break;
     case WM_APP_ANIMATION_TICK:
-        if (state && !state->closing) ApplyThemedMenuReveal(hwnd, state);
-        InvalidateRect(hwnd, nullptr, FALSE);
+        AcknowledgeAnimationTick(hwnd);
+        if (state && !state->closing) {
+            UpdateThemedMenuSmoothScroll(hwnd, state);
+            ApplyThemedMenuReveal(hwnd, state);
+        }
+        RedrawWindow(hwnd, nullptr, nullptr,
+            RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
         return 0;
     case WM_APP_ANIMATION_DONE:
         DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:
         ReleaseCapture();
-        if (state) state->done = true;
+        if (state) {
+            ReleaseThemedMenuBuffer(state);
+            state->done = true;
+        }
         RemoveAnimationState(hwnd);
         return 0;
     }
@@ -3526,7 +3986,13 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem>& items) {
     SetFocus(popup);
 
     MSG msg{};
-    while (!state.done && IsWindow(popup) && GetMessageW(&msg, nullptr, 0, 0) > 0) {
+    while (!state.done && IsWindow(popup)) {
+        int messageResult = GetMessageW(&msg, nullptr, 0, 0);
+        if (messageResult == 0) {
+            PostQuitMessage((int)msg.wParam);
+            break;
+        }
+        if (messageResult == -1) break;
         if ((msg.message == WM_KEYDOWN || msg.message == WM_SYSKEYDOWN || msg.message == WM_MOUSEWHEEL)
             && msg.hwnd != popup) {
             SendMessageW(popup, msg.message, msg.wParam, msg.lParam);
@@ -3570,42 +4036,100 @@ void ResetBrushes() {
     g_panelBrush = CreateSolidBrush(COLOR_PANEL);
 }
 
+ThemePalette BuildThemePalette(UiTheme theme, AccentTone accentTone) {
+    ThemePalette palette;
+    if (theme == UiTheme::Light) {
+        palette.background = RGB(255, 255, 255);
+        palette.panel = RGB(246, 246, 246);
+        palette.input = RGB(250, 250, 250);
+        palette.text = RGB(0, 0, 0);
+        palette.muted = RGB(58, 58, 58);
+        palette.danger = RGB(150, 74, 74);
+        palette.border = RGB(194, 194, 194);
+        palette.hover = RGB(232, 232, 232);
+        palette.card = RGB(250, 250, 250);
+        palette.rowAlt = RGB(240, 240, 240);
+        palette.selected = RGB(220, 228, 230);
+        palette.checkFill = RGB(255, 255, 255);
+        if (accentTone == AccentTone::Sage) palette.accent = RGB(76, 112, 96);
+        else if (accentTone == AccentTone::Cyan) palette.accent = RGB(52, 112, 128);
+        else palette.accent = RGB(78, 78, 78);
+    } else {
+        palette.background = RGB(0, 0, 0);
+        palette.panel = RGB(18, 18, 18);
+        palette.input = RGB(26, 26, 26);
+        palette.text = RGB(255, 255, 255);
+        palette.muted = RGB(224, 224, 224);
+        palette.danger = RGB(176, 112, 112);
+        palette.border = RGB(64, 64, 64);
+        palette.hover = RGB(38, 38, 38);
+        palette.card = RGB(16, 16, 16);
+        palette.rowAlt = RGB(14, 14, 14);
+        palette.selected = RGB(42, 42, 42);
+        palette.checkFill = RGB(0, 0, 0);
+        if (accentTone == AccentTone::Sage) palette.accent = RGB(142, 166, 154);
+        else if (accentTone == AccentTone::Cyan) palette.accent = RGB(112, 174, 188);
+        else palette.accent = RGB(188, 188, 188);
+    }
+    return palette;
+}
+
+ThemePalette CurrentThemePalette() {
+    ThemePalette palette;
+    palette.background = COLOR_BG;
+    palette.panel = COLOR_PANEL;
+    palette.input = COLOR_INPUT;
+    palette.text = COLOR_TEXT;
+    palette.muted = COLOR_MUTED;
+    palette.accent = COLOR_ACCENT;
+    palette.danger = COLOR_DANGER;
+    palette.border = COLOR_BORDER;
+    palette.hover = COLOR_HOVER;
+    palette.card = COLOR_CARD;
+    palette.rowAlt = COLOR_ROW_ALT;
+    palette.selected = COLOR_SELECTED;
+    palette.checkFill = COLOR_CHECK_FILL;
+    return palette;
+}
+
+void SetThemePalette(const ThemePalette& palette) {
+    COLOR_BG = palette.background;
+    COLOR_PANEL = palette.panel;
+    COLOR_INPUT = palette.input;
+    COLOR_TEXT = palette.text;
+    COLOR_MUTED = palette.muted;
+    COLOR_ACCENT = palette.accent;
+    COLOR_DANGER = palette.danger;
+    COLOR_BORDER = palette.border;
+    COLOR_HOVER = palette.hover;
+    COLOR_CARD = palette.card;
+    COLOR_ROW_ALT = palette.rowAlt;
+    COLOR_SELECTED = palette.selected;
+    COLOR_CHECK_FILL = palette.checkFill;
+    ResetBrushes();
+}
+
+ThemePalette BlendThemePalette(const ThemePalette& from, const ThemePalette& to, double amount) {
+    ThemePalette palette;
+    palette.background = BlendColor(from.background, to.background, amount);
+    palette.panel = BlendColor(from.panel, to.panel, amount);
+    palette.input = BlendColor(from.input, to.input, amount);
+    palette.text = BlendColor(from.text, to.text, amount);
+    palette.muted = BlendColor(from.muted, to.muted, amount);
+    palette.accent = BlendColor(from.accent, to.accent, amount);
+    palette.danger = BlendColor(from.danger, to.danger, amount);
+    palette.border = BlendColor(from.border, to.border, amount);
+    palette.hover = BlendColor(from.hover, to.hover, amount);
+    palette.card = BlendColor(from.card, to.card, amount);
+    palette.rowAlt = BlendColor(from.rowAlt, to.rowAlt, amount);
+    palette.selected = BlendColor(from.selected, to.selected, amount);
+    palette.checkFill = BlendColor(from.checkFill, to.checkFill, amount);
+    return palette;
+}
+
 void ApplyThemePalette() {
     if (!g_advancedPersonalizationEnabled) g_theme = UiTheme::Dark;
-    if (g_theme == UiTheme::Light) {
-        COLOR_BG = RGB(255, 255, 255);
-        COLOR_PANEL = RGB(246, 246, 246);
-        COLOR_INPUT = RGB(250, 250, 250);
-        COLOR_TEXT = RGB(0, 0, 0);
-        COLOR_MUTED = RGB(58, 58, 58);
-        COLOR_DANGER = RGB(150, 74, 74);
-        COLOR_BORDER = RGB(194, 194, 194);
-        COLOR_HOVER = RGB(232, 232, 232);
-        COLOR_CARD = RGB(250, 250, 250);
-        COLOR_ROW_ALT = RGB(240, 240, 240);
-        COLOR_SELECTED = RGB(220, 228, 230);
-        COLOR_CHECK_FILL = RGB(255, 255, 255);
-        if (g_accentTone == AccentTone::Sage) COLOR_ACCENT = RGB(76, 112, 96);
-        else if (g_accentTone == AccentTone::Cyan) COLOR_ACCENT = RGB(52, 112, 128);
-        else COLOR_ACCENT = RGB(78, 78, 78);
-    } else {
-        COLOR_BG = RGB(0, 0, 0);
-        COLOR_PANEL = RGB(18, 18, 18);
-        COLOR_INPUT = RGB(26, 26, 26);
-        COLOR_TEXT = RGB(255, 255, 255);
-        COLOR_MUTED = RGB(224, 224, 224);
-        COLOR_DANGER = RGB(176, 112, 112);
-        COLOR_BORDER = RGB(64, 64, 64);
-        COLOR_HOVER = RGB(38, 38, 38);
-        COLOR_CARD = RGB(16, 16, 16);
-        COLOR_ROW_ALT = RGB(14, 14, 14);
-        COLOR_SELECTED = RGB(42, 42, 42);
-        COLOR_CHECK_FILL = RGB(0, 0, 0);
-        if (g_accentTone == AccentTone::Sage) COLOR_ACCENT = RGB(142, 166, 154);
-        else if (g_accentTone == AccentTone::Cyan) COLOR_ACCENT = RGB(112, 174, 188);
-        else COLOR_ACCENT = RGB(188, 188, 188);
-    }
-    ResetBrushes();
+    SetThemePalette(BuildThemePalette(g_theme, g_accentTone));
 }
 
 void PaintAppBackground(HWND hwnd, HDC hdc) {
@@ -3688,6 +4212,64 @@ void ApplyThemedControls(HWND root) {
     EnumChildWindows(root, ApplyThemeToChild, 0);
 }
 
+void UpdateTransitionTitleBar(HWND hwnd) {
+    if (!hwnd || !IsWindow(hwnd)) return;
+    DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &COLOR_BG, sizeof(COLOR_BG));
+    DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, &COLOR_TEXT, sizeof(COLOR_TEXT));
+    DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &COLOR_BORDER, sizeof(COLOR_BORDER));
+}
+
+void RedrawThemeRoots(bool updateNow) {
+    const HWND roots[] = {g_hwnd, g_settingsWindow, g_chartWindow, g_quickRollCallWindow};
+    UINT flags = RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE;
+    if (updateNow) flags |= RDW_UPDATENOW;
+    for (HWND root : roots) {
+        if (!root || !IsWindow(root)) continue;
+        UpdateTransitionTitleBar(root);
+        RedrawWindow(root, nullptr, nullptr, flags);
+    }
+}
+
+void FinishThemeTransition() {
+    if (!g_themeTransition.active) return;
+    g_themeTransition.active = false;
+    SetThemePalette(g_themeTransition.target);
+    ApplyDarkMode(g_hwnd);
+    ApplyGlassTitleBar(g_settingsWindow);
+    ApplyGlassTitleBar(g_chartWindow);
+    ApplyGlassTitleBar(g_quickRollCallWindow);
+    ApplyThemedControls(g_settingsWindow);
+    ApplyThemedControls(g_chartWindow);
+    ApplyThemedControls(g_quickRollCallWindow);
+    RedrawThemeRoots(true);
+}
+
+void BeginThemeTransition(UiTheme targetTheme) {
+    if (!g_hwnd || !IsWindow(g_hwnd)) {
+        g_theme = targetTheme;
+        ApplyVisualSettings();
+        return;
+    }
+    g_themeTransition.start = CurrentThemePalette();
+    g_themeTransition.target = BuildThemePalette(targetTheme, g_accentTone);
+    g_themeTransition.active = true;
+    g_theme = targetTheme;
+    RestartAnimation(g_hwnd, AnimChannel::ThemeTransition, 1.0, 260);
+}
+
+void UpdateThemeTransitionFrame() {
+    if (!g_themeTransition.active) return;
+    double progress = GetAnimationValue(g_hwnd, AnimChannel::ThemeTransition, 1.0);
+    SetThemePalette(BlendThemePalette(g_themeTransition.start, g_themeTransition.target, progress));
+    if (g_list) {
+        ListView_SetBkColor(g_list, COLOR_PANEL);
+        ListView_SetTextBkColor(g_list, COLOR_PANEL);
+        ListView_SetTextColor(g_list, COLOR_TEXT);
+    }
+    RedrawThemeRoots(false);
+    if (progress >= 0.999) FinishThemeTransition();
+}
+
 void SetListColumnText(int index, const std::wstring& text) {
     LVCOLUMNW col{};
     col.mask = LVCF_TEXT;
@@ -3734,25 +4316,30 @@ void ApplyMainLanguage() {
     UpdateStats();
 }
 
-void ApplyVisualSettings() {
-    ApplyThemePalette();
+void ApplyVisualSettings(bool preserveThemeTransition) {
+    if (!preserveThemeTransition) {
+        g_themeTransition.active = false;
+        ApplyThemePalette();
+    }
     RecreateFonts();
     ApplyMainLanguage();
-    if (g_list) {
+    if (!preserveThemeTransition && g_list) {
         ApplyDarkMode(g_hwnd);
     }
-    BOOL dark = g_theme == UiTheme::Dark ? TRUE : FALSE;
-    if (g_hwnd) DwmSetWindowAttribute(g_hwnd, 20, &dark, sizeof(dark));
-    if (g_settingsWindow) DwmSetWindowAttribute(g_settingsWindow, 20, &dark, sizeof(dark));
-    if (g_chartWindow) DwmSetWindowAttribute(g_chartWindow, 20, &dark, sizeof(dark));
-    ApplyGlassTitleBar(g_hwnd);
-    ApplyGlassTitleBar(g_settingsWindow);
-    ApplyGlassTitleBar(g_chartWindow);
-    ApplyGlassTitleBar(g_quickRollCallWindow);
-    ApplyThemedControls(g_hwnd);
-    ApplyThemedControls(g_settingsWindow);
-    ApplyThemedControls(g_chartWindow);
-    ApplyThemedControls(g_quickRollCallWindow);
+    if (!preserveThemeTransition) {
+        BOOL dark = g_theme == UiTheme::Dark ? TRUE : FALSE;
+        if (g_hwnd) DwmSetWindowAttribute(g_hwnd, 20, &dark, sizeof(dark));
+        if (g_settingsWindow) DwmSetWindowAttribute(g_settingsWindow, 20, &dark, sizeof(dark));
+        if (g_chartWindow) DwmSetWindowAttribute(g_chartWindow, 20, &dark, sizeof(dark));
+        ApplyGlassTitleBar(g_hwnd);
+        ApplyGlassTitleBar(g_settingsWindow);
+        ApplyGlassTitleBar(g_chartWindow);
+        ApplyGlassTitleBar(g_quickRollCallWindow);
+        ApplyThemedControls(g_hwnd);
+        ApplyThemedControls(g_settingsWindow);
+        ApplyThemedControls(g_chartWindow);
+        ApplyThemedControls(g_quickRollCallWindow);
+    }
     if (g_settingsWindow) RedrawWindow(g_settingsWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_NOERASE);
     if (g_chartWindow) RedrawWindow(g_chartWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_NOERASE);
     if (g_quickRollCallWindow) RedrawWindow(g_quickRollCallWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_NOERASE);
@@ -4154,22 +4741,24 @@ void ExportCsv() {
     std::wstring path = SaveCsvFileDialog();
     if (path.empty()) return;
 
-    std::ofstream file(std::filesystem::path(path), std::ios::binary);
-    if (!file) {
+    bool exported = WriteStreamFileAtomically(std::filesystem::path(path), [&](std::ofstream& file) {
+        file << "\xEF\xBB\xBF";
+        file << CsvCell(Tr(L"Date/Time", L"\u65e5\u671f\u65f6\u95f4")) << ','
+             << CsvCell(Tr(L"Name", L"\u59d3\u540d")) << ','
+             << CsvCell(Tr(L"Status", L"\u72b6\u6001")) << ','
+             << CsvCell(Tr(L"Other", L"\u5176\u4ed6")) << '\n';
+        for (const auto& record : g_records) {
+            file << CsvCell(record.dateTime) << ','
+                 << CsvCell(record.name) << ','
+                 << CsvCell(record.status) << ','
+                 << CsvCell(record.other) << '\n';
+            if (!file) return false;
+        }
+        return file.good();
+    });
+    if (!exported) {
         ShowMessage(Tr(L"Could not export the CSV file.", L"\u65e0\u6cd5\u5bfc\u51fa CSV \u6587\u4ef6\u3002"));
         return;
-    }
-
-    file << "\xEF\xBB\xBF";
-    file << CsvCell(Tr(L"Date/Time", L"\u65e5\u671f\u65f6\u95f4")) << ','
-         << CsvCell(Tr(L"Name", L"\u59d3\u540d")) << ','
-         << CsvCell(Tr(L"Status", L"\u72b6\u6001")) << ','
-         << CsvCell(Tr(L"Other", L"\u5176\u4ed6")) << '\n';
-    for (const auto& record : g_records) {
-        file << CsvCell(record.dateTime) << ','
-             << CsvCell(record.name) << ','
-             << CsvCell(record.status) << ','
-             << CsvCell(record.other) << '\n';
     }
     ShowMessage(Tr(L"CSV exported successfully.", L"CSV \u5bfc\u51fa\u6210\u529f\u3002"));
 }
@@ -4274,58 +4863,65 @@ void Write32(std::ofstream& file, uint32_t value) {
 }
 
 bool WriteZipStore(const std::filesystem::path& path, std::vector<ZipEntry> entries) {
-    std::ofstream file(path, std::ios::binary);
-    if (!file) return false;
+    return WriteStreamFileAtomically(path, [&](std::ofstream& file) {
+        for (auto& entry : entries) {
+            entry.crc = Crc32(entry.data);
+            std::streampos offset = file.tellp();
+            if (offset < 0 || (uint64_t)offset > UINT32_MAX) return false;
+            entry.offset = (uint32_t)offset;
+            Write32(file, 0x04034b50);
+            Write16(file, 20);
+            Write16(file, 0);
+            Write16(file, 0);
+            Write16(file, 0);
+            Write16(file, 0);
+            Write32(file, entry.crc);
+            Write32(file, (uint32_t)entry.data.size());
+            Write32(file, (uint32_t)entry.data.size());
+            Write16(file, (uint16_t)entry.name.size());
+            Write16(file, 0);
+            file.write(entry.name.data(), entry.name.size());
+            file.write(entry.data.data(), entry.data.size());
+            if (!file) return false;
+        }
 
-    for (auto& entry : entries) {
-        entry.crc = Crc32(entry.data);
-        entry.offset = (uint32_t)file.tellp();
-        Write32(file, 0x04034b50);
-        Write16(file, 20);
+        std::streampos centralPosition = file.tellp();
+        if (centralPosition < 0 || (uint64_t)centralPosition > UINT32_MAX) return false;
+        uint32_t centralOffset = (uint32_t)centralPosition;
+        for (const auto& entry : entries) {
+            Write32(file, 0x02014b50);
+            Write16(file, 20);
+            Write16(file, 20);
+            Write16(file, 0);
+            Write16(file, 0);
+            Write16(file, 0);
+            Write16(file, 0);
+            Write32(file, entry.crc);
+            Write32(file, (uint32_t)entry.data.size());
+            Write32(file, (uint32_t)entry.data.size());
+            Write16(file, (uint16_t)entry.name.size());
+            Write16(file, 0);
+            Write16(file, 0);
+            Write16(file, 0);
+            Write16(file, 0);
+            Write32(file, 0);
+            Write32(file, entry.offset);
+            file.write(entry.name.data(), entry.name.size());
+            if (!file) return false;
+        }
+        std::streampos endPosition = file.tellp();
+        if (endPosition < 0 || (uint64_t)endPosition > UINT32_MAX) return false;
+        uint32_t centralSize = (uint32_t)endPosition - centralOffset;
+        Write32(file, 0x06054b50);
         Write16(file, 0);
         Write16(file, 0);
+        Write16(file, (uint16_t)entries.size());
+        Write16(file, (uint16_t)entries.size());
+        Write32(file, centralSize);
+        Write32(file, centralOffset);
         Write16(file, 0);
-        Write16(file, 0);
-        Write32(file, entry.crc);
-        Write32(file, (uint32_t)entry.data.size());
-        Write32(file, (uint32_t)entry.data.size());
-        Write16(file, (uint16_t)entry.name.size());
-        Write16(file, 0);
-        file.write(entry.name.data(), entry.name.size());
-        file.write(entry.data.data(), entry.data.size());
-    }
-
-    uint32_t centralOffset = (uint32_t)file.tellp();
-    for (const auto& entry : entries) {
-        Write32(file, 0x02014b50);
-        Write16(file, 20);
-        Write16(file, 20);
-        Write16(file, 0);
-        Write16(file, 0);
-        Write16(file, 0);
-        Write16(file, 0);
-        Write32(file, entry.crc);
-        Write32(file, (uint32_t)entry.data.size());
-        Write32(file, (uint32_t)entry.data.size());
-        Write16(file, (uint16_t)entry.name.size());
-        Write16(file, 0);
-        Write16(file, 0);
-        Write16(file, 0);
-        Write16(file, 0);
-        Write32(file, 0);
-        Write32(file, entry.offset);
-        file.write(entry.name.data(), entry.name.size());
-    }
-    uint32_t centralSize = (uint32_t)file.tellp() - centralOffset;
-    Write32(file, 0x06054b50);
-    Write16(file, 0);
-    Write16(file, 0);
-    Write16(file, (uint16_t)entries.size());
-    Write16(file, (uint16_t)entries.size());
-    Write32(file, centralSize);
-    Write32(file, centralOffset);
-    Write16(file, 0);
-    return true;
+        return file.good();
+    });
 }
 
 struct PptStats {
@@ -4762,11 +5358,7 @@ void ExportPrintHtml() {
     SyncActiveSheet();
     std::wstring path = SaveHtmlFileDialog();
     if (path.empty()) return;
-    std::ofstream file(std::filesystem::path(path), std::ios::binary);
-    if (!file) {
-        ShowMessage(Tr(L"Could not export the print file.", L"\u65e0\u6cd5\u5bfc\u51fa\u6253\u5370\u6587\u4ef6\u3002"));
-        return;
-    }
+    bool exported = WriteStreamFileAtomically(std::filesystem::path(path), [&](std::ofstream& file) {
     file << "\xEF\xBB\xBF";
     file << "<!doctype html><meta charset='utf-8'><title>" << HtmlCell(Tr(L"Attendance", L"\u51fa\u52e4\u7387")) << "</title>";
     file << "<style>body{font-family:Segoe UI,Arial;margin:32px}table{border-collapse:collapse;width:100%}"
@@ -4801,6 +5393,12 @@ void ExportPrintHtml() {
         file << "</tr>";
     }
     file << "</table><script>setTimeout(()=>window.print(),300)</script>";
+    return file.good();
+    });
+    if (!exported) {
+        ShowMessage(Tr(L"Could not export the print file.", L"\u65e0\u6cd5\u5bfc\u51fa\u6253\u5370\u6587\u4ef6\u3002"));
+        return;
+    }
     ShellExecuteW(g_hwnd, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
@@ -4890,23 +5488,26 @@ void CreateRecordsFromRoster() {
         ShowMessage(Tr(L"No students in the roster.", L"\u540d\u5355\u4e2d\u6ca1\u6709\u5b66\u751f\u3002"));
         return;
     }
-    PushUndo();
-    MarkDirty();
     std::wstring dateTime = GetText(g_dateEdit);
     if (dateTime.empty()) dateTime = CurrentDateTimeText();
-    int added = 0;
+    std::vector<AttendanceRecord> additions;
     for (const auto& student : students) {
         auto duplicate = std::find_if(g_records.begin(), g_records.end(), [&](const AttendanceRecord& record) {
             return record.name == student && record.dateTime == dateTime;
         });
         if (duplicate == g_records.end()) {
-            g_records.push_back({dateTime, student, L"Absent", L""});
-            ++added;
+            additions.push_back({dateTime, student, L"Absent", L""});
         }
     }
-    RefreshList();
+    if (!additions.empty()) {
+        PushUndo();
+        MarkDirty();
+        g_records.insert(g_records.end(), additions.begin(), additions.end());
+        RefreshList();
+    }
     std::wstringstream ss;
-    ss << Tr(L"Roster records created.", L"\u5df2\u4ece\u540d\u5355\u521b\u5efa\u70b9\u540d\u8bb0\u5f55\u3002") << L" (" << added << L")";
+    ss << Tr(L"Roster records created.", L"\u5df2\u4ece\u540d\u5355\u521b\u5efa\u70b9\u540d\u8bb0\u5f55\u3002")
+       << L" (" << additions.size() << L")";
     ShowMessage(ss.str());
 }
 
@@ -4992,22 +5593,26 @@ void CreateTodayLessonFromRoster() {
     lesson = TrimWide(lesson);
     if (lesson.empty()) return;
 
-    PushUndo();
-    MarkDirty();
-    int added = 0;
+    std::vector<AttendanceRecord> additions;
     for (const auto& student : students) {
         auto duplicate = std::find_if(g_records.begin(), g_records.end(), [&](const AttendanceRecord& record) {
             return record.name == student && record.dateTime == lesson;
         });
         if (duplicate == g_records.end()) {
-            g_records.push_back({lesson, student, L"Absent", L""});
-            ++added;
+            additions.push_back({lesson, student, L"Absent", L""});
         }
+    }
+    if (!additions.empty()) {
+        PushUndo();
+        MarkDirty();
+        g_records.insert(g_records.end(), additions.begin(), additions.end());
+        RefreshList();
     }
     SetText(g_dateEdit, lesson);
     ApplyFilterText(L"date:" + LowerText(lesson));
     std::wstringstream ss;
-    ss << Tr(L"Lesson records created.", L"\u8bfe\u6b21\u8bb0\u5f55\u5df2\u521b\u5efa\u3002") << L" (" << added << L")";
+    ss << Tr(L"Lesson records created.", L"\u8bfe\u6b21\u8bb0\u5f55\u5df2\u521b\u5efa\u3002")
+       << L" (" << additions.size() << L")";
     ShowMessage(ss.str(), Tr(L"Create today's lesson", L"\u521b\u5efa\u4eca\u65e5\u8bfe\u6b21"));
 }
 
@@ -5193,7 +5798,7 @@ void ShowReportTemplateMenu(HWND button) {
     });
     if (command >= 1 && command <= 4) {
         g_reportTemplate = (ReportTemplate)(command - 1);
-        SaveSettings();
+        SaveSettingsWithFeedback();
     }
 }
 
@@ -5205,7 +5810,7 @@ void ShowShortcutCenter() {
     );
     if (!PromptText(Tr(L"Shortcut center", L"\u5feb\u6377\u952e\u4e2d\u5fc3"), prompt, config)) return;
     if (ApplyShortcutConfigText(config)) {
-        SaveSettings();
+        SaveSettingsWithFeedback();
         ShowMessage(Tr(L"Shortcuts updated.", L"\u5feb\u6377\u952e\u5df2\u66f4\u65b0\u3002"), Tr(L"Shortcut center", L"\u5feb\u6377\u952e\u4e2d\u5fc3"));
     } else {
         ShowMessage(Tr(L"No shortcut changes were applied.", L"\u672a\u5e94\u7528\u5feb\u6377\u952e\u66f4\u6539\u3002"), Tr(L"Shortcut center", L"\u5feb\u6377\u952e\u4e2d\u5fc3"));
@@ -5508,6 +6113,7 @@ LRESULT CALLBACK QuickRollCallProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
     case WM_ERASEBKGND:
         return 1;
     case WM_APP_ANIMATION_TICK:
+        AcknowledgeAnimationTick(hwnd);
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     case WM_CLOSE:
@@ -5708,38 +6314,69 @@ void SetDefaultSaveFolder() {
     std::wstring folder = ChooseFolderDialog();
     if (folder.empty()) return;
     g_defaultSaveDir = folder;
-    SaveSettings();
+    SaveSettingsWithFeedback();
     ShowMessage(Tr(L"Default save folder updated:", L"\u9ed8\u8ba4\u4fdd\u5b58\u6587\u4ef6\u5939\u5df2\u66f4\u65b0\uff1a") + L"\n" + folder);
 }
 
 void ExportDatabaseMirror() {
     SyncActiveSheet();
     auto path = AppDataFilePath(L"attendance.attddb");
-    std::ofstream file(path, std::ios::binary);
-    if (!file) {
+    bool exported = WriteStreamFileAtomically(path, [&](std::ofstream& file) {
+        file << "\xEF\xBB\xBF";
+        file << "course\tteacher\tlocation\tstudent_count\tdate_time\tname\tstatus\tother\n";
+        for (const auto& sheet : g_sheets) {
+            for (const auto& r : sheet.records) {
+                file << TsvCell(sheet.name) << '\t' << TsvCell(sheet.teacher) << '\t' << TsvCell(sheet.location) << '\t' << sheet.students.size()
+                     << '\t' << TsvCell(r.dateTime) << '\t' << TsvCell(r.name)
+                     << '\t' << TsvCell(r.status) << '\t' << TsvCell(r.other) << '\n';
+                if (!file) return false;
+            }
+        }
+        return file.good();
+    });
+    if (!exported) {
         ShowMessage(Tr(L"Could not write the database file.", L"\u65e0\u6cd5\u5199\u5165\u6570\u636e\u5e93\u6587\u4ef6\u3002"));
         return;
-    }
-    file << "\xEF\xBB\xBF";
-    file << "course\tteacher\tlocation\tstudent_count\tdate_time\tname\tstatus\tother\n";
-    for (const auto& sheet : g_sheets) {
-        for (const auto& r : sheet.records) {
-            file << TsvCell(sheet.name) << '\t' << TsvCell(sheet.teacher) << '\t' << TsvCell(sheet.location) << '\t' << sheet.students.size()
-                 << '\t' << TsvCell(r.dateTime) << '\t' << TsvCell(r.name)
-                 << '\t' << TsvCell(r.status) << '\t' << TsvCell(r.other) << '\n';
-        }
     }
     std::wstring msg = Tr(L"Database mirror exported to:", L"\u6570\u636e\u5e93\u955c\u50cf\u5df2\u5bfc\u51fa\u5230\uff1a") + L"\n" + path.wstring();
     ShowMessage(msg);
 }
 
-void AutoSaveNow() {
-    if (!g_allowAutosaveOverwrite) return;
-    if (!g_dirty) return;
+enum class AutosaveResult { Skipped, Saved, Failed };
+
+bool PreserveIgnoredAutosave() {
+    if (g_allowAutosaveOverwrite) return true;
+    auto original = AppDataFilePath(L"autosave.attd");
+    if (original.empty()) return false;
+    if (!FileExistsNoThrow(original)) {
+        g_allowAutosaveOverwrite = true;
+        return true;
+    }
+    auto directory = BackupDirectoryPath();
+    if (directory.empty()) return false;
+    auto protectedPath = directory /
+        (L"autosave-protected-" + TimestampForFileName() + L"-"
+            + std::to_wstring(GetTickCount64()) + L".attd");
+    if (!CopyFileW(original.c_str(), protectedPath.c_str(), TRUE)) return false;
+    g_allowAutosaveOverwrite = true;
+    return true;
+}
+
+AutosaveResult AutoSaveNow() {
+    if (!g_dirty) return AutosaveResult::Skipped;
+    if (!PreserveIgnoredAutosave()) {
+        g_autosaveFailurePending = true;
+        return AutosaveResult::Failed;
+    }
     SyncActiveSheet();
     auto path = AppDataFilePath(L"autosave.attd");
-    if (path.empty()) return;
-    WriteBinaryFileAtomically(path, EncodeAttd(SerializeWorkbook()));
+    if (path.empty()
+        || !WriteBinaryFileAtomically(path, EncodeAttd(SerializeWorkbook()))) {
+        g_autosaveFailurePending = true;
+        return AutosaveResult::Failed;
+    }
+    g_autosaveFailurePending = false;
+    return AutosaveResult::Saved;
 }
 
 void OpenAutosave() {
@@ -5875,6 +6512,7 @@ LRESULT CALLBACK ChartProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_ERASEBKGND:
         return 1;
     case WM_APP_ANIMATION_TICK:
+        AcknowledgeAnimationTick(hwnd);
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     case WM_APP_ANIMATION_DONE:
@@ -6169,7 +6807,10 @@ HWND MakeButton(const wchar_t* text, int id) {
 
 HWND MakeSettingsControl(HWND parent, const wchar_t* cls, const wchar_t* text, DWORD style, int id) {
     DWORD finalStyle = WS_CHILD | WS_VISIBLE | style;
-    if (lstrcmpiW(cls, L"EDIT") == 0) finalStyle |= WS_BORDER | ES_LEFT | ES_MULTILINE | ES_AUTOHSCROLL | ES_NOHIDESEL;
+    if (lstrcmpiW(cls, L"EDIT") == 0) {
+        finalStyle |= WS_BORDER | ES_LEFT | ES_AUTOHSCROLL | ES_NOHIDESEL;
+        if ((style & ES_NUMBER) == 0) finalStyle |= ES_MULTILINE;
+    }
     HWND hwnd = CreateWindowExW(
         0, cls, text,
         finalStyle,
@@ -6294,6 +6935,7 @@ void ApplySettingsLanguage(HWND hwnd) {
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_PROMPT), Tr(L"Prompt for autosave recovery", L"\u542f\u52a8\u65f6\u63d0\u793a\u6062\u590d\u81ea\u52a8\u4fdd\u5b58"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_COMMAND_PALETTE), Tr(L"Enable Ctrl+K command palette", L"\u542f\u7528 Ctrl+K \u547d\u4ee4\u9762\u677f"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_ADVANCED_FILTER), Tr(L"Enable advanced filter syntax", L"\u542f\u7528\u9ad8\u7ea7\u7b5b\u9009\u8bed\u6cd5"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_SMOOTH_SCROLL), SmoothDropdownScrollingLabel());
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_EXPERIMENTAL), Tr(L"Advanced personalization (Experimental)", L"\u9ad8\u7ea7\u4e2a\u6027\u5316\uff08\u5b9e\u9a8c\u6027\uff09"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_ADVANCED_TITLE), Tr(L"Advanced personalization", L"\u9ad8\u7ea7\u4e2a\u6027\u5316"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_THEME_LABEL), Tr(L"Theme", L"\u4e3b\u9898"));
@@ -6301,6 +6943,10 @@ void ApplySettingsLanguage(HWND hwnd) {
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_TEXT_SCALE_LABEL), Tr(L"Text size", L"\u6587\u5b57\u5927\u5c0f"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_DENSITY_LABEL), Tr(L"Interface density", L"\u754c\u9762\u5bc6\u5ea6"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_LABEL), Tr(L"Autosave interval", L"\u81ea\u52a8\u4fdd\u5b58\u95f4\u9694"));
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS_LABEL), ScrollFrameRateLabel());
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS_UNIT), L"FPS");
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS), std::to_wstring(g_scrollAnimationFps.load()));
+    ConfigureEditMetrics(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_SHOW_STATS), Tr(L"Show statistics cards", L"\u663e\u793a\u7edf\u8ba1\u5361\u7247"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_SHOW_HINT), Tr(L"Show bottom usage hint", L"\u663e\u793a\u5e95\u90e8\u4f7f\u7528\u63d0\u793a"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_TABLE_GRID), Tr(L"Show table grid lines", L"\u663e\u793a\u8868\u683c\u7f51\u683c\u7ebf"));
@@ -6312,6 +6958,7 @@ void ApplySettingsLanguage(HWND hwnd) {
     SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_PROMPT), BM_SETCHECK, g_autosavePromptEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_COMMAND_PALETTE), BM_SETCHECK, g_commandPaletteEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_ADVANCED_FILTER), BM_SETCHECK, g_advancedFilterEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_SMOOTH_SCROLL), BM_SETCHECK, g_smoothScrollingEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_EXPERIMENTAL), BM_SETCHECK, g_advancedPersonalizationEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_SHOW_STATS), BM_SETCHECK, g_showStatsCards ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_SHOW_HINT), BM_SETCHECK, g_showFooterHint ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -6319,7 +6966,34 @@ void ApplySettingsLanguage(HWND hwnd) {
     FillSettingsCombos(hwnd);
 }
 
+int NormalizeScrollFrameRateInput(HWND hwnd) {
+    HWND edit = GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS);
+    int current = std::clamp(g_scrollAnimationFps.load(), 60, 240);
+    int normalized = current;
+    std::wstring value = TrimWide(GetText(edit));
+    if (!value.empty()) {
+        try {
+            size_t parsed = 0;
+            long long candidate = std::stoll(value, &parsed, 10);
+            if (parsed == value.size()) {
+                normalized = (int)std::clamp<long long>(candidate, 60, 240);
+            }
+        } catch (const std::exception&) {
+            normalized = current;
+        }
+    }
+    SetText(edit, std::to_wstring(normalized));
+    ConfigureEditMetrics(edit);
+    if (normalized != current) {
+        g_scrollAnimationFps.store(normalized);
+        SignalAnimationScheduler();
+    }
+    return normalized;
+}
+
 void ApplySettingsFromWindow(HWND hwnd) {
+    UiTheme previousTheme = g_theme;
+    UiTheme requestedTheme = g_theme;
     int language = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE), CB_GETCURSEL, 0, 0);
     int fontIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_FONT), CB_GETCURSEL, 0, 0);
     int animationIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LEVEL), CB_GETCURSEL, 0, 0);
@@ -6337,96 +7011,148 @@ void ApplySettingsFromWindow(HWND hwnd) {
     if (particleIndex >= 0 && particleIndex <= 2) g_particleLevel = (ParticleLevel)particleIndex;
     if (reportIndex >= 0 && reportIndex <= 3) g_reportTemplate = (ReportTemplate)reportIndex;
     if (g_advancedPersonalizationEnabled) {
-        if (themeIndex >= 0 && themeIndex <= 1) g_theme = (UiTheme)themeIndex;
+        if (themeIndex >= 0 && themeIndex <= 1) requestedTheme = (UiTheme)themeIndex;
         if (accentIndex >= 0 && accentIndex <= 2) g_accentTone = (AccentTone)accentIndex;
         if (textScaleIndex >= 0 && textScaleIndex <= 2) g_textScale = (TextScale)textScaleIndex;
         if (densityIndex >= 0 && densityIndex <= 2) g_layoutDensity = (LayoutDensity)densityIndex;
         static const int autosaveSeconds[] = {0, 30, 60, 300};
         if (autosaveIndex >= 0 && autosaveIndex <= 3) g_autosaveIntervalSeconds = autosaveSeconds[autosaveIndex];
+        NormalizeScrollFrameRateInput(hwnd);
     } else {
-        g_theme = UiTheme::Dark;
+        requestedTheme = UiTheme::Dark;
+        g_scrollAnimationFps.store(60);
+        SignalAnimationScheduler();
     }
 
     if (fontIndex >= 0) {
         std::wstring fontName = GetComboSelectedText(GetDlgItem(hwnd, IDC_SETTINGS_FONT));
         if (!fontName.empty()) g_fontFamily = fontName;
     }
-    ApplyVisualSettings();
-    EnumChildWindows(hwnd, ApplyFontToChild, 0);
-    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), WM_SETFONT, (WPARAM)g_titleFont, TRUE);
-    ApplySettingsLanguage(hwnd);
-    SaveSettings();
+    bool themeChanged = requestedTheme != previousTheme;
+    if (themeChanged) {
+        BeginThemeTransition(requestedTheme);
+        ApplyVisualSettings(true);
+        EnumChildWindows(hwnd, ApplyFontToChild, 0);
+        SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), WM_SETFONT, (WPARAM)g_titleFont, TRUE);
+        ApplySettingsLanguage(hwnd);
+    } else {
+        ApplyVisualSettings();
+        EnumChildWindows(hwnd, ApplyFontToChild, 0);
+        SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), WM_SETFONT, (WPARAM)g_titleFont, TRUE);
+        ApplySettingsLanguage(hwnd);
+    }
+    SaveSettingsWithFeedback(hwnd);
     InvalidateRect(hwnd, nullptr, FALSE);
 }
 
 void ResizeSettingsLayout(HWND hwnd) {
+    RECT client{};
+    GetClientRect(hwnd, &client);
+    int clientWidth = std::max(1, (int)(client.right - client.left));
+    int clientHeight = std::max(1, (int)(client.bottom - client.top));
+    bool expanded = g_advancedPersonalizationEnabled;
+    bool twoColumn = expanded && clientWidth >= 900;
     int pad = 24;
     int labelW = 170;
     int rowH = 34;
     int x = pad;
     int y = 22;
     int comboX = x + labelW;
-    int comboW = 260;
+    int columnWidth = twoColumn ? (clientWidth - pad * 3) / 2 : clientWidth - pad * 2;
+    int comboW = std::max(170, columnWidth - labelW);
+    auto move = [&](int id, int left, int top, int width, int height) {
+        MoveWindow(GetDlgItem(hwnd, id), left, top - g_settingsScrollY,
+            std::max(1, width), height, TRUE);
+    };
 
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), x, y, labelW + comboW, 34, TRUE);
+    move(IDC_SETTINGS_TITLE, x, y, columnWidth, 34);
     y += 56;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_LANG_LABEL), x, y + 6, labelW, rowH, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE), comboX, y, comboW, 430, TRUE);
+    move(IDC_SETTINGS_LANG_LABEL, x, y + 6, labelW, rowH);
+    move(IDC_SETTINGS_LANGUAGE, comboX, y, comboW, 430);
     y += 48;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_FONT_LABEL), x, y + 6, labelW, rowH, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_FONT), comboX, y, comboW, 300, TRUE);
+    move(IDC_SETTINGS_FONT_LABEL, x, y + 6, labelW, rowH);
+    move(IDC_SETTINGS_FONT, comboX, y, comboW, 300);
     y += 48;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LABEL), x, y + 6, labelW, rowH, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LEVEL), comboX, y, comboW, 140, TRUE);
+    move(IDC_SETTINGS_ANIMATION_LABEL, x, y + 6, labelW, rowH);
+    move(IDC_SETTINGS_ANIMATION_LEVEL, comboX, y, comboW, 140);
     y += 48;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LABEL), x, y + 6, labelW, rowH, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL), comboX, y, comboW, 140, TRUE);
+    move(IDC_SETTINGS_PARTICLE_LABEL, x, y + 6, labelW, rowH);
+    move(IDC_SETTINGS_PARTICLE_LEVEL, comboX, y, comboW, 140);
     y += 48;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_REPORT_LABEL), x, y + 6, labelW, rowH, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_REPORT_TEMPLATE), comboX, y, comboW, 180, TRUE);
+    move(IDC_SETTINGS_REPORT_LABEL, x, y + 6, labelW, rowH);
+    move(IDC_SETTINGS_REPORT_TEMPLATE, comboX, y, comboW, 180);
     y += 48;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLES), x, y, labelW + comboW, 30, TRUE);
+    move(IDC_SETTINGS_PARTICLES, x, y, columnWidth, 30);
     y += 38;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_RISK_ALERTS), x, y, labelW + comboW, 30, TRUE);
+    move(IDC_SETTINGS_RISK_ALERTS, x, y, columnWidth, 30);
     y += 38;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_PROMPT), x, y, labelW + comboW, 30, TRUE);
+    move(IDC_SETTINGS_AUTOSAVE_PROMPT, x, y, columnWidth, 30);
     y += 38;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_COMMAND_PALETTE), x, y, labelW + comboW, 30, TRUE);
+    move(IDC_SETTINGS_COMMAND_PALETTE, x, y, columnWidth, 30);
     y += 38;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_ADVANCED_FILTER), x, y, labelW + comboW, 30, TRUE);
+    move(IDC_SETTINGS_ADVANCED_FILTER, x, y, columnWidth, 30);
+    y += 38;
+    move(IDC_SETTINGS_SMOOTH_SCROLL, x, y, columnWidth, 30);
     y += 36;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_EXPERIMENTAL), x, y, labelW + comboW, 30, TRUE);
+    move(IDC_SETTINGS_EXPERIMENTAL, x, y, columnWidth, 30);
     y += 42;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_RESET), x, y, labelW + comboW, 36, TRUE);
-    y += 44;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_APPLY), comboX + comboW - 230, y, 110, 38, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_CLOSE), comboX + comboW - 110, y, 110, 38, TRUE);
+    int basicControlsBottom = y;
 
-    int advancedX = 584;
+    int advancedX = twoColumn ? pad * 2 + columnWidth : pad;
     int advancedComboX = advancedX + 170;
-    int advancedY = 22;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_ADVANCED_TITLE), advancedX, advancedY, 430, 34, TRUE);
+    int advancedY = twoColumn ? 22 : basicControlsBottom + 16;
+    move(IDC_SETTINGS_ADVANCED_TITLE, advancedX, advancedY, columnWidth, 34);
     advancedY += 56;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_THEME_LABEL), advancedX, advancedY + 6, 170, rowH, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_THEME), advancedComboX, advancedY, comboW, 120, TRUE);
+    move(IDC_SETTINGS_THEME_LABEL, advancedX, advancedY + 6, 170, rowH);
+    move(IDC_SETTINGS_THEME, advancedComboX, advancedY, comboW, 120);
     advancedY += 48;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_ACCENT_LABEL), advancedX, advancedY + 6, 170, rowH, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_ACCENT), advancedComboX, advancedY, comboW, 140, TRUE);
+    move(IDC_SETTINGS_ACCENT_LABEL, advancedX, advancedY + 6, 170, rowH);
+    move(IDC_SETTINGS_ACCENT, advancedComboX, advancedY, comboW, 140);
     advancedY += 48;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_TEXT_SCALE_LABEL), advancedX, advancedY + 6, 170, rowH, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_TEXT_SCALE), advancedComboX, advancedY, comboW, 140, TRUE);
+    move(IDC_SETTINGS_TEXT_SCALE_LABEL, advancedX, advancedY + 6, 170, rowH);
+    move(IDC_SETTINGS_TEXT_SCALE, advancedComboX, advancedY, comboW, 140);
     advancedY += 48;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_DENSITY_LABEL), advancedX, advancedY + 6, 170, rowH, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_DENSITY), advancedComboX, advancedY, comboW, 140, TRUE);
+    move(IDC_SETTINGS_DENSITY_LABEL, advancedX, advancedY + 6, 170, rowH);
+    move(IDC_SETTINGS_DENSITY, advancedComboX, advancedY, comboW, 140);
     advancedY += 48;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_LABEL), advancedX, advancedY + 6, 170, rowH, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_INTERVAL), advancedComboX, advancedY, comboW, 160, TRUE);
+    move(IDC_SETTINGS_AUTOSAVE_LABEL, advancedX, advancedY + 6, 170, rowH);
+    move(IDC_SETTINGS_AUTOSAVE_INTERVAL, advancedComboX, advancedY, comboW, 160);
+    advancedY += 48;
+    int fpsLabelW = std::clamp(columnWidth - 150, 220, 280);
+    int fpsEditX = advancedX + fpsLabelW;
+    int fpsEditW = std::clamp(columnWidth - fpsLabelW - 52, 58, 96);
+    move(IDC_SETTINGS_SCROLL_FPS_LABEL, advancedX, advancedY + 6, fpsLabelW, rowH);
+    move(IDC_SETTINGS_SCROLL_FPS, fpsEditX, advancedY, fpsEditW, rowH);
+    move(IDC_SETTINGS_SCROLL_FPS_UNIT, fpsEditX + fpsEditW + 8, advancedY + 6, 44, rowH);
     advancedY += 54;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_SHOW_STATS), advancedX, advancedY, 430, 30, TRUE);
+    move(IDC_SETTINGS_SHOW_STATS, advancedX, advancedY, columnWidth, 30);
     advancedY += 38;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_SHOW_HINT), advancedX, advancedY, 430, 30, TRUE);
+    move(IDC_SETTINGS_SHOW_HINT, advancedX, advancedY, columnWidth, 30);
     advancedY += 38;
-    MoveWindow(GetDlgItem(hwnd, IDC_SETTINGS_TABLE_GRID), advancedX, advancedY, 430, 30, TRUE);
+    move(IDC_SETTINGS_TABLE_GRID, advancedX, advancedY, columnWidth, 30);
+    advancedY += 38;
+
+    int actionY = twoColumn ? basicControlsBottom : (expanded ? advancedY + 10 : basicControlsBottom);
+    move(IDC_SETTINGS_RESET, x, actionY, columnWidth, 36);
+    actionY += 44;
+    move(IDC_SETTINGS_APPLY, x + columnWidth - 230, actionY, 110, 38);
+    move(IDC_SETTINGS_CLOSE, x + columnWidth - 110, actionY, 110, 38);
+    int contentHeight = actionY + 54;
+
+    int maximumScroll = std::max(0, contentHeight - clientHeight);
+    if (g_settingsScrollY > maximumScroll) {
+        g_settingsScrollY = maximumScroll;
+        ResizeSettingsLayout(hwnd);
+        return;
+    }
+    SCROLLINFO scroll{};
+    scroll.cbSize = sizeof(scroll);
+    scroll.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+    scroll.nMin = 0;
+    scroll.nMax = std::max(0, contentHeight - 1);
+    scroll.nPage = clientHeight;
+    scroll.nPos = g_settingsScrollY;
+    SetScrollInfo(hwnd, SB_VERT, &scroll, TRUE);
 }
 
 void ResetAdvancedPersonalizationValues() {
@@ -6438,6 +7164,8 @@ void ResetAdvancedPersonalizationValues() {
     g_showFooterHint = true;
     g_showTableGrid = true;
     g_autosaveIntervalSeconds = 30;
+    g_scrollAnimationFps.store(60);
+    SignalAnimationScheduler();
 }
 
 void SetSettingsAdvancedExpanded(HWND hwnd, bool expanded) {
@@ -6446,6 +7174,7 @@ void SetSettingsAdvancedExpanded(HWND hwnd, bool expanded) {
         IDC_SETTINGS_ACCENT_LABEL, IDC_SETTINGS_ACCENT, IDC_SETTINGS_TEXT_SCALE_LABEL,
         IDC_SETTINGS_TEXT_SCALE, IDC_SETTINGS_DENSITY_LABEL, IDC_SETTINGS_DENSITY,
         IDC_SETTINGS_AUTOSAVE_LABEL, IDC_SETTINGS_AUTOSAVE_INTERVAL,
+        IDC_SETTINGS_SCROLL_FPS_LABEL, IDC_SETTINGS_SCROLL_FPS, IDC_SETTINGS_SCROLL_FPS_UNIT,
         IDC_SETTINGS_SHOW_STATS, IDC_SETTINGS_SHOW_HINT, IDC_SETTINGS_TABLE_GRID
     };
     for (int id : advancedIds) {
@@ -6454,8 +7183,15 @@ void SetSettingsAdvancedExpanded(HWND hwnd, bool expanded) {
     }
     RECT rc{};
     GetWindowRect(hwnd, &rc);
-    int targetWidth = expanded ? 1060 : 560;
-    SetWindowPos(hwnd, nullptr, rc.left, rc.top, targetWidth, 690,
+    HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitorInfo{sizeof(monitorInfo)};
+    GetMonitorInfoW(monitor, &monitorInfo);
+    int availableWidth = monitorInfo.rcWork.right - monitorInfo.rcWork.left;
+    int availableHeight = monitorInfo.rcWork.bottom - monitorInfo.rcWork.top;
+    int targetWidth = std::min(expanded ? 1060 : 560, std::max(480, availableWidth - 16));
+    int targetHeight = std::min(730, std::max(480, availableHeight - 16));
+    g_settingsScrollY = 0;
+    SetWindowPos(hwnd, nullptr, rc.left, rc.top, targetWidth, targetHeight,
         SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
     CenterOwnedWindow(hwnd, g_hwnd);
     ResizeSettingsLayout(hwnd);
@@ -6481,6 +7217,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_AUTOSAVE_PROMPT);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_COMMAND_PALETTE);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_ADVANCED_FILTER);
+        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_SMOOTH_SCROLL);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_EXPERIMENTAL);
 
         MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_ADVANCED_TITLE);
@@ -6494,6 +7231,12 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_DENSITY);
         MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_AUTOSAVE_LABEL);
         MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_AUTOSAVE_INTERVAL);
+        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_SCROLL_FPS_LABEL);
+        HWND scrollFps = MakeSettingsControl(hwnd, L"EDIT", L"60",
+            ES_NUMBER | ES_AUTOHSCROLL | WS_TABSTOP, IDC_SETTINGS_SCROLL_FPS);
+        MakeSettingsControl(hwnd, L"STATIC", L"FPS", 0, IDC_SETTINGS_SCROLL_FPS_UNIT);
+        SendMessageW(scrollFps, EM_SETLIMITTEXT, 3, 0);
+        ConfigureEditMetrics(scrollFps);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_SHOW_STATS);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_SHOW_HINT);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_TABLE_GRID);
@@ -6510,7 +7253,43 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_SIZE:
         ResizeSettingsLayout(hwnd);
         return 0;
+    case WM_VSCROLL: {
+        SCROLLINFO info{sizeof(info)};
+        info.fMask = SIF_ALL;
+        GetScrollInfo(hwnd, SB_VERT, &info);
+        int next = g_settingsScrollY;
+        switch (LOWORD(wParam)) {
+        case SB_LINEUP: next -= 36; break;
+        case SB_LINEDOWN: next += 36; break;
+        case SB_PAGEUP: next -= (int)info.nPage; break;
+        case SB_PAGEDOWN: next += (int)info.nPage; break;
+        case SB_THUMBTRACK: next = info.nTrackPos; break;
+        case SB_TOP: next = info.nMin; break;
+        case SB_BOTTOM: next = info.nMax; break;
+        default: return 0;
+        }
+        int maximum = std::max(0, info.nMax - (int)info.nPage + 1);
+        next = std::clamp(next, 0, maximum);
+        if (next != g_settingsScrollY) {
+            g_settingsScrollY = next;
+            ResizeSettingsLayout(hwnd);
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+    }
+    case WM_MOUSEWHEEL:
+        SendMessageW(hwnd, WM_VSCROLL,
+            MAKEWPARAM(GET_WHEEL_DELTA_WPARAM(wParam) > 0 ? SB_LINEUP : SB_LINEDOWN, 0), 0);
+        return 0;
     case WM_COMMAND:
+        if (LOWORD(wParam) == IDC_SETTINGS_SCROLL_FPS
+            && HIWORD(wParam) == EN_KILLFOCUS) {
+            if (g_advancedPersonalizationEnabled) {
+                NormalizeScrollFrameRateInput(hwnd);
+                SaveSettingsWithFeedback(hwnd);
+            }
+            return 0;
+        }
         if (HIWORD(wParam) == CBN_DROPDOWN) {
             StartAnimation((HWND)lParam, AnimChannel::ComboOpen, 1.0, 340);
             ApplyComboDropDownTheme((HWND)lParam);
@@ -6552,15 +7331,21 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 }
                 g_advancedPersonalizationEnabled = true;
                 SendMessageW(toggle, BM_SETCHECK, BST_CHECKED, 0);
-                SaveSettings();
+                SaveSettingsWithFeedback(hwnd);
                 SetSettingsAdvancedExpanded(hwnd, true);
                 FillSettingsCombos(hwnd);
             } else {
+                UiTheme previousTheme = g_theme;
                 g_advancedPersonalizationEnabled = false;
                 ResetAdvancedPersonalizationValues();
                 SendMessageW(toggle, BM_SETCHECK, BST_UNCHECKED, 0);
-                ApplyVisualSettings();
-                SaveSettings();
+                if (previousTheme != UiTheme::Dark || g_themeTransition.active) {
+                    BeginThemeTransition(UiTheme::Dark);
+                    ApplyVisualSettings(true);
+                } else {
+                    ApplyVisualSettings();
+                }
+                SaveSettingsWithFeedback(hwnd);
                 ApplySettingsLanguage(hwnd);
                 SetSettingsAdvancedExpanded(hwnd, false);
             }
@@ -6571,7 +7356,8 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             || LOWORD(wParam) == IDC_SETTINGS_RISK_ALERTS
             || LOWORD(wParam) == IDC_SETTINGS_AUTOSAVE_PROMPT
             || LOWORD(wParam) == IDC_SETTINGS_COMMAND_PALETTE
-            || LOWORD(wParam) == IDC_SETTINGS_ADVANCED_FILTER) && HIWORD(wParam) == BN_CLICKED) {
+            || LOWORD(wParam) == IDC_SETTINGS_ADVANCED_FILTER
+            || LOWORD(wParam) == IDC_SETTINGS_SMOOTH_SCROLL) && HIWORD(wParam) == BN_CLICKED) {
             int id = LOWORD(wParam);
             HWND toggle = GetDlgItem(hwnd, id);
             if (id == IDC_SETTINGS_PARTICLES) g_particlesEnabled = !g_particlesEnabled;
@@ -6579,16 +7365,21 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             else if (id == IDC_SETTINGS_AUTOSAVE_PROMPT) g_autosavePromptEnabled = !g_autosavePromptEnabled;
             else if (id == IDC_SETTINGS_COMMAND_PALETTE) g_commandPaletteEnabled = !g_commandPaletteEnabled;
             else if (id == IDC_SETTINGS_ADVANCED_FILTER) g_advancedFilterEnabled = !g_advancedFilterEnabled;
+            else if (id == IDC_SETTINGS_SMOOTH_SCROLL) g_smoothScrollingEnabled = !g_smoothScrollingEnabled;
             bool checked = id == IDC_SETTINGS_PARTICLES ? g_particlesEnabled
                 : id == IDC_SETTINGS_RISK_ALERTS ? g_riskAlertsEnabled
                 : id == IDC_SETTINGS_AUTOSAVE_PROMPT ? g_autosavePromptEnabled
                 : id == IDC_SETTINGS_COMMAND_PALETTE ? g_commandPaletteEnabled
-                : g_advancedFilterEnabled;
+                : id == IDC_SETTINGS_ADVANCED_FILTER ? g_advancedFilterEnabled
+                : g_smoothScrollingEnabled;
             SendMessageW(toggle, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
             if (id == IDC_SETTINGS_PARTICLES) {
                 EnableWindow(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL), checked ? TRUE : FALSE);
             }
-            SaveSettings();
+            if (id == IDC_SETTINGS_SMOOTH_SCROLL && !checked) {
+                StopSmoothScrollingNow();
+            }
+            SaveSettingsWithFeedback(hwnd);
             InvalidateRect(toggle, nullptr, FALSE);
             return 0;
         }
@@ -6603,7 +7394,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 : id == IDC_SETTINGS_SHOW_HINT ? g_showFooterHint : g_showTableGrid;
             SendMessageW((HWND)lParam, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
             ApplyVisualSettings();
-            SaveSettings();
+            SaveSettingsWithFeedback(hwnd);
             InvalidateRect((HWND)lParam, nullptr, FALSE);
             return 0;
         }
@@ -6619,8 +7410,14 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             std::wstring resetMsg = Tr(L"Reset all settings and delete the AppData configuration file?", L"\u91cd\u7f6e\u6240\u6709\u8bbe\u7f6e\u5e76\u5220\u9664 AppData \u914d\u7f6e\u6587\u4ef6\uff1f");
             std::wstring resetTitle = Tr(L"Reset Settings", L"\u91cd\u7f6e\u8bbe\u7f6e");
             if (ThemedMessageBox(hwnd, resetMsg, resetTitle, true) == IDYES) {
+                UiTheme previousTheme = g_theme;
                 ResetSettings();
-                ApplyVisualSettings();
+                if (previousTheme != UiTheme::Dark || g_themeTransition.active) {
+                    BeginThemeTransition(UiTheme::Dark);
+                    ApplyVisualSettings(true);
+                } else {
+                    ApplyVisualSettings();
+                }
                 EnumChildWindows(hwnd, ApplyFontToChild, 0);
                 SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), WM_SETFONT, (WPARAM)g_titleFont, TRUE);
                 ApplySettingsLanguage(hwnd);
@@ -6678,11 +7475,25 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         return 1;
     case WM_KEYDOWN:
         if (wParam == VK_ESCAPE) {
+            const int comboIds[] = {
+                IDC_SETTINGS_LANGUAGE, IDC_SETTINGS_FONT, IDC_SETTINGS_ANIMATION_LEVEL,
+                IDC_SETTINGS_PARTICLE_LEVEL, IDC_SETTINGS_REPORT_TEMPLATE, IDC_SETTINGS_THEME,
+                IDC_SETTINGS_ACCENT, IDC_SETTINGS_TEXT_SCALE, IDC_SETTINGS_DENSITY,
+                IDC_SETTINGS_AUTOSAVE_INTERVAL
+            };
+            for (int id : comboIds) {
+                HWND combo = GetDlgItem(hwnd, id);
+                if (combo && SendMessageW(combo, CB_GETDROPPEDSTATE, 0, 0)) {
+                    SendMessageW(combo, CB_SHOWDROPDOWN, FALSE, 0);
+                    return 0;
+                }
+            }
             DestroyWindow(hwnd);
             return 0;
         }
         break;
     case WM_APP_ANIMATION_TICK:
+        AcknowledgeAnimationTick(hwnd);
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     case WM_APP_ANIMATION_DONE:
@@ -6726,8 +7537,8 @@ void ShowSettingsWindow() {
         WS_EX_CONTROLPARENT,
         className,
         settingsTitle.c_str(),
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN,
-        CW_USEDEFAULT, CW_USEDEFAULT, 560, 690,
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN | WS_VSCROLL,
+        CW_USEDEFAULT, CW_USEDEFAULT, 560, 730,
         g_hwnd, nullptr, instance, nullptr
     );
     ApplyGlassTitleBar(g_settingsWindow);
@@ -7180,6 +7991,7 @@ bool DrawParticleToggleItem(const DRAWITEMSTRUCT* draw) {
     else if (draw->CtlID == IDC_SETTINGS_AUTOSAVE_PROMPT) value = &g_autosavePromptEnabled;
     else if (draw->CtlID == IDC_SETTINGS_COMMAND_PALETTE) value = &g_commandPaletteEnabled;
     else if (draw->CtlID == IDC_SETTINGS_ADVANCED_FILTER) value = &g_advancedFilterEnabled;
+    else if (draw->CtlID == IDC_SETTINGS_SMOOTH_SCROLL) value = &g_smoothScrollingEnabled;
     else if (draw->CtlID == IDC_SETTINGS_EXPERIMENTAL) value = &g_advancedPersonalizationEnabled;
     else if (draw->CtlID == IDC_SETTINGS_SHOW_STATS) value = &g_showStatsCards;
     else if (draw->CtlID == IDC_SETTINGS_SHOW_HINT) value = &g_showFooterHint;
@@ -7433,6 +8245,389 @@ void PaintComboClosed(HWND hwnd, HDC hdc) {
     DeleteObject(arrowBrush);
 }
 
+struct ComboListScrollState {
+    HWND combo = nullptr;
+    double startPx = 0.0;
+    double currentPx = 0.0;
+    double targetPx = 0.0;
+    uint64_t startMs = 0;
+    uint32_t durationMs = 220;
+    int hoverIndex = -1;
+    bool active = false;
+    HDC bufferDc = nullptr;
+    HBITMAP bufferBitmap = nullptr;
+    HGDIOBJ bufferOldBitmap = nullptr;
+    int bufferWidth = 0;
+    int bufferHeight = 0;
+    std::vector<std::wstring> cachedItems;
+};
+
+static std::map<HWND, ComboListScrollState> g_comboListScrollStates;
+
+void ReleaseComboListBuffer(ComboListScrollState& state) {
+    if (state.bufferDc && state.bufferOldBitmap) {
+        SelectObject(state.bufferDc, state.bufferOldBitmap);
+    }
+    if (state.bufferBitmap) DeleteObject(state.bufferBitmap);
+    if (state.bufferDc) DeleteDC(state.bufferDc);
+    state.bufferDc = nullptr;
+    state.bufferBitmap = nullptr;
+    state.bufferOldBitmap = nullptr;
+    state.bufferWidth = 0;
+    state.bufferHeight = 0;
+}
+
+bool EnsureComboListBuffer(
+    HDC target, ComboListScrollState& state, int width, int height) {
+    if (!target || width <= 0 || height <= 0) return false;
+    if (state.bufferDc && state.bufferBitmap
+        && state.bufferWidth == width && state.bufferHeight == height) {
+        return true;
+    }
+    ReleaseComboListBuffer(state);
+    state.bufferDc = CreateCompatibleDC(target);
+    if (!state.bufferDc) return false;
+    state.bufferBitmap = CreateCompatibleBitmap(target, width, height);
+    if (!state.bufferBitmap) {
+        ReleaseComboListBuffer(state);
+        return false;
+    }
+    state.bufferOldBitmap = SelectObject(state.bufferDc, state.bufferBitmap);
+    state.bufferWidth = width;
+    state.bufferHeight = height;
+    return true;
+}
+
+void RefreshComboListItems(ComboListScrollState& state) {
+    state.cachedItems.clear();
+    if (!state.combo || !IsWindow(state.combo)) return;
+    int count = (int)SendMessageW(state.combo, CB_GETCOUNT, 0, 0);
+    if (count <= 0) return;
+    state.cachedItems.reserve((size_t)count);
+    for (int index = 0; index < count; ++index) {
+        int length = (int)SendMessageW(state.combo, CB_GETLBTEXTLEN, index, 0);
+        if (length < 0) {
+            state.cachedItems.emplace_back();
+            continue;
+        }
+        std::wstring text((size_t)length + 1, L'\0');
+        SendMessageW(state.combo, CB_GETLBTEXT, index, (LPARAM)text.data());
+        text.resize((size_t)length);
+        state.cachedItems.push_back(std::move(text));
+    }
+}
+
+int ComboListItemHeight(HWND list) {
+    int itemHeight = (int)SendMessageW(list, LB_GETITEMHEIGHT, 0, 0);
+    return itemHeight > 0 ? itemHeight : ComboItemHeight();
+}
+
+double ComboListMaxScrollPx(HWND list, HWND combo) {
+    int count = combo ? (int)SendMessageW(combo, CB_GETCOUNT, 0, 0) : 0;
+    if (count <= 0) return 0.0;
+    RECT rc{};
+    GetClientRect(list, &rc);
+    return std::max(0.0,
+        count * (double)ComboListItemHeight(list) - (double)(rc.bottom - rc.top));
+}
+
+void SyncComboListScrollState(HWND list, ComboListScrollState& state) {
+    int top = (int)SendMessageW(list, LB_GETTOPINDEX, 0, 0);
+    if (top == LB_ERR) top = 0;
+    double position = std::clamp(
+        top * (double)ComboListItemHeight(list), 0.0, ComboListMaxScrollPx(list, state.combo));
+    state.startPx = position;
+    state.currentPx = position;
+    state.targetPx = position;
+    state.startMs = 0;
+    state.active = false;
+}
+
+void AdvanceComboListScroll(HWND list, ComboListScrollState& state, uint64_t now) {
+    if (!state.active) return;
+    double progress = state.durationMs == 0
+        ? 1.0
+        : (double)(now - state.startMs) / state.durationMs;
+    double eased = CubicBezierEase(progress, 0.22, 1.0, 0.36, 1.0);
+    state.currentPx = state.startPx + (state.targetPx - state.startPx) * eased;
+    state.currentPx = std::clamp(
+        state.currentPx, 0.0, ComboListMaxScrollPx(list, state.combo));
+    int itemHeight = std::max(1, ComboListItemHeight(list));
+    SendMessageW(list, LB_SETTOPINDEX, (int)std::floor(state.currentPx / itemHeight), 0);
+    if (progress >= 1.0) {
+        state.currentPx = state.targetPx;
+        state.active = false;
+        state.startMs = 0;
+    }
+}
+
+int ComboListIndexAtPoint(HWND list, const ComboListScrollState& state, int y) {
+    if (!state.combo) return -1;
+    int count = (int)SendMessageW(state.combo, CB_GETCOUNT, 0, 0);
+    int index = (int)std::floor(
+        (y + state.currentPx) / std::max(1, ComboListItemHeight(list)));
+    return index >= 0 && index < count ? index : -1;
+}
+
+void PaintSmoothComboList(HWND list, HDC target, ComboListScrollState& state) {
+    RECT rc{};
+    GetClientRect(list, &rc);
+    if (!state.combo || !IsWindow(state.combo)) {
+        SetDCBrushColor(target, COLOR_INPUT);
+        FillRect(target, &rc, (HBRUSH)GetStockObject(DC_BRUSH));
+        return;
+    }
+    int width = std::max(1, (int)(rc.right - rc.left));
+    int height = std::max(1, (int)(rc.bottom - rc.top));
+    if (!EnsureComboListBuffer(target, state, width, height)) {
+        SetDCBrushColor(target, COLOR_INPUT);
+        FillRect(target, &rc, (HBRUSH)GetStockObject(DC_BRUSH));
+        return;
+    }
+    HDC buffer = state.bufferDc;
+
+    HBRUSH dcBrush = (HBRUSH)GetStockObject(DC_BRUSH);
+    SetDCBrushColor(buffer, COLOR_INPUT);
+    FillRect(buffer, &rc, dcBrush);
+
+    int itemHeight = std::max(1, ComboListItemHeight(list));
+    int count = state.combo ? (int)SendMessageW(state.combo, CB_GETCOUNT, 0, 0) : 0;
+    if ((int)state.cachedItems.size() != count) RefreshComboListItems(state);
+    int selected = state.combo ? (int)SendMessageW(state.combo, CB_GETCURSEL, 0, 0) : -1;
+    int first = std::max(0, (int)std::floor(state.currentPx / itemHeight));
+    int last = std::min(count - 1,
+        (int)std::ceil((state.currentPx + height) / itemHeight));
+    double open = state.combo
+        ? GetAnimationValue(state.combo, AnimChannel::ComboOpen, 1.0) : 1.0;
+
+    HGDIOBJ oldFont = g_font ? SelectObject(buffer, g_font) : nullptr;
+    SetBkMode(buffer, TRANSPARENT);
+    for (int index = first; index <= last; ++index) {
+        int top = (int)std::lround(index * (double)itemHeight - state.currentPx);
+        RECT itemRc{0, top, width, top + itemHeight};
+        double itemProgress = ElasticOut(std::clamp(
+            (open - (double)std::min(index - first, 10) * 0.075) / 0.55, 0.0, 1.0));
+        COLORREF base = index == selected ? COLOR_SELECTED
+            : index == state.hoverIndex ? COLOR_HOVER : COLOR_INPUT;
+        SetDCBrushColor(buffer, BlendColor(COLOR_BG, base, itemProgress));
+        FillRect(buffer, &itemRc, dcBrush);
+
+        const std::wstring& text = state.cachedItems[(size_t)index];
+        RECT textRc = itemRc;
+        textRc.left += 12;
+        textRc.right -= 10;
+        SetTextColor(buffer, BlendColor(COLOR_MUTED, COLOR_TEXT, itemProgress));
+        DrawTextW(buffer, text.c_str(), -1, &textRc,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
+    if (oldFont) SelectObject(buffer, oldFont);
+
+    HGDIOBJ oldPen = SelectObject(buffer, GetStockObject(DC_PEN));
+    HGDIOBJ oldBrush = SelectObject(buffer, GetStockObject(HOLLOW_BRUSH));
+    SetDCPenColor(buffer, COLOR_BORDER);
+    Rectangle(buffer, 0, 0, width, height);
+    SelectObject(buffer, oldBrush);
+    SelectObject(buffer, oldPen);
+
+    BitBlt(target, 0, 0, width, height, buffer, 0, 0, SRCCOPY);
+}
+
+void NotifyComboSelection(HWND combo, int index) {
+    if (!combo || index < 0) return;
+    if ((int)SendMessageW(combo, CB_GETCURSEL, 0, 0) != index) {
+        SendMessageW(combo, CB_SETCURSEL, index, 0);
+        HWND parent = GetParent(combo);
+        if (parent) {
+            SendMessageW(parent, WM_COMMAND,
+                MAKEWPARAM(GetDlgCtrlID(combo), CBN_SELCHANGE), (LPARAM)combo);
+        }
+    }
+    InvalidateRect(combo, nullptr, FALSE);
+}
+
+LRESULT CALLBACK ComboListScrollProc(
+    HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
+    auto& state = g_comboListScrollStates[hwnd];
+    switch (msg) {
+    case WM_NCDESTROY:
+        RemoveAnimationState(hwnd);
+        ReleaseComboListBuffer(state);
+        g_comboListScrollStates.erase(hwnd);
+        RemoveWindowSubclass(hwnd, ComboListScrollProc, 6);
+        return DefSubclassProc(hwnd, msg, wParam, lParam);
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_SIZE:
+        ReleaseComboListBuffer(state);
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return DefSubclassProc(hwnd, msg, wParam, lParam);
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(hwnd, &ps);
+        AdvanceComboListScroll(hwnd, state, AnimationNowMs());
+        PaintSmoothComboList(hwnd, hdc, state);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_MOUSEWHEEL: {
+        double maximum = ComboListMaxScrollPx(hwnd, state.combo);
+        if (maximum <= 0.0) return 0;
+        int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+        double pixelDelta = -(double)delta / WHEEL_DELTA
+            * WheelScrollLineCount() * ComboListItemHeight(hwnd);
+        AdvanceComboListScroll(hwnd, state, AnimationNowMs());
+        if (!g_smoothScrollingEnabled) {
+            state.currentPx = std::clamp(state.currentPx + pixelDelta, 0.0, maximum);
+            state.startPx = state.targetPx = state.currentPx;
+            state.active = false;
+            SendMessageW(hwnd, LB_SETTOPINDEX,
+                (int)std::floor(state.currentPx / ComboListItemHeight(hwnd)), 0);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        state.startPx = state.currentPx;
+        state.targetPx = std::clamp(state.targetPx + pixelDelta, 0.0, maximum);
+        double distance = std::abs(state.targetPx - state.startPx);
+        if (distance < 0.5) return 0;
+        bool precisionInput = std::abs(delta) < WHEEL_DELTA;
+        state.durationMs = precisionInput
+            ? (uint32_t)std::clamp(80.0 + distance * 0.18, 90.0, 150.0)
+            : (uint32_t)std::clamp(170.0 + distance * 0.16, 190.0, 260.0);
+        state.startMs = AnimationNowMs();
+        state.active = true;
+        RestartAnimation(hwnd, AnimChannel::SmoothScroll, 1.0, state.durationMs);
+        return 0;
+    }
+    case WM_MOUSEMOVE: {
+        int hover = ComboListIndexAtPoint(hwnd, state, GET_Y_LPARAM(lParam));
+        if (hover != state.hoverIndex) {
+            state.hoverIndex = hover;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, hwnd, 0};
+        TrackMouseEvent(&tracking);
+        return 0;
+    }
+    case WM_MOUSELEAVE:
+        state.hoverIndex = -1;
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    case WM_LBUTTONDOWN:
+        SetCapture(hwnd);
+        return 0;
+    case WM_LBUTTONUP: {
+        ReleaseCapture();
+        int index = ComboListIndexAtPoint(hwnd, state, GET_Y_LPARAM(lParam));
+        if (index >= 0) {
+            NotifyComboSelection(state.combo, index);
+            SendMessageW(state.combo, CB_SHOWDROPDOWN, FALSE, 0);
+        }
+        return 0;
+    }
+    case WM_KEYDOWN: {
+        if (wParam == VK_ESCAPE) {
+            SendMessageW(state.combo, CB_SHOWDROPDOWN, FALSE, 0);
+            return 0;
+        }
+        if (wParam == VK_RETURN || wParam == VK_SPACE) {
+            SendMessageW(state.combo, CB_SHOWDROPDOWN, FALSE, 0);
+            return 0;
+        }
+        int count = state.combo ? (int)SendMessageW(state.combo, CB_GETCOUNT, 0, 0) : 0;
+        int selected = state.combo ? (int)SendMessageW(state.combo, CB_GETCURSEL, 0, 0) : -1;
+        int next = selected;
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        int visible = std::max(1,
+            (int)(rc.bottom - rc.top) / ComboListItemHeight(hwnd));
+        if (wParam == VK_UP) next = std::max(0, selected - 1);
+        else if (wParam == VK_DOWN) next = std::min(count - 1, selected + 1);
+        else if (wParam == VK_HOME) next = 0;
+        else if (wParam == VK_END) next = count - 1;
+        else if (wParam == VK_PRIOR) next = std::max(0, selected - visible);
+        else if (wParam == VK_NEXT) next = std::min(count - 1, selected + visible);
+        else return DefSubclassProc(hwnd, msg, wParam, lParam);
+        if (next >= 0 && next < count) {
+            NotifyComboSelection(state.combo, next);
+            int itemHeight = ComboListItemHeight(hwnd);
+            double top = next * (double)itemHeight;
+            double bottom = top + itemHeight;
+            if (top < state.currentPx) state.targetPx = top;
+            else if (bottom > state.currentPx + (rc.bottom - rc.top)) {
+                state.targetPx = bottom - (rc.bottom - rc.top);
+            } else {
+                state.targetPx = state.currentPx;
+            }
+            state.targetPx = std::clamp(
+                state.targetPx, 0.0, ComboListMaxScrollPx(hwnd, state.combo));
+            state.startPx = state.currentPx;
+            state.startMs = AnimationNowMs();
+            state.durationMs = g_smoothScrollingEnabled ? 110 : 0;
+            state.active = state.durationMs > 0
+                && std::abs(state.targetPx - state.startPx) >= 0.5;
+            if (state.active) {
+                RestartAnimation(hwnd, AnimChannel::SmoothScroll, 1.0, state.durationMs);
+            } else {
+                state.currentPx = state.targetPx;
+            }
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+    }
+    case WM_APP_ANIMATION_TICK: {
+        AcknowledgeAnimationTick(hwnd);
+        AdvanceComboListScroll(hwnd, state, AnimationNowMs());
+        RedrawWindow(hwnd, nullptr, nullptr,
+            RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+        return 0;
+    }
+    case WM_VSCROLL: {
+        state.active = false;
+        LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
+        SyncComboListScrollState(hwnd, state);
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return result;
+    }
+    }
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+void EnableComboListSmoothScroll(HWND combo, HWND list) {
+    if (!combo || !list) return;
+    if (g_comboListScrollStates.find(list) == g_comboListScrollStates.end()) {
+        ComboListScrollState state;
+        state.combo = combo;
+        RefreshComboListItems(state);
+        SyncComboListScrollState(list, state);
+        g_comboListScrollStates.emplace(list, std::move(state));
+    } else {
+        ComboListScrollState& state = g_comboListScrollStates[list];
+        state.combo = combo;
+        RefreshComboListItems(state);
+    }
+    SetWindowSubclass(list, ComboListScrollProc, 6, 0);
+}
+
+void StopSmoothScrollingNow() {
+    CancelAnimationChannel(AnimChannel::SmoothScroll);
+    for (auto& entry : g_comboListScrollStates) {
+        HWND list = entry.first;
+        ComboListScrollState& state = entry.second;
+        state.active = false;
+        state.startMs = 0;
+        state.currentPx = std::clamp(
+            state.targetPx, 0.0, ComboListMaxScrollPx(list, state.combo));
+        state.startPx = state.targetPx = state.currentPx;
+        if (IsWindow(list)) {
+            int itemHeight = std::max(1, ComboListItemHeight(list));
+            SendMessageW(list, LB_SETTOPINDEX,
+                (int)std::floor(state.currentPx / itemHeight), 0);
+            RedrawWindow(list, nullptr, nullptr,
+                RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+        }
+    }
+}
+
 LRESULT CALLBACK ComboPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
     switch (msg) {
     case WM_NCDESTROY:
@@ -7449,7 +8644,7 @@ LRESULT CALLBACK ComboPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 1;
     case CB_SETCURSEL: {
         LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
-        RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+        RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
         return result;
     }
     case WM_SETFOCUS:
@@ -7461,6 +8656,7 @@ LRESULT CALLBACK ComboPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return result;
     }
     case WM_APP_ANIMATION_TICK: {
+        AcknowledgeAnimationTick(hwnd);
         RedrawAnimatedControl(hwnd);
         COMBOBOXINFO info{};
         info.cbSize = sizeof(info);
@@ -7483,6 +8679,7 @@ void ApplyComboDropDownTheme(HWND combo) {
     SetWindowTheme(combo, themeName, nullptr);
     if (info.hwndItem) SetWindowTheme(info.hwndItem, themeName, nullptr);
     if (info.hwndList) {
+        EnableComboListSmoothScroll(combo, info.hwndList);
         SetWindowTheme(info.hwndList, themeName, nullptr);
         InvalidateRect(info.hwndList, nullptr, FALSE);
         RedrawWindow(info.hwndList, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_NOERASE);
@@ -7918,17 +9115,27 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_ERASEBKGND:
         return 1;
     case WM_APP_ANIMATION_TICK:
+        AcknowledgeAnimationTick(hwnd);
+        UpdateThemeTransitionFrame();
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     case WM_APP_ANIMATION_DONE:
         return 0;
     case WM_CLOSE:
+        if (g_dirty && AutoSaveNow() == AutosaveResult::Failed) {
+            std::wstring warning = Tr(
+                L"Autosave failed. Closing now may lose unsaved attendance data. Close anyway?",
+                L"\u81ea\u52a8\u4fdd\u5b58\u5931\u8d25\u3002\u73b0\u5728\u5173\u95ed\u53ef\u80fd\u4f1a\u4e22\u5931\u672a\u4fdd\u5b58\u7684\u8003\u52e4\u6570\u636e\u3002\u4ecd\u8981\u5173\u95ed\u5417\uff1f");
+            if (ThemedMessageBox(hwnd, warning,
+                    Tr(L"Autosave failed", L"\u81ea\u52a8\u4fdd\u5b58\u5931\u8d25"), true) != IDYES) {
+                return 0;
+            }
+        }
         DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:
         KillTimer(hwnd, 1);
         KillTimer(hwnd, 2);
-        AutoSaveNow();
         RemoveAnimationState(hwnd);
         StopAnimationThread();
         if (g_font) DeleteObject(g_font);
@@ -7943,7 +9150,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCmd) {
+int WINAPI wWinMain(
+    _In_ HINSTANCE instance,
+    _In_opt_ HINSTANCE,
+    _In_ PWSTR commandLine,
+    _In_ int showCmd) {
     HRESULT comInitialization = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     const bool uninitializeCom = SUCCEEDED(comInitialization);
     LoadSettings();
@@ -8023,6 +9234,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCm
         }
         if (g_settingsWindow && IsWindow(g_settingsWindow)
             && (msg.hwnd == g_settingsWindow || IsChild(g_settingsWindow, msg.hwnd))) {
+            if (msg.message == WM_KEYDOWN && msg.wParam == VK_RETURN
+                && GetFocus() == GetDlgItem(g_settingsWindow, IDC_SETTINGS_SCROLL_FPS)) {
+                SendMessageW(g_settingsWindow, WM_COMMAND,
+                    MAKEWPARAM(IDC_SETTINGS_SCROLL_FPS, EN_KILLFOCUS),
+                    (LPARAM)GetFocus());
+                continue;
+            }
             if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE) {
                 SendMessageW(g_settingsWindow, WM_KEYDOWN, msg.wParam, msg.lParam);
                 continue;

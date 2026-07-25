@@ -13,7 +13,7 @@ add_executable(AttendanceApp WIN32
 target_include_directories(AttendanceApp PRIVATE include)
 target_compile_definitions(AttendanceApp PRIVATE UNICODE _UNICODE)
 if (MSVC)
-    target_compile_options(AttendanceApp PRIVATE /utf-8)
+    target_compile_options(AttendanceApp PRIVATE /utf-8 /W4)
     target_link_options(AttendanceApp PRIVATE /MANIFEST:NO)
 endif()
 

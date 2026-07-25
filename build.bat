@@ -6,7 +6,8 @@ if %errorlevel%==0 (
     cmake -S . -B build -A x64
     if errorlevel 1 exit /b 1
     cmake --build build --config Release
-    exit /b %errorlevel%
+    if errorlevel 1 exit /b 1
+    exit /b 0
 )
 
 where cl >nul 2>nul
@@ -30,4 +31,5 @@ if not exist build mkdir build
 rc /nologo /fo build\app.res resources\app.rc
 if errorlevel 1 exit /b 1
 cl /nologo /std:c++17 /EHsc /utf-8 /DUNICODE /D_UNICODE /O2 /Fo:build\ /Fe:build\AttendanceApp.exe src\main.cpp build\app.res /link /SUBSYSTEM:WINDOWS /MANIFEST:NO user32.lib gdi32.lib comdlg32.lib comctl32.lib shell32.lib ole32.lib uxtheme.lib dwmapi.lib msimg32.lib
-exit /b %errorlevel%
+if errorlevel 1 exit /b 1
+exit /b 0

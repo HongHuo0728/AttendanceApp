@@ -23,17 +23,23 @@ AttendanceApp is a standalone C++/Win32 desktop application for roll call and at
 - PowerPoint `.pptx` export with a pure-black report theme, summary cards, status charts, trend charts, and template/range-aware summaries.
 - Configurable autosave to `%APPDATA%\AttendanceApp\autosave.attd` (off, 30 seconds, 1 minute, or 5 minutes through experimental personalization).
 - Restore, inspect, ignore, or delete autosave files on startup when available.
+- Ignored recovery files are preserved as timestamped protected backups before a new session replaces the active autosave.
+- Closing with dirty data checks the final autosave result and warns before exiting if recovery data could not be written.
 - Backup and restore the latest attendance workbook from AppData, with timestamped backup history.
 - Reopen the most recently saved or imported attendance file.
 - Choose a default save folder for exported and saved files.
 - Undo/redo with editable keyboard shortcuts.
 - Graphical statistics chart window.
 - Statistics range controls for all records, this week, or this month.
-- Command palette for quick save/import/export/backup/statistics/settings actions, lesson review, and `rollcall` / `点名` launch.
+- Command palette for quick save/import/export/backup/statistics/settings actions, lesson review, and `rollcall` launch.
 - Database mirror export to `%APPDATA%\AttendanceApp\attendance.attddb`.
 - Persistent settings saved to `%APPDATA%\AttendanceApp\settings.ini`.
-- Pure-black default theme with an opt-in experimental personalization panel for pure-white mode, restrained accent tones, text size, interface density, autosave timing, statistics cards, footer hint, and table grid visibility.
-- Experimental personalization is warning-gated; switching it off discards its values and immediately restores the original pure-black interface.
+- Pure-black default theme with an opt-in experimental personalization panel for pure-white mode, restrained accent tones, text size, interface density, autosave timing, dropdown scroll frame rate, statistics cards, footer hint, and table grid visibility.
+- Synchronized dark/light theme transitions keep backgrounds, text, inputs, lists, and title bars on one visual timeline.
+- Optional continuous pixel smooth scrolling for combo-box dropdowns and custom popup menus, with responsive mouse-wheel and precision-touchpad motion.
+- Experimental dropdown scroll scheduling is configurable from 60 to 240 FPS, uses a high-resolution timeline, skips stale frames, and applies immediately without restarting.
+- Experimental personalization is warning-gated; switching it off discards its values and transitions the complete interface back to the original pure-black theme.
+- CSV, printable HTML, PowerPoint, database mirror, settings, and attendance saves verify complete writes before reporting success.
 - Bounded, scrollable Tools menu with a local double-buffered refresh path, keyboard navigation, and a slim position indicator.
 - Supported languages: English, Simplified Chinese, Maltese, Japanese, French, German, Russian, Traditional Chinese Taiwan, Spanish, Italian, Mongolian, Esperanto, Classical Chinese, Thai, Filipino, Turkish, Lithuanian, Norwegian, Vietnamese, Traditional Chinese Hong Kong Cantonese.
 - Default window size: `1600x900`; resizable with `F11` fullscreen.
