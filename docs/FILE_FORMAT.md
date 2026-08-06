@@ -8,11 +8,11 @@ The outer file structure is:
 ATTD1: + Base64(XOR encrypted custom attendance data)
 ```
 
-The current internal text format is `ATTENDANCE_V4`, which supports multiple courses/classes in one file, stores the last active course/class index, and includes course details plus per-course student rosters.
+The current internal text format is `ATTENDANCE_V5`, which supports multiple courses/classes in one file, stores the last active course/class index, and includes course details plus per-course student rosters.
 
-Older `ATTENDANCE_V1` files are still supported on import and are converted into a single default course. `ATTENDANCE_V2` multi-course files are also supported, but they do not store the active course index, so they open on the first course. `ATTENDANCE_V3` files are also supported and are upgraded in memory when opened.
+Older `ATTENDANCE_V1` files are still supported on import and are converted into a single default course. `ATTENDANCE_V2` multi-course files are also supported, but they do not store the active course index, so they open on the first course. `ATTENDANCE_V3` and `ATTENDANCE_V4` files are also supported and are upgraded in memory when opened. When an older file is loaded from disk, AttendanceApp creates a `.pre-v5.bak` safety copy before saving the migrated workbook.
 
-`ATTENDANCE_V4` stores each course/class as:
+`ATTENDANCE_V5` stores each course/class as:
 
 ```text
 course name

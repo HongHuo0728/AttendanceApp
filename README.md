@@ -1,6 +1,8 @@
 # AttendanceApp
 
-AttendanceApp is a standalone C++/Win32 desktop application for roll call and attendance management. It supports custom `.attd` files, multiple courses/classes, course details, student rosters, CSV import/export, printable reports, autosave, undo/redo, statistics charts, backup/restore, file icons, and persistent UI settings.
+AttendanceApp is a standalone C++/Win32 desktop application for roll call and attendance management. It supports custom `.attd` files, multiple courses/classes, course details, student rosters, lesson workflows, CSV import/export, printable reports, autosave, undo/redo, statistics charts, backup/restore, file icons, and persistent UI settings.
+
+Version `2.0.0` is the current stable release. It includes bounded project-file parsing, verified atomic saves, protected autosave recovery, an independent Hong Kong Cantonese localization, and release-build checks for executable freshness and version metadata.
 
 ## Features
 
@@ -12,27 +14,42 @@ AttendanceApp is a standalone C++/Win32 desktop application for roll call and at
 - Store course/class details such as teacher/owner, location, and notes.
 - Import student rosters from CSV files.
 - Manage student roster entries and generate attendance records from the roster.
+- Create today's lesson from the roster and switch between lesson/date filters.
+- Run Quick roll call from the current course roster with number-key marking, previous/skip navigation, duplicate protection, partial-finish confirmation, and one-step undo.
+- Review lesson completion against the roster, including missing and duplicate attendance records.
+- Open per-student attendance profiles and risk-student summaries.
+- Use advanced filter syntax for names, status, course, date, and date ranges.
 - Search/filter records by date, name, status, or notes.
 - Export attendance records to CSV.
-- Print or export to PDF through a generated printable HTML report.
-- PowerPoint `.pptx` export with a gradient theme, summary cards, status charts, and trend charts.
-- Autosave every 30 seconds to `%APPDATA%\AttendanceApp\autosave.attd`.
-- Restore autosave on startup when available.
-- Backup and restore the latest attendance workbook from AppData.
+- Print or export to PDF through a generated printable HTML report with selectable report templates.
+- PowerPoint `.pptx` export with a pure-black report theme, summary cards, status charts, trend charts, and template/range-aware summaries.
+- Configurable autosave to `%APPDATA%\AttendanceApp\autosave.attd` (off, 30 seconds, 1 minute, or 5 minutes through experimental personalization).
+- Restore, inspect, ignore, or delete autosave files on startup when available.
+- Ignored recovery files are preserved as timestamped protected backups before a new session replaces the active autosave.
+- Closing with dirty data checks the final autosave result and warns before exiting if recovery data could not be written.
+- Backup and restore the latest attendance workbook from AppData, with timestamped backup history.
 - Reopen the most recently saved or imported attendance file.
 - Choose a default save folder for exported and saved files.
-- Undo/redo with `Ctrl+Z` and `Ctrl+Y`.
+- Undo/redo with editable keyboard shortcuts.
 - Graphical statistics chart window.
+- Statistics range controls for all records, this week, or this month.
+- Command palette for quick save/import/export/backup/statistics/settings actions, lesson review, and `rollcall` launch.
 - Database mirror export to `%APPDATA%\AttendanceApp\attendance.attddb`.
 - Persistent settings saved to `%APPDATA%\AttendanceApp\settings.ini`.
-- Light/dark theme, interface font selection, and multilingual UI.
-- Supported languages: English, Simplified Chinese, Maltese, Japanese, French, German, Russian, Traditional Chinese Taiwan, Spanish, Italian, Mongolian, Esperanto, Classical Chinese, Thai, Filipino, Turkish, Lithuanian, Norwegian, Vietnamese, Traditional Chinese Hong Kong Cantonese.
+- Pure-black default theme with an opt-in experimental personalization panel for pure-white mode, restrained accent tones, text size, interface density, autosave timing, dropdown scroll frame rate, statistics cards, footer hint, and table grid visibility.
+- Synchronized dark/light theme transitions keep backgrounds, text, inputs, lists, and title bars on one visual timeline.
+- Optional continuous pixel smooth scrolling for combo-box dropdowns and custom popup menus, with responsive mouse-wheel and precision-touchpad motion.
+- Experimental dropdown scroll scheduling is configurable from 60 to 240 FPS, uses a high-resolution timeline, skips stale frames, and applies immediately without restarting.
+- Experimental personalization is warning-gated; switching it off discards its values and transitions the complete interface back to the original pure-black theme.
+- CSV, printable HTML, PowerPoint, database mirror, settings, and attendance saves verify complete writes before reporting success.
+- Bounded, scrollable Tools menu with a local double-buffered refresh path, keyboard navigation, and a slim position indicator.
+- Supported languages: English, Simplified Chinese, Maltese, Japanese, French, German, Russian, Traditional Chinese Taiwan, Spanish, Italian, Mongolian, Esperanto, Classical Chinese, Thai, Filipino, Turkish, Lithuanian, Norwegian, Vietnamese, and Traditional Chinese Hong Kong Cantonese. The Hong Kong interface uses an independent local vocabulary, while exported reports use professional written wording.
 - Default window size: `1600x900`; resizable with `F11` fullscreen.
 
 ## Project Structure
 
 ```text
-Attendance Project/
+Attendance Project 2.0/
 +-- assets/                    # Application and .attd file icons
 +-- docs/                      # Extra documentation
 +-- examples/                  # Example CSV roster
@@ -98,7 +115,7 @@ build\Release\AttendanceApp.exe
 5. Use `Save .attd` to save the attendance workbook.
 6. Use `Import .attd` to load a saved attendance workbook.
 7. Use the search box above the table to filter the current course by date, name, status, or notes.
-8. Use `Tools` for roster management, course details, print/PDF export, PowerPoint export, statistics, backup/restore, recent files, default save folder, autosave, and database mirror export.
+8. Use `Tools` for Quick roll call, lesson workflows, roster management, course details, lesson completion checks, student profiles, advanced filters, report templates, print/PDF export, PowerPoint export, statistics, risk students, backup/restore, recent files, default save folder, autosave, command palette, shortcut editing, and database mirror export.
 
 ## Register `.attd` File Icon
 
@@ -129,7 +146,7 @@ Imported roster entries are added to the current course with `Absent` as the ini
 ATTD1: + Base64(XOR encrypted custom attendance data)
 ```
 
-Current files use `ATTENDANCE_V4` internally for multi-course data, course details, student rosters, and the last active course/class index. Older `ATTENDANCE_V1`, `ATTENDANCE_V2`, and `ATTENDANCE_V3` files are still supported on import.
+Current files use `ATTENDANCE_V5` internally for multi-course data, course details, student rosters, and the last active course/class index. Older `ATTENDANCE_V1`, `ATTENDANCE_V2`, `ATTENDANCE_V3`, and `ATTENDANCE_V4` files are still supported on import, with a `.pre-v5.bak` safety copy created before older files are migrated.
 
 This is lightweight protection for a custom project file format, not high-security cryptography. Do not treat `.attd` encoding as privacy protection for sensitive student data.
 
