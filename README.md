@@ -2,6 +2,8 @@
 
 AttendanceApp is a standalone C++/Win32 desktop application for roll call and attendance management. It supports custom `.attd` files, multiple courses/classes, course details, student rosters, lesson workflows, CSV import/export, printable reports, autosave, undo/redo, statistics charts, backup/restore, file icons, and persistent UI settings.
 
+Version `2.0.0` is the current stable release. It includes bounded project-file parsing, verified atomic saves, protected autosave recovery, an independent Hong Kong Cantonese localization, and release-build checks for executable freshness and version metadata.
+
 ## Features
 
 - Create and edit attendance records with date/time, name, status, and notes.
@@ -41,13 +43,13 @@ AttendanceApp is a standalone C++/Win32 desktop application for roll call and at
 - Experimental personalization is warning-gated; switching it off discards its values and transitions the complete interface back to the original pure-black theme.
 - CSV, printable HTML, PowerPoint, database mirror, settings, and attendance saves verify complete writes before reporting success.
 - Bounded, scrollable Tools menu with a local double-buffered refresh path, keyboard navigation, and a slim position indicator.
-- Supported languages: English, Simplified Chinese, Maltese, Japanese, French, German, Russian, Traditional Chinese Taiwan, Spanish, Italian, Mongolian, Esperanto, Classical Chinese, Thai, Filipino, Turkish, Lithuanian, Norwegian, Vietnamese, Traditional Chinese Hong Kong Cantonese.
+- Supported languages: English, Simplified Chinese, Maltese, Japanese, French, German, Russian, Traditional Chinese Taiwan, Spanish, Italian, Mongolian, Esperanto, Classical Chinese, Thai, Filipino, Turkish, Lithuanian, Norwegian, Vietnamese, and Traditional Chinese Hong Kong Cantonese. The Hong Kong interface uses an independent local vocabulary, while exported reports use professional written wording.
 - Default window size: `1600x900`; resizable with `F11` fullscreen.
 
 ## Project Structure
 
 ```text
-Attendance Project/
+Attendance Project 2.0/
 +-- assets/                    # Application and .attd file icons
 +-- docs/                      # Extra documentation
 +-- examples/                  # Example CSV roster

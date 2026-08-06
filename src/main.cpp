@@ -3,6 +3,7 @@
 #include <windowsx.h>
 #include <commctrl.h>
 #include <dwmapi.h>
+#include <oleacc.h>
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shobjidl.h>
@@ -11,6 +12,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <climits>
 #include <cmath>
 #include <condition_variable>
 #include <cstdint>
@@ -29,11 +31,13 @@
 #include <vector>
 
 #include "../include/resource.h"
+#include "../include/zh_hk_strings.h"
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "uxtheme.lib")
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "msimg32.lib")
+#pragma comment(lib, "oleacc.lib")
 
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -241,10 +245,18 @@ static std::wstring g_filterText;
 static constexpr int MIN_LAYOUT_W = 1180;
 static constexpr int MIN_LAYOUT_H = 820;
 static constexpr uintmax_t MAX_ATTD_FILE_BYTES = 64ull * 1024ull * 1024ull;
-static constexpr size_t MAX_SHEET_COUNT = 10000;
-static constexpr size_t MAX_STUDENTS_PER_SHEET = 1000000;
-static constexpr size_t MAX_RECORDS_PER_SHEET = 1000000;
-static constexpr size_t MAX_TOTAL_RECORDS = 2000000;
+static constexpr size_t MAX_ATTD_DECODED_BYTES = 48ull * 1024ull * 1024ull;
+static constexpr size_t MAX_SHEET_COUNT = 512;
+static constexpr size_t MAX_STUDENTS_PER_SHEET = 100000;
+static constexpr size_t MAX_TOTAL_STUDENTS = 250000;
+static constexpr size_t MAX_RECORDS_PER_SHEET = 250000;
+static constexpr size_t MAX_TOTAL_RECORDS = 500000;
+static constexpr size_t MAX_METADATA_FIELD_BYTES = 1024ull * 1024ull;
+static constexpr size_t MAX_RECORD_FIELD_BYTES = 64ull * 1024ull;
+static constexpr uintmax_t MAX_ROSTER_FILE_BYTES = 16ull * 1024ull * 1024ull;
+static constexpr uintmax_t MAX_RECENT_FILE_BYTES = 64ull * 1024ull;
+static constexpr uintmax_t MAX_SETTINGS_FILE_BYTES = 1024ull * 1024ull;
+static constexpr size_t MAX_HISTORY_SNAPSHOT_BYTES = 64ull * 1024ull * 1024ull;
 static constexpr UINT WM_APP_ANIMATION_TICK = WM_APP + 41;
 static constexpr UINT WM_APP_ANIMATION_DONE = WM_APP + 42;
 
@@ -448,6 +460,7 @@ bool LoadAttendanceFile(const std::wstring& path, bool showSuccess, bool remembe
 void PushUndo();
 HWND MakeSettingsControl(HWND parent, const wchar_t* cls, const wchar_t* text, DWORD style, int id);
 std::wstring Tr(const wchar_t* english, const wchar_t* chinese);
+std::wstring StatusDisplayText(const std::wstring& status);
 void EnableEditShortcuts(HWND hwnd);
 void EnableMouseWheelForward(HWND hwnd);
 void CountStatuses(int& present, int& absent, int& late, int& other);
@@ -555,6 +568,30 @@ std::wstring GetText(HWND hwnd) {
 
 void SetText(HWND hwnd, const std::wstring& text) {
     SetWindowTextW(hwnd, text.c_str());
+}
+
+void SetAccessibleName(HWND hwnd, const std::wstring& name) {
+    if (!hwnd || name.empty()) return;
+    constexpr CLSID kAccPropServicesClass = {
+        0xb5f8350b, 0x0548, 0x48b1, {0xa6, 0xee, 0x88, 0xbd, 0x00, 0xb4, 0xa5, 0xe7}};
+    constexpr MSAAPROPID kAccessibleNameProperty = {
+        0x608d3df8, 0x8128, 0x4aa7, {0xa4, 0x28, 0xf5, 0x5e, 0x49, 0x26, 0x72, 0x91}};
+    IAccPropServices* services = nullptr;
+    if (FAILED(CoCreateInstance(
+            kAccPropServicesClass, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&services)))
+        || !services) {
+        return;
+    }
+    HRESULT annotationResult = services->SetHwndPropStr(
+        hwnd,
+        static_cast<DWORD>(OBJID_CLIENT),
+        static_cast<DWORD>(CHILDID_SELF),
+        kAccessibleNameProperty,
+        name.c_str());
+    services->Release();
+    if (SUCCEEDED(annotationResult)) {
+        NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, hwnd, OBJID_CLIENT, CHILDID_SELF);
+    }
 }
 
 void ConfigureEditMetrics(HWND hwnd) {
@@ -1167,7 +1204,11 @@ std::wstring TodayDateKey() {
 }
 
 bool DateKeyToFileTime(const std::wstring& date, FILETIME& out) {
-    if (date.size() < 10) return false;
+    if (date.size() != 10 || date[4] != L'-' || date[7] != L'-') return false;
+    for (size_t i = 0; i < date.size(); ++i) {
+        if (i == 4 || i == 7) continue;
+        if (date[i] < L'0' || date[i] > L'9') return false;
+    }
     SYSTEMTIME st{};
     try {
         st.wYear = (WORD)std::stoi(date.substr(0, 4));
@@ -1189,7 +1230,7 @@ int64_t FileTimeTicks(const FILETIME& ft) {
 
 bool DateWithinRecentDays(const std::wstring& date, int days) {
     FILETIME recordFt{};
-    if (!DateKeyToFileTime(date, recordFt)) return true;
+    if (!DateKeyToFileTime(date, recordFt)) return false;
     SYSTEMTIME nowSt{};
     FILETIME nowFt{};
     GetLocalTime(&nowSt);
@@ -1204,8 +1245,10 @@ bool DateWithinRecentDays(const std::wstring& date, int days) {
 }
 
 bool DateWithinCurrentMonth(const std::wstring& date) {
+    FILETIME ignored{};
+    if (!DateKeyToFileTime(date, ignored)) return false;
     std::wstring today = TodayDateKey();
-    return date.size() >= 7 && today.size() >= 7 && date.substr(0, 7) == today.substr(0, 7);
+    return date.substr(0, 7) == today.substr(0, 7);
 }
 
 bool RecordMatchesStatsRange(const AttendanceRecord& record) {
@@ -1225,10 +1268,12 @@ std::vector<std::wstring> SplitWords(const std::wstring& text) {
 
 bool RecordMatchesFilter(const AttendanceRecord& record) {
     if (g_filterText.empty()) return true;
+    const std::wstring displayStatus = StatusDisplayText(record.status);
     if (!g_advancedFilterEnabled) {
         return ContainsText(record.dateTime, g_filterText)
             || ContainsText(record.name, g_filterText)
             || ContainsText(record.status, g_filterText)
+            || ContainsText(displayStatus, g_filterText)
             || ContainsText(record.other, g_filterText);
     }
 
@@ -1271,7 +1316,9 @@ bool RecordMatchesFilter(const AttendanceRecord& record) {
     if (!fromDate.empty() && date < fromDate) return false;
     if (!toDate.empty() && date > toDate) return false;
     if (!nameFilter.empty() && !ContainsText(record.name, nameFilter)) return false;
-    if (!statusFilter.empty() && !ContainsText(record.status, statusFilter)) return false;
+    if (!statusFilter.empty()
+        && !ContainsText(record.status, statusFilter)
+        && !ContainsText(displayStatus, statusFilter)) return false;
     if (!courseFilter.empty()) {
         if (g_activeSheet < 0 || g_activeSheet >= (int)g_sheets.size() || !ContainsText(g_sheets[g_activeSheet].name, courseFilter)) return false;
     }
@@ -1286,6 +1333,7 @@ bool RecordMatchesFilter(const AttendanceRecord& record) {
     return ContainsText(record.dateTime, joinedFree)
         || ContainsText(record.name, joinedFree)
         || ContainsText(record.status, joinedFree)
+        || ContainsText(displayStatus, joinedFree)
         || ContainsText(record.other, joinedFree);
 }
 
@@ -1685,7 +1733,8 @@ LRESULT CALLBACK InputDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         state = reinterpret_cast<InputDialogState*>(create->lpCreateParams);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)state);
         MakeSettingsControl(hwnd, L"STATIC", state->prompt.c_str(), 0, 0);
-        MakeSettingsControl(hwnd, L"EDIT", state->value.c_str(), WS_TABSTOP | ES_AUTOHSCROLL | WS_BORDER, IDC_INPUT_EDIT);
+        HWND edit = MakeSettingsControl(hwnd, L"EDIT", state->value.c_str(), WS_TABSTOP | ES_AUTOHSCROLL | WS_BORDER, IDC_INPUT_EDIT);
+        SetAccessibleName(edit, state->prompt);
         std::wstring okText = Tr(L"OK", L"\u786e\u5b9a");
         std::wstring cancelText = Tr(L"Cancel", L"\u53d6\u6d88");
         MakeSettingsControl(hwnd, L"BUTTON", okText.c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_INPUT_OK);
@@ -1804,6 +1853,9 @@ bool PromptText(const std::wstring& title, const std::wstring& prompt, std::wstr
     CenterOwnedWindow(dialog, g_hwnd);
     ShowWindow(dialog, SW_SHOW);
     UpdateWindow(dialog);
+    HWND edit = GetDlgItem(dialog, IDC_INPUT_EDIT);
+    SetFocus(edit);
+    SendMessageW(edit, EM_SETSEL, 0, -1);
 
     MSG msg{};
     while (IsWindow(dialog)) {
@@ -1968,7 +2020,7 @@ bool TranslateFeatureText(const std::wstring& key, std::wstring& out) {
 }
 
 bool TranslateAdditionalLanguage(const std::wstring& key, std::wstring& out) {
-    if (g_language == UiLanguage::Norwegian || g_language == UiLanguage::Vietnamese || g_language == UiLanguage::ChineseTraditionalHongKong) {
+    if (g_language == UiLanguage::Norwegian || g_language == UiLanguage::Vietnamese) {
         struct V12Entry {
             const wchar_t* key;
             const wchar_t* no;
@@ -2033,17 +2085,9 @@ bool TranslateAdditionalLanguage(const std::wstring& key, std::wstring& out) {
         for (const auto& entry : entries) {
             if (key == entry.key) {
                 if (g_language == UiLanguage::Norwegian) out = entry.no;
-                else if (g_language == UiLanguage::Vietnamese) out = entry.vi;
-                else out = entry.zhhk;
+                else out = entry.vi;
                 return true;
             }
-        }
-        if (g_language == UiLanguage::ChineseTraditionalHongKong) {
-            UiLanguage saved = g_language;
-            g_language = UiLanguage::ChineseTraditional;
-            out = Tr(key.c_str(), L"");
-            g_language = saved;
-            return out != key;
         }
         return false;
     }
@@ -2271,6 +2315,12 @@ std::wstring Tr(const wchar_t* english, const wchar_t* chinese) {
     std::wstring key = english;
     if (g_language == UiLanguage::English) return key;
     std::wstring additional;
+    if (g_language == UiLanguage::ChineseTraditionalHongKong) {
+        if (attendance::localization::TranslateHongKong(key, additional)) return additional;
+        std::wstring diagnostic = L"AttendanceApp missing zh-HK translation: " + key + L"\n";
+        OutputDebugStringW(diagnostic.c_str());
+        return key;
+    }
     if (TranslateFeatureText(key, additional)) return additional;
     if (TranslateAdditionalLanguage(key, additional)) return additional;
 
@@ -2470,7 +2520,7 @@ std::wstring ParticleEffectsLabel() {
     case UiLanguage::Lithuanian: return L"\u012ejungti daleli\u0173 efektus";
     case UiLanguage::Norwegian: return L"Sl\u00e5 p\u00e5 partikkeleffekter";
     case UiLanguage::Vietnamese: return L"B\u1eadt hi\u1ec7u \u1ee9ng h\u1ea1t";
-    case UiLanguage::ChineseTraditionalHongKong: return L"\u555f\u7528\u7c92\u5b50\u7279\u6548";
+    case UiLanguage::ChineseTraditionalHongKong: return Tr(L"Enable particle effects", L"");
     default: return L"Enable particle effects";
     }
 }
@@ -2495,7 +2545,7 @@ std::wstring SmoothDropdownScrollingLabel() {
     case UiLanguage::Lithuanian: return L"\u012ejungti skland\u0173 i\u0161skleid\u017eiam\u0173j\u0173 s\u0105ra\u0161\u0173 slinkim\u0105";
     case UiLanguage::Norwegian: return L"Aktiver jevn rulling i nedtrekkslister";
     case UiLanguage::Vietnamese: return L"B\u1eadt cu\u1ed9n m\u01b0\u1ee3t trong danh s\u00e1ch th\u1ea3 xu\u1ed1ng";
-    case UiLanguage::ChineseTraditionalHongKong: return L"\u555f\u7528\u4e0b\u62c9\u9078\u55ae\u5e73\u6ed1\u6372\u52d5";
+    case UiLanguage::ChineseTraditionalHongKong: return Tr(L"Enable smooth dropdown scrolling", L"");
     default: return L"Enable smooth dropdown scrolling";
     }
 }
@@ -2520,7 +2570,7 @@ std::wstring ScrollFrameRateLabel() {
     case UiLanguage::Lithuanian: return L"I\u0161skleid\u017eiamojo slinkimo FPS (60-240)";
     case UiLanguage::Norwegian: return L"Bildefrekvens for rullegardin (60-240)";
     case UiLanguage::Vietnamese: return L"FPS cu\u1ed9n danh s\u00e1ch th\u1ea3 xu\u1ed1ng (60-240)";
-    case UiLanguage::ChineseTraditionalHongKong: return L"\u4e0b\u62c9\u6372\u52d5\u5e40\u7387\uff0860-240\uff09";
+    case UiLanguage::ChineseTraditionalHongKong: return Tr(L"Dropdown scroll frame rate (60-240)", L"");
     default: return L"Dropdown scroll frame rate (60-240)";
     }
 }
@@ -2615,14 +2665,30 @@ void CommitComboSelectionNow(HWND combo) {
     }
 }
 
-std::filesystem::path SettingsFilePath() {
+std::filesystem::path ApplicationDataDirectory() {
+    constexpr DWORD kMaximumEnvironmentPathLength = 32767;
+    DWORD overrideLength = GetEnvironmentVariableW(L"ATTENDANCEAPP_DATA_DIR", nullptr, 0);
+    if (overrideLength > 1 && overrideLength <= kMaximumEnvironmentPathLength) {
+        std::vector<wchar_t> overridePath(overrideLength, L'\0');
+        DWORD copied = GetEnvironmentVariableW(
+            L"ATTENDANCEAPP_DATA_DIR", overridePath.data(), overrideLength);
+        if (copied > 0 && copied < overrideLength) {
+            return std::filesystem::path(overridePath.data());
+        }
+    }
+
     PWSTR roamingPath = nullptr;
     std::filesystem::path result;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, KF_FLAG_CREATE, nullptr, &roamingPath))) {
-        result = std::filesystem::path(roamingPath) / L"AttendanceApp" / L"settings.ini";
+        result = std::filesystem::path(roamingPath) / L"AttendanceApp";
         CoTaskMemFree(roamingPath);
     }
     return result;
+}
+
+std::filesystem::path SettingsFilePath() {
+    auto directory = ApplicationDataDirectory();
+    return directory.empty() ? std::filesystem::path{} : directory / L"settings.ini";
 }
 
 bool EnsureParentDirectory(const std::filesystem::path& path) {
@@ -2806,8 +2872,9 @@ void LoadSettings() {
     auto path = SettingsFilePath();
     if (!FileExistsNoThrow(path)) return;
 
-    std::ifstream file(path, std::ios::binary);
-    if (!file) return;
+    std::string settingsData;
+    if (!ReadBinaryFileLimited(path, settingsData, MAX_SETTINGS_FILE_BYTES)) return;
+    std::istringstream file(settingsData);
 
     std::string line;
     while (std::getline(file, line)) {
@@ -2943,6 +3010,24 @@ std::string Unescape(const std::string& input) {
     return out;
 }
 
+bool DecodeUtf8Field(const std::string& decoded, size_t maximumBytes, std::wstring& output) {
+    output.clear();
+    if (decoded.size() > maximumBytes) return false;
+    if (decoded.empty()) return true;
+    if (decoded.size() > static_cast<size_t>(INT_MAX)) return false;
+    int size = MultiByteToWideChar(
+        CP_UTF8, MB_ERR_INVALID_CHARS, decoded.data(), static_cast<int>(decoded.size()), nullptr, 0);
+    if (size <= 0) return false;
+    output.resize(static_cast<size_t>(size));
+    return MultiByteToWideChar(
+        CP_UTF8, MB_ERR_INVALID_CHARS, decoded.data(), static_cast<int>(decoded.size()), output.data(), size) == size;
+}
+
+bool DecodeEscapedUtf8Field(const std::string& encoded, size_t maximumBytes, std::wstring& output) {
+    if (encoded.size() > maximumBytes) return false;
+    return DecodeUtf8Field(Unescape(encoded), maximumBytes, output);
+}
+
 std::vector<std::string> SplitTabs(const std::string& line) {
     std::vector<std::string> parts;
     std::string current;
@@ -3003,17 +3088,21 @@ bool DeserializeRecords(const std::string& plainText, std::vector<AttendanceReco
     if (count > MAX_RECORDS_PER_SHEET) return false;
 
     std::vector<AttendanceRecord> records;
+    records.reserve(count);
     for (size_t i = 0; i < count; ++i) {
         std::string line;
         if (!std::getline(ss, line)) return false;
+        if (line.size() > MAX_RECORD_FIELD_BYTES * 4 + 3) return false;
         auto parts = SplitTabs(line);
         if (parts.size() != 4) return false;
-        records.push_back({
-            Utf8ToWide(Unescape(parts[0])),
-            Utf8ToWide(Unescape(parts[1])),
-            Utf8ToWide(Unescape(parts[2])),
-            Utf8ToWide(Unescape(parts[3]))
-        });
+        AttendanceRecord record;
+        if (!DecodeEscapedUtf8Field(parts[0], MAX_RECORD_FIELD_BYTES, record.dateTime)
+            || !DecodeEscapedUtf8Field(parts[1], MAX_RECORD_FIELD_BYTES, record.name)
+            || !DecodeEscapedUtf8Field(parts[2], MAX_RECORD_FIELD_BYTES, record.status)
+            || !DecodeEscapedUtf8Field(parts[3], MAX_RECORD_FIELD_BYTES, record.other)) {
+            return false;
+        }
+        records.push_back(std::move(record));
     }
 
     output = std::move(records);
@@ -3096,6 +3185,8 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
     if (sheetCount > MAX_SHEET_COUNT) return false;
 
     std::vector<AttendanceSheet> sheets;
+    sheets.reserve(sheetCount);
+    size_t totalStudents = 0;
     size_t totalRecords = 0;
     for (size_t s = 0; s < sheetCount; ++s) {
         std::string nameLine;
@@ -3103,7 +3194,7 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
         if (!std::getline(ss, nameLine)) return false;
 
         AttendanceSheet sheet;
-        sheet.name = Utf8ToWide(Unescape(nameLine));
+        if (!DecodeEscapedUtf8Field(nameLine, MAX_METADATA_FIELD_BYTES, sheet.name)) return false;
         if (sheet.name.empty()) sheet.name = L"Course";
         if (header == "ATTENDANCE_V4" || header == "ATTENDANCE_V5") {
             std::string teacherLine;
@@ -3114,20 +3205,26 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
             if (!std::getline(ss, locationLine)) return false;
             if (!std::getline(ss, notesLine)) return false;
             if (!std::getline(ss, studentCountLine)) return false;
-            sheet.teacher = Utf8ToWide(Unescape(teacherLine));
-            sheet.location = Utf8ToWide(Unescape(locationLine));
-            sheet.notes = Utf8ToWide(Unescape(notesLine));
+            if (!DecodeEscapedUtf8Field(teacherLine, MAX_METADATA_FIELD_BYTES, sheet.teacher)
+                || !DecodeEscapedUtf8Field(locationLine, MAX_METADATA_FIELD_BYTES, sheet.location)
+                || !DecodeEscapedUtf8Field(notesLine, MAX_METADATA_FIELD_BYTES, sheet.notes)) {
+                return false;
+            }
             size_t studentCount = 0;
             try {
                 studentCount = std::stoull(studentCountLine);
             } catch (...) {
                 return false;
             }
-            if (studentCount > MAX_STUDENTS_PER_SHEET) return false;
+            if (studentCount > MAX_STUDENTS_PER_SHEET
+                || studentCount > MAX_TOTAL_STUDENTS - totalStudents) return false;
+            totalStudents += studentCount;
+            sheet.students.reserve(studentCount);
             for (size_t i = 0; i < studentCount; ++i) {
                 std::string studentLine;
                 if (!std::getline(ss, studentLine)) return false;
-                std::wstring student = Utf8ToWide(Unescape(studentLine));
+                std::wstring student;
+                if (!DecodeEscapedUtf8Field(studentLine, MAX_RECORD_FIELD_BYTES, student)) return false;
                 if (!student.empty()) sheet.students.push_back(student);
             }
         }
@@ -3140,17 +3237,21 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
         }
         if (recordCount > MAX_RECORDS_PER_SHEET || recordCount > MAX_TOTAL_RECORDS - totalRecords) return false;
         totalRecords += recordCount;
+        sheet.records.reserve(recordCount);
         for (size_t i = 0; i < recordCount; ++i) {
             std::string line;
             if (!std::getline(ss, line)) return false;
+            if (line.size() > MAX_RECORD_FIELD_BYTES * 4 + 3) return false;
             auto parts = SplitTabs(line);
             if (parts.size() != 4) return false;
-            sheet.records.push_back({
-                Utf8ToWide(Unescape(parts[0])),
-                Utf8ToWide(Unescape(parts[1])),
-                Utf8ToWide(Unescape(parts[2])),
-                Utf8ToWide(Unescape(parts[3]))
-            });
+            AttendanceRecord record;
+            if (!DecodeEscapedUtf8Field(parts[0], MAX_RECORD_FIELD_BYTES, record.dateTime)
+                || !DecodeEscapedUtf8Field(parts[1], MAX_RECORD_FIELD_BYTES, record.name)
+                || !DecodeEscapedUtf8Field(parts[2], MAX_RECORD_FIELD_BYTES, record.status)
+                || !DecodeEscapedUtf8Field(parts[3], MAX_RECORD_FIELD_BYTES, record.other)) {
+                return false;
+            }
+            sheet.records.push_back(std::move(record));
         }
         sheets.push_back(std::move(sheet));
     }
@@ -3201,20 +3302,41 @@ bool Base64Decode(const std::string& input, std::string& output) {
     for (int i = 0; i < 64; ++i) map[(uint8_t)table[i]] = i;
 
     output.clear();
-    int val = 0;
+    if (input.size() > MAX_ATTD_FILE_BYTES) return false;
+    output.reserve(std::min(MAX_ATTD_DECODED_BYTES, input.size() * 3 / 4));
+    uint32_t val = 0;
     int valb = -8;
+    size_t symbolCount = 0;
+    size_t dataSymbolCount = 0;
+    size_t paddingCount = 0;
+    bool paddingStarted = false;
     for (uint8_t ch : input) {
-        if (ch == '=') break;
+        if (ch == '\r' || ch == '\n' || ch == ' ' || ch == '\t') continue;
+        ++symbolCount;
+        if (ch == '=') {
+            paddingStarted = true;
+            if (++paddingCount > 2) return false;
+            continue;
+        }
+        if (paddingStarted) return false;
         if (map[ch] == -1) {
-            if (ch == '\r' || ch == '\n' || ch == ' ') continue;
             return false;
         }
-        val = (val << 6) + map[ch];
+        ++dataSymbolCount;
+        val = (val << 6) | static_cast<uint32_t>(map[ch]);
         valb += 6;
         if (valb >= 0) {
+            if (output.size() >= MAX_ATTD_DECODED_BYTES) return false;
             output.push_back((char)((val >> valb) & 0xFF));
             valb -= 8;
         }
+    }
+    if (symbolCount == 0 || symbolCount % 4 != 0 || dataSymbolCount % 4 == 1) return false;
+    if ((paddingCount == 0 && dataSymbolCount % 4 != 0)
+        || (paddingCount == 1 && dataSymbolCount % 4 != 3)
+        || (paddingCount == 2 && dataSymbolCount % 4 != 2)) {
+        output.clear();
+        return false;
     }
     return true;
 }
@@ -3228,8 +3350,16 @@ bool DecodeAttd(const std::string& fileText, std::string& plainText) {
     if (fileText.rfind(prefix, 0) != 0) return false;
     std::string encrypted;
     if (!Base64Decode(fileText.substr(prefix.size()), encrypted)) return false;
+    if (encrypted.size() > MAX_ATTD_DECODED_BYTES) return false;
     plainText = XorCrypt(encrypted);
     return true;
+}
+
+bool EncodeCurrentWorkbook(std::string& encoded) {
+    std::string plainText = SerializeWorkbook();
+    if (plainText.size() > MAX_ATTD_DECODED_BYTES) return false;
+    encoded = EncodeAttd(plainText);
+    return encoded.size() <= MAX_ATTD_FILE_BYTES;
 }
 
 std::wstring CurrentDateTimeText() {
@@ -4313,6 +4443,12 @@ void ApplyMainLanguage() {
     SetListColumnText(1, Tr(L"Name", L"\u59d3\u540d"));
     SetListColumnText(2, Tr(L"Status", L"\u72b6\u6001"));
     SetListColumnText(3, Tr(L"Other", L"\u5176\u4ed6"));
+    SetAccessibleName(g_dateEdit, Tr(L"Date/Time", L"\u65e5\u671f\u65f6\u95f4"));
+    SetAccessibleName(g_nameEdit, Tr(L"Name", L"\u59d3\u540d"));
+    SetAccessibleName(g_otherEdit, Tr(L"Other", L"\u5176\u4ed6"));
+    SetAccessibleName(g_filterEdit, Tr(L"Search", L"\u641c\u7d22"));
+    SetAccessibleName(g_list, Tr(L"Attendance Sheet", L"\u70b9\u540d\u8868"));
+    SetAccessibleName(g_courseCombo, Tr(L"Courses", L"\u8bfe\u7a0b"));
     UpdateStats();
 }
 
@@ -4504,7 +4640,7 @@ void DeleteRecordsByStatus(const std::wstring& status) {
     }
 
     std::wstringstream ss;
-    ss << Tr(L"Delete all", L"\u5220\u9664\u6240\u6709") << L" " << status << L" "
+    ss << Tr(L"Delete all", L"\u5220\u9664\u6240\u6709") << L" " << StatusDisplayText(status) << L" "
        << Tr(L"records?", L"\u8bb0\u5f55\uff1f") << L" (" << rows.size() << L")";
     std::wstring batchTitle = Tr(L"Batch Delete", L"\u6279\u91cf\u5220\u9664");
     if (ThemedMessageBox(g_hwnd, ss.str(), batchTitle, true) == IDYES) {
@@ -4663,20 +4799,17 @@ std::wstring ChooseFolderDialog() {
 }
 
 std::filesystem::path AppDataFilePath(const wchar_t* fileName) {
-    PWSTR roamingPath = nullptr;
-    std::filesystem::path result;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, KF_FLAG_CREATE, nullptr, &roamingPath))) {
-        try {
-            result = std::filesystem::path(roamingPath) / L"AttendanceApp" / fileName;
-            std::error_code ec;
-            std::filesystem::create_directories(result.parent_path(), ec);
-            if (ec) result.clear();
-        } catch (const std::filesystem::filesystem_error&) {
-            result.clear();
-        }
-        CoTaskMemFree(roamingPath);
+    try {
+        auto directory = ApplicationDataDirectory();
+        if (directory.empty()) return {};
+        std::filesystem::path result = directory / fileName;
+        std::error_code ec;
+        std::filesystem::create_directories(result.parent_path(), ec);
+        if (ec) result.clear();
+        return result;
+    } catch (const std::filesystem::filesystem_error&) {
+        return {};
     }
-    return result;
 }
 
 std::string CsvCell(const std::wstring& value) {
@@ -4750,7 +4883,7 @@ void ExportCsv() {
         for (const auto& record : g_records) {
             file << CsvCell(record.dateTime) << ','
                  << CsvCell(record.name) << ','
-                 << CsvCell(record.status) << ','
+                 << CsvCell(StatusDisplayText(record.status)) << ','
                  << CsvCell(record.other) << '\n';
             if (!file) return false;
         }
@@ -4763,10 +4896,28 @@ void ExportCsv() {
     ShowMessage(Tr(L"CSV exported successfully.", L"CSV \u5bfc\u51fa\u6210\u529f\u3002"));
 }
 
+void TrimSnapshotHistory(std::vector<std::string>& history) {
+    size_t keepFrom = history.size();
+    size_t totalBytes = 0;
+    size_t keptCount = 0;
+    for (size_t i = history.size(); i > 0; --i) {
+        const size_t bytes = history[i - 1].size();
+        if (keptCount > 0
+            && (keptCount >= 50
+                || bytes > MAX_HISTORY_SNAPSHOT_BYTES - std::min(totalBytes, MAX_HISTORY_SNAPSHOT_BYTES))) {
+            break;
+        }
+        keepFrom = i - 1;
+        ++keptCount;
+        totalBytes = std::min(MAX_HISTORY_SNAPSHOT_BYTES, totalBytes + bytes);
+    }
+    if (keepFrom > 0) history.erase(history.begin(), history.begin() + static_cast<std::ptrdiff_t>(keepFrom));
+}
+
 void PushUndo() {
     SyncActiveSheet();
     g_undoStack.push_back(SerializeWorkbook());
-    if (g_undoStack.size() > 50) g_undoStack.erase(g_undoStack.begin());
+    TrimSnapshotHistory(g_undoStack);
     g_redoStack.clear();
 }
 
@@ -4788,6 +4939,7 @@ void UndoLast() {
     }
     SyncActiveSheet();
     g_redoStack.push_back(SerializeWorkbook());
+    TrimSnapshotHistory(g_redoStack);
     std::string snapshot = g_undoStack.back();
     g_undoStack.pop_back();
     RestoreSnapshot(snapshot);
@@ -4800,6 +4952,7 @@ void RedoLast() {
     }
     SyncActiveSheet();
     g_undoStack.push_back(SerializeWorkbook());
+    TrimSnapshotHistory(g_undoStack);
     std::string snapshot = g_redoStack.back();
     g_redoStack.pop_back();
     RestoreSnapshot(snapshot);
@@ -4947,11 +5100,13 @@ PptStats CountRecords(const std::vector<AttendanceRecord>& records) {
 
 std::string ShapeText(int id, int x, int y, int cx, int cy, const std::wstring& text, int size, const char* color, bool bold = false) {
     std::ostringstream ss;
+    std::string languageTag = LanguageToString(g_language);
+    if (languageTag == "en") languageTag = "en-US";
     ss << "<p:sp><p:nvSpPr><p:cNvPr id=\"" << id << "\" name=\"Text" << id
        << "\"/><p:cNvSpPr txBox=\"1\"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x=\"" << x << "\" y=\"" << y
        << "\"/><a:ext cx=\"" << cx << "\" cy=\"" << cy << "\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>"
        << "<a:noFill/><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap=\"square\"/><a:lstStyle/><a:p>"
-       << "<a:r><a:rPr lang=\"en-US\" sz=\"" << size << "\"" << (bold ? " b=\"1\"" : "") << "><a:solidFill><a:srgbClr val=\""
+       << "<a:r><a:rPr lang=\"" << languageTag << "\" sz=\"" << size << "\"" << (bold ? " b=\"1\"" : "") << "><a:solidFill><a:srgbClr val=\""
        << color << "\"/></a:solidFill></a:rPr><a:t>" << XmlCell(text) << "</a:t></a:r></a:p></p:txBody></p:sp>";
     return ss.str();
 }
@@ -5388,7 +5543,7 @@ void ExportPrintHtml() {
     file << "</tr>";
     for (const auto& r : g_records) {
         file << "<tr><td>" << HtmlCell(r.dateTime) << "</td><td>" << HtmlCell(r.name)
-             << "</td><td>" << HtmlCell(r.status) << "</td>";
+             << "</td><td>" << HtmlCell(StatusDisplayText(r.status)) << "</td>";
         if (showOtherColumn) file << "<td>" << HtmlCell(r.other) << "</td>";
         file << "</tr>";
     }
@@ -5405,14 +5560,19 @@ void ExportPrintHtml() {
 void ImportRosterCsv() {
     std::wstring path = OpenCsvFileDialog();
     if (path.empty()) return;
-    std::ifstream file(std::filesystem::path(path), std::ios::binary);
-    if (!file) {
+    std::string csvData;
+    if (!ReadBinaryFileLimited(std::filesystem::path(path), csvData, MAX_ROSTER_FILE_BYTES)) {
         ShowMessage(Tr(L"Could not open the roster file.", L"\u65e0\u6cd5\u6253\u5f00\u540d\u5355\u6587\u4ef6\u3002"));
         return;
     }
+    std::istringstream file(csvData);
     std::string line;
     std::vector<AttendanceRecord> imported;
     while (std::getline(file, line)) {
+        if (line.size() > MAX_RECORD_FIELD_BYTES * 4 + 3) {
+            ShowMessage(Tr(L"The roster file is too large or contains invalid data.", L"\u540d\u55ae\u6a94\u6848\u904e\u5927\u6216\u5305\u542b\u7121\u6548\u8cc7\u6599\u3002"));
+            return;
+        }
         if (line.rfind("\xEF\xBB\xBF", 0) == 0) line = line.substr(3);
         if (line.empty()) continue;
         auto cells = ParseCsvLine(line);
@@ -5420,17 +5580,37 @@ void ImportRosterCsv() {
         for (const auto& cell : cells) {
             std::string trimmed = TrimUtf8(cell);
             if (!trimmed.empty()) {
-                name = Utf8ToWide(trimmed);
+                if (!DecodeUtf8Field(trimmed, MAX_RECORD_FIELD_BYTES, name)) {
+                    ShowMessage(Tr(L"The roster file is too large or contains invalid data.", L"\u540d\u55ae\u6a94\u6848\u904e\u5927\u6216\u5305\u542b\u7121\u6548\u8cc7\u6599\u3002"));
+                    return;
+                }
                 break;
             }
         }
         if (name.empty() || LooksLikeNameHeader(name)) continue;
+        if (imported.size() >= MAX_RECORDS_PER_SHEET) {
+            ShowMessage(Tr(L"The roster file is too large or contains invalid data.", L"\u540d\u55ae\u6a94\u6848\u904e\u5927\u6216\u5305\u542b\u7121\u6548\u8cc7\u6599\u3002"));
+            return;
+        }
         imported.push_back({CurrentDateTimeText(), name, L"Absent", L""});
     }
     if (!imported.empty()) {
+        SyncActiveSheet();
+        size_t totalRecords = 0;
+        size_t totalStudents = 0;
+        for (const auto& sheet : g_sheets) {
+            totalRecords += sheet.records.size();
+            totalStudents += sheet.students.size();
+        }
+        if (imported.size() > MAX_RECORDS_PER_SHEET - std::min(g_records.size(), MAX_RECORDS_PER_SHEET)
+            || imported.size() > MAX_TOTAL_RECORDS - std::min(totalRecords, MAX_TOTAL_RECORDS)
+            || imported.size() > MAX_STUDENTS_PER_SHEET - std::min(g_sheets[g_activeSheet].students.size(), MAX_STUDENTS_PER_SHEET)
+            || imported.size() > MAX_TOTAL_STUDENTS - std::min(totalStudents, MAX_TOTAL_STUDENTS)) {
+            ShowMessage(Tr(L"The roster file is too large or contains invalid data.", L"\u540d\u55ae\u6a94\u6848\u904e\u5927\u6216\u5305\u542b\u7121\u6548\u8cc7\u6599\u3002"));
+            return;
+        }
         PushUndo();
         MarkDirty();
-        SyncActiveSheet();
         for (const auto& record : imported) {
             if (std::find(g_sheets[g_activeSheet].students.begin(), g_sheets[g_activeSheet].students.end(), record.name) == g_sheets[g_activeSheet].students.end()) {
                 g_sheets[g_activeSheet].students.push_back(record.name);
@@ -6024,7 +6204,8 @@ LRESULT CALLBACK QuickRollCallProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         MakeSettingsControl(hwnd, L"STATIC", L"", SS_CENTER | SS_NOPREFIX, IDC_QUICK_STUDENT);
         MakeSettingsControl(hwnd, L"STATIC", L"", SS_CENTER | SS_NOPREFIX, IDC_QUICK_STATUS);
         MakeSettingsControl(hwnd, L"STATIC", Tr(L"Notes:", L"备注：").c_str(), SS_LEFT | SS_NOPREFIX, IDC_QUICK_NOTES_LABEL);
-        MakeSettingsControl(hwnd, L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, IDC_QUICK_NOTES);
+        HWND notesEdit = MakeSettingsControl(hwnd, L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, IDC_QUICK_NOTES);
+        SetAccessibleName(notesEdit, Tr(L"Notes:", L"\u5907\u6ce8\uff1a"));
         MakeSettingsControl(hwnd, L"BUTTON", Tr(L"Present", L"出席").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_QUICK_PRESENT);
         MakeSettingsControl(hwnd, L"BUTTON", Tr(L"Absent", L"缺席").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_QUICK_ABSENT);
         MakeSettingsControl(hwnd, L"BUTTON", Tr(L"Late", L"迟到").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_QUICK_LATE);
@@ -6226,18 +6407,18 @@ void RunCommandPalette() {
     std::wstring command;
     if (!PromptText(Tr(L"Command palette", L"\u547d\u4ee4\u9762\u677f"), Tr(L"Type a command: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings", L"\u8f93\u5165\u547d\u4ee4\uff1asave\u3001import\u3001export\u3001backup\u3001stats\u3001risk\u3001filter\u3001lesson\u3001rollcall\u3001\u70b9\u540d\u3001review\u3001profile\u3001settings"), command)) return;
     command = LowerText(TrimWide(command));
-    if (command.find(L"save") != std::wstring::npos || command.find(L"\u4fdd\u5b58") != std::wstring::npos) SaveAttendance();
-    else if (command.find(L"import") != std::wstring::npos || command.find(L"\u5bfc\u5165") != std::wstring::npos) ImportAttendance();
-    else if (command.find(L"export") != std::wstring::npos || command.find(L"\u5bfc\u51fa") != std::wstring::npos) ExportCsv();
-    else if (command.find(L"backup") != std::wstring::npos || command.find(L"\u5907\u4efd") != std::wstring::npos) BackupNow();
-    else if (command.find(L"stats") != std::wstring::npos || command.find(L"\u7edf\u8ba1") != std::wstring::npos) ShowStatisticsSummary();
-    else if (command.find(L"risk") != std::wstring::npos || command.find(L"\u98ce\u9669") != std::wstring::npos) ShowRiskStudents();
-    else if (command.find(L"filter") != std::wstring::npos || command.find(L"\u7b5b\u9009") != std::wstring::npos) ShowAdvancedFilterHelp();
-    else if (command.find(L"rollcall") != std::wstring::npos || command.find(L"\u70b9\u540d") != std::wstring::npos) ShowQuickRollCall();
-    else if (command.find(L"review") != std::wstring::npos || command.find(L"\u68c0\u67e5") != std::wstring::npos) ReviewLessonCompletion();
-    else if (command.find(L"lesson") != std::wstring::npos || command.find(L"\u8bfe\u6b21") != std::wstring::npos) CreateTodayLessonFromRoster();
-    else if (command.find(L"profile") != std::wstring::npos || command.find(L"\u6863\u6848") != std::wstring::npos) ShowStudentProfile();
-    else if (command.find(L"settings") != std::wstring::npos || command.find(L"\u8bbe\u7f6e") != std::wstring::npos) ShowSettingsWindow();
+    if (command.find(L"save") != std::wstring::npos || command.find(L"\u4fdd\u5b58") != std::wstring::npos || command.find(L"儲存") != std::wstring::npos) SaveAttendance();
+    else if (command.find(L"import") != std::wstring::npos || command.find(L"\u5bfc\u5165") != std::wstring::npos || command.find(L"匯入") != std::wstring::npos) ImportAttendance();
+    else if (command.find(L"export") != std::wstring::npos || command.find(L"\u5bfc\u51fa") != std::wstring::npos || command.find(L"匯出") != std::wstring::npos) ExportCsv();
+    else if (command.find(L"backup") != std::wstring::npos || command.find(L"\u5907\u4efd") != std::wstring::npos || command.find(L"備份") != std::wstring::npos) BackupNow();
+    else if (command.find(L"stats") != std::wstring::npos || command.find(L"\u7edf\u8ba1") != std::wstring::npos || command.find(L"統計") != std::wstring::npos) ShowStatisticsSummary();
+    else if (command.find(L"risk") != std::wstring::npos || command.find(L"\u98ce\u9669") != std::wstring::npos || command.find(L"風險") != std::wstring::npos) ShowRiskStudents();
+    else if (command.find(L"filter") != std::wstring::npos || command.find(L"\u7b5b\u9009") != std::wstring::npos || command.find(L"篩選") != std::wstring::npos) ShowAdvancedFilterHelp();
+    else if (command.find(L"rollcall") != std::wstring::npos || command.find(L"\u70b9\u540d") != std::wstring::npos || command.find(L"點名") != std::wstring::npos) ShowQuickRollCall();
+    else if (command.find(L"review") != std::wstring::npos || command.find(L"\u68c0\u67e5") != std::wstring::npos || command.find(L"檢查") != std::wstring::npos) ReviewLessonCompletion();
+    else if (command.find(L"lesson") != std::wstring::npos || command.find(L"\u8bfe\u6b21") != std::wstring::npos || command.find(L"課堂") != std::wstring::npos) CreateTodayLessonFromRoster();
+    else if (command.find(L"profile") != std::wstring::npos || command.find(L"\u6863\u6848") != std::wstring::npos || command.find(L"檔案") != std::wstring::npos) ShowStudentProfile();
+    else if (command.find(L"settings") != std::wstring::npos || command.find(L"\u8bbe\u7f6e") != std::wstring::npos || command.find(L"設定") != std::wstring::npos) ShowSettingsWindow();
 }
 
 std::filesystem::path RecentFileRecordPath() {
@@ -6253,9 +6434,13 @@ void SaveRecentFilePath(const std::wstring& path) {
 std::wstring LoadRecentFilePath() {
     auto recent = RecentFileRecordPath();
     if (!FileExistsNoThrow(recent)) return {};
-    std::ifstream file(recent, std::ios::binary);
-    std::string value((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    return Utf8ToWide(value);
+    std::string value;
+    std::wstring path;
+    if (!ReadBinaryFileLimited(recent, value, MAX_RECENT_FILE_BYTES)
+        || !DecodeUtf8Field(value, MAX_RECENT_FILE_BYTES, path)) {
+        return {};
+    }
+    return path;
 }
 
 std::filesystem::path LatestBackupPath() {
@@ -6273,8 +6458,8 @@ void BackupNow() {
     SyncActiveSheet();
     auto path = LatestBackupPath();
     if (path.empty()) return;
-    std::string payload = EncodeAttd(SerializeWorkbook());
-    if (!WriteBinaryFileAtomically(path, payload)) {
+    std::string payload;
+    if (!EncodeCurrentWorkbook(payload) || !WriteBinaryFileAtomically(path, payload)) {
         ShowMessage(Tr(L"Could not save the file.", L"\u65e0\u6cd5\u4fdd\u5b58\u6587\u4ef6\u3002"));
         return;
     }
@@ -6370,8 +6555,9 @@ AutosaveResult AutoSaveNow() {
     }
     SyncActiveSheet();
     auto path = AppDataFilePath(L"autosave.attd");
-    if (path.empty()
-        || !WriteBinaryFileAtomically(path, EncodeAttd(SerializeWorkbook()))) {
+    std::string payload;
+    if (path.empty() || !EncodeCurrentWorkbook(payload)
+        || !WriteBinaryFileAtomically(path, payload)) {
         g_autosaveFailurePending = true;
         return AutosaveResult::Failed;
     }
@@ -6726,7 +6912,9 @@ void SaveAttendance() {
     std::wstring path = SaveFileDialog();
     if (path.empty()) return;
 
-    if (!WriteBinaryFileAtomically(std::filesystem::path(path), EncodeAttd(SerializeWorkbook()))) {
+    std::string payload;
+    if (!EncodeCurrentWorkbook(payload)
+        || !WriteBinaryFileAtomically(std::filesystem::path(path), payload)) {
         ShowMessage(Tr(L"Could not save the file.", L"\u65e0\u6cd5\u4fdd\u5b58\u6587\u4ef6\u3002"));
         return;
     }
@@ -6790,6 +6978,9 @@ HWND MakeControl(const wchar_t* cls, const wchar_t* text, DWORD style, int id) {
         g_hwnd, (HMENU)(intptr_t)id, GetModuleHandleW(nullptr), nullptr
     );
     SendMessageW(hwnd, WM_SETFONT, (WPARAM)g_font, TRUE);
+    if (lstrcmpiW(cls, L"EDIT") == 0) {
+        SendMessageW(hwnd, EM_SETLIMITTEXT, MAX_RECORD_FIELD_BYTES / sizeof(wchar_t), 0);
+    }
     if (lstrcmpiW(cls, L"STATIC") != 0) EnableInteractiveAnimation(hwnd);
     if (lstrcmpiW(cls, L"EDIT") == 0) EnableEditShortcuts(hwnd);
     if (lstrcmpiW(cls, L"COMBOBOX") == 0 && (style & CBS_OWNERDRAWFIXED)) {
@@ -6818,6 +7009,9 @@ HWND MakeSettingsControl(HWND parent, const wchar_t* cls, const wchar_t* text, D
         parent, (HMENU)(intptr_t)id, GetModuleHandleW(nullptr), nullptr
     );
     SendMessageW(hwnd, WM_SETFONT, (WPARAM)g_font, TRUE);
+    if (lstrcmpiW(cls, L"EDIT") == 0) {
+        SendMessageW(hwnd, EM_SETLIMITTEXT, MAX_RECORD_FIELD_BYTES / sizeof(wchar_t), 0);
+    }
     if (lstrcmpiW(cls, L"STATIC") != 0) EnableInteractiveAnimation(hwnd);
     if (lstrcmpiW(cls, L"EDIT") == 0) EnableEditShortcuts(hwnd);
     if (lstrcmpiW(cls, L"COMBOBOX") == 0 && (style & CBS_OWNERDRAWFIXED)) {
@@ -6953,6 +7147,17 @@ void ApplySettingsLanguage(HWND hwnd) {
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_APPLY), Tr(L"Apply", L"\u5e94\u7528"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_CLOSE), Tr(L"Close", L"\u5173\u95ed"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_RESET), Tr(L"Reset All Settings", L"\u91cd\u7f6e\u6240\u6709\u8bbe\u7f6e"));
+    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE), Tr(L"Language", L"\u8bed\u8a00"));
+    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_FONT), Tr(L"Interface Font", L"\u754c\u9762\u5b57\u4f53"));
+    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LEVEL), Tr(L"Animation level", L"\u52a8\u753b\u5f3a\u5ea6"));
+    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL), Tr(L"Particle density", L"\u7c92\u5b50\u5bc6\u5ea6"));
+    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_REPORT_TEMPLATE), Tr(L"Report template", L"\u62a5\u544a\u6a21\u677f"));
+    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_THEME), Tr(L"Theme", L"\u4e3b\u9898"));
+    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_ACCENT), Tr(L"Accent tone", L"\u5f3a\u8c03\u8272\u8c03"));
+    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_TEXT_SCALE), Tr(L"Text size", L"\u6587\u5b57\u5927\u5c0f"));
+    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_DENSITY), Tr(L"Interface density", L"\u754c\u9762\u5bc6\u5ea6"));
+    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_INTERVAL), Tr(L"Autosave interval", L"\u81ea\u52a8\u4fdd\u5b58\u95f4\u9694"));
+    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS), ScrollFrameRateLabel());
     SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLES), BM_SETCHECK, g_particlesEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_RISK_ALERTS), BM_SETCHECK, g_riskAlertsEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_PROMPT), BM_SETCHECK, g_autosavePromptEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -9192,6 +9397,9 @@ int WINAPI wWinMain(
     ApplyGlassTitleBar(hwnd);
     ShowWindow(hwnd, showCmd);
     UpdateWindow(hwnd);
+    // Accessibility annotations are applied once more after creation so the
+    // native providers can observe fully initialized child windows.
+    ApplyMainLanguage();
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(commandLine, &argc);
