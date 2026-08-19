@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <climits>
 #include <cmath>
@@ -47,6 +48,12 @@
 #endif
 #ifndef DWMWA_TEXT_COLOR
 #define DWMWA_TEXT_COLOR 36
+#endif
+#ifndef DWMWA_WINDOW_CORNER_PREFERENCE
+#define DWMWA_WINDOW_CORNER_PREFERENCE 33
+#endif
+#ifndef DWMWA_BORDER_COLOR
+#define DWMWA_BORDER_COLOR 34
 #endif
 #ifndef DWMWA_SYSTEMBACKDROP_TYPE
 #define DWMWA_SYSTEMBACKDROP_TYPE 38
@@ -259,6 +266,7 @@ static constexpr uintmax_t MAX_SETTINGS_FILE_BYTES = 1024ull * 1024ull;
 static constexpr size_t MAX_HISTORY_SNAPSHOT_BYTES = 64ull * 1024ull * 1024ull;
 static constexpr UINT WM_APP_ANIMATION_TICK = WM_APP + 41;
 static constexpr UINT WM_APP_ANIMATION_DONE = WM_APP + 42;
+static constexpr UINT WM_APP_TEST_THEME_TRANSITION = WM_APP + 43;
 
 struct InputDialogState {
     std::wstring title;
@@ -380,6 +388,7 @@ struct ThemePalette {
 struct ThemeTransitionState {
     ThemePalette start;
     ThemePalette target;
+    UiTheme targetTheme = UiTheme::Dark;
     bool active = false;
 };
 
@@ -444,6 +453,7 @@ void ScrollMainWindow(HWND hwnd, int bar, int code, int wheelDelta = 0);
 void ApplyVisualSettings(bool preserveThemeTransition = false);
 void ApplyDarkMode(HWND hwnd);
 void ApplyThemedControls(HWND root);
+bool IsRenderedPaletteDark();
 void BeginThemeTransition(UiTheme targetTheme);
 void UpdateThemeTransitionFrame();
 void PaintAppBackground(HWND hwnd, HDC hdc);
@@ -488,6 +498,7 @@ void StartListTransition();
 LRESULT HandleListCustomDraw(LPARAM lParam);
 void StopAnimationThread();
 void ApplyGlassTitleBar(HWND hwnd);
+void RefreshOpenAppTitleBars(bool configureBackdrop = false);
 void CancelMainWindowClose();
 void FillInstalledFontFamilies();
 std::wstring GetComboSelectedText(HWND combo);
@@ -818,7 +829,8 @@ void EnsureAnimationThread() {
                             if (anim.closeOnDone) doneWindows.push_back(hwndEntry.first);
                         } else {
                             double eased = channelEntry.first == (int)AnimChannel::ThemeTransition
-                                || channelEntry.first == (int)AnimChannel::SmoothScroll
+                                ? CubicBezierEase(t, 0.4, 0.0, 0.2, 1.0)
+                                : channelEntry.first == (int)AnimChannel::SmoothScroll
                                 ? CubicBezierEase(t, 0.22, 1.0, 0.36, 1.0)
                                 : (channelEntry.first == (int)AnimChannel::Reveal
                                     || channelEntry.first == (int)AnimChannel::Close)
@@ -970,24 +982,120 @@ void BeginAnimatedClose(HWND hwnd, uint32_t durationMs) {
 void CancelMainWindowClose() {
 }
 
-void ApplyGlassTitleBar(HWND hwnd) {
-    if (!hwnd) return;
-    BOOL dark = g_theme == UiTheme::Dark ? TRUE : FALSE;
+enum class AccentState : int {
+    Disabled = 0,
+    BlurBehind = 3,
+    AcrylicBlurBehind = 4
+};
+
+struct AccentPolicy {
+    AccentState state = AccentState::Disabled;
+    DWORD flags = 0;
+    DWORD gradientColor = 0;
+    DWORD animationId = 0;
+};
+
+struct WindowCompositionAttributeData {
+    int attribute = 0;
+    void* data = nullptr;
+    SIZE_T size = 0;
+};
+
+using SetWindowCompositionAttributeFn = BOOL(WINAPI*)(HWND, WindowCompositionAttributeData*);
+
+struct TitleBarVisualState {
+    COLORREF caption = RGB(18, 18, 18);
+    COLORREF text = RGB(255, 255, 255);
+    COLORREF border = RGB(64, 64, 64);
+    bool dark = true;
+};
+
+TitleBarVisualState CurrentTitleBarVisualState() {
+    TitleBarVisualState state;
+    state.caption = COLOR_PANEL;
+    state.border = COLOR_BORDER;
+    state.dark = IsRenderedPaletteDark();
+    state.text = state.dark ? RGB(255, 255, 255) : RGB(0, 0, 0);
+    return state;
+}
+
+void ApplyTitleBarThemeAttributes(HWND hwnd) {
+    if (!hwnd || !IsWindow(hwnd)) return;
+    TitleBarVisualState state = CurrentTitleBarVisualState();
+    BOOL dark = state.dark ? TRUE : FALSE;
     DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+    DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR,
+        &state.caption, sizeof(state.caption));
+    DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR,
+        &state.text, sizeof(state.text));
+    DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR,
+        &state.border, sizeof(state.border));
+}
 
-    COLORREF caption = COLOR_BG;
-    COLORREF text = COLOR_TEXT;
-    COLORREF border = COLOR_BORDER;
-    DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &caption, sizeof(caption));
-    DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, &text, sizeof(text));
-    DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &border, sizeof(border));
+bool ApplyLegacyAcrylicFallback(HWND hwnd) {
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (!user32) return false;
+    auto setComposition = reinterpret_cast<SetWindowCompositionAttributeFn>(
+        GetProcAddress(user32, "SetWindowCompositionAttribute"));
+    if (!setComposition) return false;
 
-    int backdrop = 2; // DWMSBT_MAINWINDOW / Mica on supported Windows builds.
-    DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
+    bool dark = IsRenderedPaletteDark();
+    AccentPolicy policy;
+    policy.state = AccentState::AcrylicBlurBehind;
+    policy.flags = 2;
+    policy.gradientColor = dark ? 0xCC202020 : 0xCCF4F4F4;
+    WindowCompositionAttributeData data;
+    data.attribute = 19; // WCA_ACCENT_POLICY
+    data.data = &policy;
+    data.size = sizeof(policy);
+    return setComposition(hwnd, &data) != FALSE;
+}
+
+void ApplyGlassTitleBar(HWND hwnd) {
+    if (!hwnd || !IsWindow(hwnd)) return;
+    ApplyTitleBarThemeAttributes(hwnd);
+
+    int backdrop = 3;
+    HRESULT backdropResult = DwmSetWindowAttribute(
+        hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
+    int cornerPreference = 2; // DWMWCP_ROUND
+    DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE,
+        &cornerPreference, sizeof(cornerPreference));
+
+    MARGINS margins{0, 0, 1, 0};
+    DwmExtendFrameIntoClientArea(hwnd, &margins);
+    if (FAILED(backdropResult) && !ApplyLegacyAcrylicFallback(hwnd)) {
+        DWM_BLURBEHIND blur{};
+        blur.dwFlags = DWM_BB_ENABLE;
+        blur.fEnable = TRUE;
+        DwmEnableBlurBehindWindow(hwnd, &blur);
+    }
     SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
         SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
     RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_NOERASE);
+}
+
+BOOL CALLBACK RefreshAppTitleBarForWindow(HWND window, LPARAM configureBackdropValue) {
+    LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
+    if ((style & WS_CAPTION) == 0) return TRUE;
+    if (configureBackdropValue != 0) {
+        ApplyGlassTitleBar(window);
+    } else {
+        ApplyTitleBarThemeAttributes(window);
+        RedrawWindow(window, nullptr, nullptr,
+            RDW_INVALIDATE | RDW_FRAME | RDW_NOERASE | RDW_NOCHILDREN);
+    }
+    return TRUE;
+}
+
+void RefreshOpenAppTitleBars(bool configureBackdrop) {
+    if (!g_hwnd || !IsWindow(g_hwnd)) return;
+    DWORD threadId = GetWindowThreadProcessId(g_hwnd, nullptr);
+    if (threadId != 0) {
+        EnumThreadWindows(threadId, RefreshAppTitleBarForWindow,
+            configureBackdrop ? 1 : 0);
+    }
 }
 
 void CenterOwnedWindow(HWND window, HWND owner) {
@@ -1350,6 +1458,43 @@ int RecordToVisibleIndex(int recordIndex) {
     return -1;
 }
 
+std::wstring NormalizeSingleLineText(const std::wstring& text) {
+    std::wstring normalized;
+    normalized.reserve(text.size());
+    bool pendingSeparator = false;
+    for (wchar_t ch : text) {
+        if (ch == L'\r' || ch == L'\n') {
+            pendingSeparator = true;
+            continue;
+        }
+        if (pendingSeparator && !normalized.empty()
+            && !iswspace(normalized.back()) && !iswspace(ch)) {
+            normalized.push_back(L' ');
+        }
+        pendingSeparator = false;
+        normalized.push_back(ch);
+    }
+    return normalized;
+}
+
+bool PasteSingleLineClipboardText(HWND hwnd) {
+    if (!IsClipboardFormatAvailable(CF_UNICODETEXT) || !OpenClipboard(hwnd)) return false;
+    bool handled = false;
+    HANDLE data = GetClipboardData(CF_UNICODETEXT);
+    if (data) {
+        const wchar_t* clipboardText = static_cast<const wchar_t*>(GlobalLock(data));
+        if (clipboardText) {
+            std::wstring normalized = NormalizeSingleLineText(clipboardText);
+            GlobalUnlock(data);
+            SendMessageW(hwnd, EM_REPLACESEL, TRUE,
+                reinterpret_cast<LPARAM>(normalized.c_str()));
+            handled = true;
+        }
+    }
+    CloseClipboard();
+    return handled;
+}
+
 LRESULT CALLBACK EditShortcutProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
     if (msg == WM_NCDESTROY) {
         RemoveWindowSubclass(hwnd, EditShortcutProc, 1);
@@ -1363,6 +1508,9 @@ LRESULT CALLBACK EditShortcutProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         return 0;
     }
     if (msg == WM_CHAR && wParam == 1) {
+        return 0;
+    }
+    if (msg == WM_PASTE && PasteSingleLineClipboardText(hwnd)) {
         return 0;
     }
     if (msg == WM_SIZE || msg == WM_WINDOWPOSCHANGED) {
@@ -1675,7 +1823,7 @@ int ThemedMessageBox(HWND owner, const std::wstring& message, const std::wstring
         return state.result;
     }
 
-    BOOL dark = g_theme == UiTheme::Dark ? TRUE : FALSE;
+    BOOL dark = IsRenderedPaletteDark() ? TRUE : FALSE;
     DwmSetWindowAttribute(dialog, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
     ApplyGlassTitleBar(dialog);
     CenterOwnedWindow(dialog, parent);
@@ -2823,7 +2971,10 @@ UiLanguage LanguageFromString(const std::string& value) {
 
 int ClampSettingInt(const std::string& value, int fallback, int minValue, int maxValue) {
     try {
-        return std::clamp(std::stoi(value), minValue, maxValue);
+        size_t parsedLength = 0;
+        long long parsed = std::stoll(value, &parsedLength, 10);
+        if (parsedLength != value.size()) return fallback;
+        return static_cast<int>(std::clamp<long long>(parsed, minValue, maxValue));
     } catch (...) {
         return fallback;
     }
@@ -3071,6 +3222,40 @@ std::string SerializeRecords() {
     return ss.str();
 }
 
+bool ParseSizeLineStrict(const std::string& line, size_t& value) {
+    if (line.empty()) return false;
+    uint64_t parsed = 0;
+    const char* begin = line.data();
+    const char* end = begin + line.size();
+    auto result = std::from_chars(begin, end, parsed, 10);
+    if (result.ec != std::errc{} || result.ptr != end
+        || parsed > static_cast<uint64_t>(SIZE_MAX)) {
+        return false;
+    }
+    value = static_cast<size_t>(parsed);
+    return true;
+}
+
+bool ParseNonNegativeIntLineStrict(const std::string& line, int& value) {
+    size_t parsed = 0;
+    if (!ParseSizeLineStrict(line, parsed) || parsed > static_cast<size_t>(INT_MAX)) {
+        return false;
+    }
+    value = static_cast<int>(parsed);
+    return true;
+}
+
+bool StreamHasOnlyTrailingWhitespace(std::istream& stream) {
+    char ch = 0;
+    while (stream.get(ch)) {
+        if (ch != ' ' && ch != '\t' && ch != '\r' && ch != '\n'
+            && ch != '\f' && ch != '\v') {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool DeserializeRecords(const std::string& plainText, std::vector<AttendanceRecord>& output) {
     std::istringstream ss(plainText);
     std::string header;
@@ -3078,13 +3263,9 @@ bool DeserializeRecords(const std::string& plainText, std::vector<AttendanceReco
     if (header != "ATTENDANCE_V1") return false;
 
     std::string countLine;
-    std::getline(ss, countLine);
+    if (!std::getline(ss, countLine)) return false;
     size_t count = 0;
-    try {
-        count = std::stoull(countLine);
-    } catch (...) {
-        return false;
-    }
+    if (!ParseSizeLineStrict(countLine, count)) return false;
     if (count > MAX_RECORDS_PER_SHEET) return false;
 
     std::vector<AttendanceRecord> records;
@@ -3104,6 +3285,8 @@ bool DeserializeRecords(const std::string& plainText, std::vector<AttendanceReco
         }
         records.push_back(std::move(record));
     }
+
+    if (!StreamHasOnlyTrailingWhitespace(ss)) return false;
 
     output = std::move(records);
     return true;
@@ -3168,20 +3351,12 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
     std::string countLine;
     if (header == "ATTENDANCE_V3" || header == "ATTENDANCE_V4" || header == "ATTENDANCE_V5") {
         std::string activeLine;
-        std::getline(ss, activeLine);
-        try {
-            loadedActiveSheet = std::stoi(activeLine);
-        } catch (...) {
-            loadedActiveSheet = 0;
-        }
+        if (!std::getline(ss, activeLine)
+            || !ParseNonNegativeIntLineStrict(activeLine, loadedActiveSheet)) return false;
     }
-    std::getline(ss, countLine);
+    if (!std::getline(ss, countLine)) return false;
     size_t sheetCount = 0;
-    try {
-        sheetCount = std::stoull(countLine);
-    } catch (...) {
-        return false;
-    }
+    if (!ParseSizeLineStrict(countLine, sheetCount)) return false;
     if (sheetCount > MAX_SHEET_COUNT) return false;
 
     std::vector<AttendanceSheet> sheets;
@@ -3211,11 +3386,7 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
                 return false;
             }
             size_t studentCount = 0;
-            try {
-                studentCount = std::stoull(studentCountLine);
-            } catch (...) {
-                return false;
-            }
+            if (!ParseSizeLineStrict(studentCountLine, studentCount)) return false;
             if (studentCount > MAX_STUDENTS_PER_SHEET
                 || studentCount > MAX_TOTAL_STUDENTS - totalStudents) return false;
             totalStudents += studentCount;
@@ -3230,11 +3401,7 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
         }
         if (!std::getline(ss, recordCountLine)) return false;
         size_t recordCount = 0;
-        try {
-            recordCount = std::stoull(recordCountLine);
-        } catch (...) {
-            return false;
-        }
+        if (!ParseSizeLineStrict(recordCountLine, recordCount)) return false;
         if (recordCount > MAX_RECORDS_PER_SHEET || recordCount > MAX_TOTAL_RECORDS - totalRecords) return false;
         totalRecords += recordCount;
         sheet.records.reserve(recordCount);
@@ -3256,10 +3423,49 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
         sheets.push_back(std::move(sheet));
     }
 
+    if (!StreamHasOnlyTrailingWhitespace(ss)) return false;
     if (sheets.empty()) sheets.push_back(MakeSheet(L"Default Course"));
+    if (loadedActiveSheet < 0 || loadedActiveSheet >= static_cast<int>(sheets.size())) return false;
     output = std::move(sheets);
     g_loadedActiveSheet = loadedActiveSheet;
     return true;
+}
+
+bool RunParserRegressionChecks() {
+    if (NormalizeSingleLineText(L"Alice\r\nBob\nCharlie") != L"Alice Bob Charlie"
+        || NormalizeSingleLineText(L"Search term\r\n") != L"Search term"
+        || ClampSettingInt("1junk", 2, 0, 3) != 2
+        || ClampSettingInt("999", 2, 0, 3) != 3) {
+        return false;
+    }
+    const std::string validWorkbook =
+        "ATTENDANCE_V5\n0\n1\nCourse\nTeacher\nRoom\nNotes\n1\nStudent\n"
+        "1\n2026-08-19 09:00\tStudent\tPresent\t\n";
+    std::vector<AttendanceSheet> parsed;
+    if (!DeserializeWorkbook(validWorkbook, parsed)
+        || parsed.size() != 1 || parsed[0].records.size() != 1) {
+        return false;
+    }
+
+    const std::vector<std::string> invalidWorkbooks = {
+        "ATTENDANCE_V5\n-1\n1\nCourse\nTeacher\nRoom\nNotes\n0\n0\n",
+        "ATTENDANCE_V5\n0\n1junk\n",
+        "ATTENDANCE_V5\n0\n1\nCourse\nTeacher\nRoom\nNotes\n1junk\n",
+        "ATTENDANCE_V5\n0\n1\nCourse\nTeacher\nRoom\nNotes\n0\n1junk\n",
+        validWorkbook + "unexpected-data",
+        "ATTENDANCE_V1\n1junk\n"
+    };
+    for (const std::string& invalid : invalidWorkbooks) {
+        std::vector<AttendanceSheet> unchanged = {MakeSheet(L"Sentinel")};
+        if (DeserializeWorkbook(invalid, unchanged)
+            || unchanged.size() != 1 || unchanged[0].name != L"Sentinel") {
+            return false;
+        }
+    }
+
+    parsed.clear();
+    return DeserializeWorkbook(validWorkbook + " \t\r\n", parsed)
+        && parsed.size() == 1 && parsed[0].records.size() == 1;
 }
 
 uint32_t Rotl(uint32_t value, int bits) {
@@ -4257,6 +4463,29 @@ ThemePalette BlendThemePalette(const ThemePalette& from, const ThemePalette& to,
     return palette;
 }
 
+bool ThemePalettesEqual(const ThemePalette& left, const ThemePalette& right) {
+    return left.background == right.background
+        && left.panel == right.panel
+        && left.input == right.input
+        && left.text == right.text
+        && left.muted == right.muted
+        && left.accent == right.accent
+        && left.danger == right.danger
+        && left.border == right.border
+        && left.hover == right.hover
+        && left.card == right.card
+        && left.rowAlt == right.rowAlt
+        && left.selected == right.selected
+        && left.checkFill == right.checkFill;
+}
+
+bool IsRenderedPaletteDark() {
+    int luminance = (GetRValue(COLOR_BG) * 299
+        + GetGValue(COLOR_BG) * 587
+        + GetBValue(COLOR_BG) * 114) / 1000;
+    return luminance < 128;
+}
+
 void ApplyThemePalette() {
     if (!g_advancedPersonalizationEnabled) g_theme = UiTheme::Dark;
     SetThemePalette(BuildThemePalette(g_theme, g_accentTone));
@@ -4328,7 +4557,7 @@ void RecreateFonts() {
 }
 
 BOOL CALLBACK ApplyThemeToChild(HWND child, LPARAM) {
-    SetWindowTheme(child, g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+    SetWindowTheme(child, IsRenderedPaletteDark() ? L"DarkMode_Explorer" : L"Explorer", nullptr);
     wchar_t className[32]{};
     GetClassNameW(child, className, 32);
     if (lstrcmpiW(className, L"ComboBox") == 0) ApplyComboDropDownTheme(child);
@@ -4338,15 +4567,8 @@ BOOL CALLBACK ApplyThemeToChild(HWND child, LPARAM) {
 
 void ApplyThemedControls(HWND root) {
     if (!root) return;
-    SetWindowTheme(root, g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+    SetWindowTheme(root, IsRenderedPaletteDark() ? L"DarkMode_Explorer" : L"Explorer", nullptr);
     EnumChildWindows(root, ApplyThemeToChild, 0);
-}
-
-void UpdateTransitionTitleBar(HWND hwnd) {
-    if (!hwnd || !IsWindow(hwnd)) return;
-    DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &COLOR_BG, sizeof(COLOR_BG));
-    DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, &COLOR_TEXT, sizeof(COLOR_TEXT));
-    DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &COLOR_BORDER, sizeof(COLOR_BORDER));
 }
 
 void RedrawThemeRoots(bool updateNow) {
@@ -4355,14 +4577,35 @@ void RedrawThemeRoots(bool updateNow) {
     if (updateNow) flags |= RDW_UPDATENOW;
     for (HWND root : roots) {
         if (!root || !IsWindow(root)) continue;
-        UpdateTransitionTitleBar(root);
         RedrawWindow(root, nullptr, nullptr, flags);
+    }
+}
+
+BOOL CALLBACK RedrawThemePopup(HWND window, LPARAM updateNowValue) {
+    wchar_t className[64]{};
+    GetClassNameW(window, className, 64);
+    if (lstrcmpiW(className, L"ComboLBox") != 0
+        && lstrcmpiW(className, L"AttendanceThemedPopupMenu") != 0) {
+        return TRUE;
+    }
+    UINT flags = RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE;
+    if (updateNowValue != 0) flags |= RDW_UPDATENOW;
+    RedrawWindow(window, nullptr, nullptr, flags);
+    return TRUE;
+}
+
+void RedrawThemePopups(bool updateNow) {
+    if (!g_hwnd || !IsWindow(g_hwnd)) return;
+    DWORD threadId = GetWindowThreadProcessId(g_hwnd, nullptr);
+    if (threadId != 0) {
+        EnumThreadWindows(threadId, RedrawThemePopup, updateNow ? 1 : 0);
     }
 }
 
 void FinishThemeTransition() {
     if (!g_themeTransition.active) return;
     g_themeTransition.active = false;
+    g_theme = g_themeTransition.targetTheme;
     SetThemePalette(g_themeTransition.target);
     ApplyDarkMode(g_hwnd);
     ApplyGlassTitleBar(g_settingsWindow);
@@ -4372,6 +4615,7 @@ void FinishThemeTransition() {
     ApplyThemedControls(g_chartWindow);
     ApplyThemedControls(g_quickRollCallWindow);
     RedrawThemeRoots(true);
+    RedrawThemePopups(true);
 }
 
 void BeginThemeTransition(UiTheme targetTheme) {
@@ -4380,23 +4624,34 @@ void BeginThemeTransition(UiTheme targetTheme) {
         ApplyVisualSettings();
         return;
     }
-    g_themeTransition.start = CurrentThemePalette();
-    g_themeTransition.target = BuildThemePalette(targetTheme, g_accentTone);
+    ThemePalette startPalette = CurrentThemePalette();
+    ThemePalette targetPalette = BuildThemePalette(targetTheme, g_accentTone);
+    g_themeTransition.start = startPalette;
+    g_themeTransition.target = targetPalette;
+    g_themeTransition.targetTheme = targetTheme;
     g_themeTransition.active = true;
     g_theme = targetTheme;
-    RestartAnimation(g_hwnd, AnimChannel::ThemeTransition, 1.0, 260);
+    if (ThemePalettesEqual(startPalette, targetPalette)) {
+        FinishThemeTransition();
+        return;
+    }
+    RestartAnimation(g_hwnd, AnimChannel::ThemeTransition, 1.0, 340);
 }
 
 void UpdateThemeTransitionFrame() {
     if (!g_themeTransition.active) return;
     double progress = GetAnimationValue(g_hwnd, AnimChannel::ThemeTransition, 1.0);
     SetThemePalette(BlendThemePalette(g_themeTransition.start, g_themeTransition.target, progress));
+    RefreshOpenAppTitleBars(false);
     if (g_list) {
         ListView_SetBkColor(g_list, COLOR_PANEL);
         ListView_SetTextBkColor(g_list, COLOR_PANEL);
         ListView_SetTextColor(g_list, COLOR_TEXT);
     }
-    RedrawThemeRoots(false);
+    // WM_PAINT is a low-priority message. Synchronously drawing each frame
+    // prevents Windows from coalescing the whole transition into its final frame.
+    RedrawThemeRoots(true);
+    RedrawThemePopups(true);
     if (progress >= 0.999) FinishThemeTransition();
 }
 
@@ -4463,7 +4718,7 @@ void ApplyVisualSettings(bool preserveThemeTransition) {
         ApplyDarkMode(g_hwnd);
     }
     if (!preserveThemeTransition) {
-        BOOL dark = g_theme == UiTheme::Dark ? TRUE : FALSE;
+        BOOL dark = IsRenderedPaletteDark() ? TRUE : FALSE;
         if (g_hwnd) DwmSetWindowAttribute(g_hwnd, 20, &dark, sizeof(dark));
         if (g_settingsWindow) DwmSetWindowAttribute(g_settingsWindow, 20, &dark, sizeof(dark));
         if (g_chartWindow) DwmSetWindowAttribute(g_chartWindow, 20, &dark, sizeof(dark));
@@ -5955,16 +6210,24 @@ void ShowBackupManager() {
         ShowMessage(ss.str(), Tr(L"Backup manager", L"\u5907\u4efd\u7ba1\u7406\u4e2d\u5fc3"));
         return;
     }
-    for (int i = 0; i < (int)std::min<size_t>(files.size(), 15); ++i) {
+    size_t displayedCount = std::min<size_t>(files.size(), 15);
+    for (int i = 0; i < static_cast<int>(displayedCount); ++i) {
         ss << (i + 1) << L". " << files[i].filename().wstring() << L"\n";
     }
     std::wstring choice;
     if (!PromptText(Tr(L"Backup manager", L"\u5907\u4efd\u7ba1\u7406\u4e2d\u5fc3"), ss.str() + L"\n" + Tr(L"Enter backup number to restore, or leave blank to cancel:", L"\u8f93\u5165\u8981\u6062\u590d\u7684\u5907\u4efd\u7f16\u53f7\uff0c\u7559\u7a7a\u53d6\u6d88\uff1a"), choice)) return;
     choice = TrimWide(choice);
     if (choice.empty()) return;
-    int index = 0;
-    try { index = std::stoi(choice) - 1; } catch (...) { return; }
-    if (index < 0 || index >= (int)files.size()) return;
+    size_t parsedLength = 0;
+    unsigned long long selectedNumber = 0;
+    try {
+        selectedNumber = std::stoull(choice, &parsedLength, 10);
+    } catch (...) {
+        return;
+    }
+    if (parsedLength != choice.size() || selectedNumber == 0
+        || selectedNumber > displayedCount) return;
+    size_t index = static_cast<size_t>(selectedNumber - 1);
     if (!ConfirmDiscardUnsaved(Tr(L"Restore backup", L"\u6062\u590d\u5907\u4efd"))) return;
     LoadAttendanceFile(files[index].wstring(), true, false);
 }
@@ -7198,6 +7461,7 @@ int NormalizeScrollFrameRateInput(HWND hwnd) {
 
 void ApplySettingsFromWindow(HWND hwnd) {
     UiTheme previousTheme = g_theme;
+    AccentTone previousAccent = g_accentTone;
     UiTheme requestedTheme = g_theme;
     int language = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE), CB_GETCURSEL, 0, 0);
     int fontIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_FONT), CB_GETCURSEL, 0, 0);
@@ -7233,9 +7497,11 @@ void ApplySettingsFromWindow(HWND hwnd) {
         std::wstring fontName = GetComboSelectedText(GetDlgItem(hwnd, IDC_SETTINGS_FONT));
         if (!fontName.empty()) g_fontFamily = fontName;
     }
-    bool themeChanged = requestedTheme != previousTheme;
-    if (themeChanged) {
+    bool paletteChanged = requestedTheme != previousTheme || g_accentTone != previousAccent;
+    if (paletteChanged) {
         BeginThemeTransition(requestedTheme);
+    }
+    if (paletteChanged || g_themeTransition.active) {
         ApplyVisualSettings(true);
         EnumChildWindows(hwnd, ApplyFontToChild, 0);
         SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), WM_SETFONT, (WPARAM)g_titleFont, TRUE);
@@ -7598,7 +7864,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             bool checked = id == IDC_SETTINGS_SHOW_STATS ? g_showStatsCards
                 : id == IDC_SETTINGS_SHOW_HINT ? g_showFooterHint : g_showTableGrid;
             SendMessageW((HWND)lParam, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
-            ApplyVisualSettings();
+            ApplyVisualSettings(g_themeTransition.active);
             SaveSettingsWithFeedback(hwnd);
             InvalidateRect((HWND)lParam, nullptr, FALSE);
             return 0;
@@ -7988,15 +8254,15 @@ void ScrollMainWindow(HWND hwnd, int bar, int code, int wheelDelta) {
 }
 
 void ApplyDarkMode(HWND hwnd) {
-    BOOL value = g_theme == UiTheme::Dark ? TRUE : FALSE;
+    BOOL value = IsRenderedPaletteDark() ? TRUE : FALSE;
     if (hwnd) DwmSetWindowAttribute(hwnd, 20, &value, sizeof(value));
     if (hwnd == g_hwnd) ApplyGlassTitleBar(hwnd);
     ApplyThemedControls(hwnd);
     if (g_list) {
-        SetWindowTheme(g_list, g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+        SetWindowTheme(g_list, IsRenderedPaletteDark() ? L"DarkMode_Explorer" : L"Explorer", nullptr);
         HWND header = ListView_GetHeader(g_list);
         if (header) {
-            SetWindowTheme(header, g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+            SetWindowTheme(header, IsRenderedPaletteDark() ? L"DarkMode_Explorer" : L"Explorer", nullptr);
             InvalidateRect(header, nullptr, FALSE);
         }
         ListView_SetBkColor(g_list, COLOR_PANEL);
@@ -8108,7 +8374,7 @@ void TriggerButtonFeedback(HWND hwnd, POINT origin) {
             particle.star = RandomInt(0, 5) == 0;
             particle.color = RandomInt(0, 12) == 0
                 ? COLOR_ACCENT
-                : (g_theme == UiTheme::Dark ? RGB(255, 255, 255) : RGB(0, 0, 0));
+                : (IsRenderedPaletteDark() ? RGB(255, 255, 255) : RGB(0, 0, 0));
             state.particles.push_back(particle);
             state.durationMs = std::max(state.durationMs, particle.lifetimeMs);
         }
@@ -8139,7 +8405,7 @@ void DrawButtonEffects(const DRAWITEMSTRUCT* draw, const RECT& buttonRc, COLORRE
         double eased = EaseOut(rippleProgress);
         int radius = (int)std::lround(80.0 * eased);
         double strength = 0.30 * (1.0 - rippleProgress);
-        COLORREF rippleTarget = g_theme == UiTheme::Dark ? RGB(255, 255, 255) : RGB(0, 0, 0);
+        COLORREF rippleTarget = IsRenderedPaletteDark() ? RGB(255, 255, 255) : RGB(0, 0, 0);
         COLORREF rippleColor = BlendColor(baseFill, rippleTarget, strength);
         HPEN ripplePen = CreatePen(PS_SOLID, 2, rippleColor);
         HGDIOBJ oldPen = SelectObject(draw->hDC, ripplePen);
@@ -8275,12 +8541,12 @@ bool DrawButtonItem(const DRAWITEMSTRUCT* draw) {
     bool isBlue = draw->CtlID == IDC_IMPORT || draw->CtlID == IDC_NEW || draw->CtlID == IDC_EXPORT_CSV;
 
     if (isDanger) {
-        COLORREF dangerBase = BlendColor(COLOR_INPUT, COLOR_DANGER, g_theme == UiTheme::Dark ? 0.12 : 0.08);
+        COLORREF dangerBase = BlendColor(COLOR_INPUT, COLOR_DANGER, IsRenderedPaletteDark() ? 0.12 : 0.08);
         fill = BlendColor(dangerBase, COLOR_DANGER, hover * 0.18);
         border = BlendColor(COLOR_BORDER, COLOR_DANGER, focused ? 1.0 : 0.45 + hover * 0.55);
         buttonText = COLOR_TEXT;
     } else if (isGreen) {
-        COLORREF success = g_theme == UiTheme::Dark ? RGB(146, 166, 156) : RGB(74, 112, 92);
+        COLORREF success = IsRenderedPaletteDark() ? RGB(146, 166, 156) : RGB(74, 112, 92);
         fill = BlendColor(COLOR_INPUT, success, 0.08 + hover * 0.12);
         border = BlendColor(COLOR_BORDER, success, focused ? 1.0 : 0.35 + hover * 0.65);
     } else if (isBlue) {
@@ -8880,7 +9146,7 @@ void ApplyComboDropDownTheme(HWND combo) {
     info.cbSize = sizeof(info);
     if (!GetComboBoxInfo(combo, &info)) return;
 
-    const wchar_t* themeName = g_theme == UiTheme::Dark ? L"DarkMode_Explorer" : L"Explorer";
+    const wchar_t* themeName = IsRenderedPaletteDark() ? L"DarkMode_Explorer" : L"Explorer";
     SetWindowTheme(combo, themeName, nullptr);
     if (info.hwndItem) SetWindowTheme(info.hwndItem, themeName, nullptr);
     if (info.hwndList) {
@@ -8995,7 +9261,7 @@ LRESULT CALLBACK StatsPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
             for (int glow = 0; glow < 8; ++glow) {
                 double amount = 0.050 * (1.0 - glow / 8.0);
-                COLORREF glowTarget = g_theme == UiTheme::Dark ? RGB(255, 255, 255) : RGB(0, 0, 0);
+                COLORREF glowTarget = IsRenderedPaletteDark() ? RGB(255, 255, 255) : RGB(0, 0, 0);
                 COLORREF glowColor = BlendColor(COLOR_CARD, glowTarget, amount);
                 HPEN glowPen = CreatePen(PS_SOLID, 1, glowColor);
                 HGDIOBJ oldGlowPen = SelectObject(hdc, glowPen);
@@ -9146,6 +9412,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         return 0;
     }
+    case WM_SETTINGCHANGE:
+    case WM_THEMECHANGED:
+        RefreshOpenAppTitleBars(true);
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
     case WM_SIZE:
         ResizeLayout(hwnd);
         return 0;
@@ -9324,6 +9594,23 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         UpdateThemeTransitionFrame();
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
+    case WM_APP_TEST_THEME_TRANSITION: {
+        wchar_t testMode[8]{};
+        if (GetEnvironmentVariableW(L"ATTENDANCEAPP_TEST_MODE", testMode, 8) > 0) {
+            if (wParam == 3) {
+                ShowSettingsWindow();
+                return reinterpret_cast<LRESULT>(g_settingsWindow);
+            } else if (wParam == 2) {
+                g_advancedPersonalizationEnabled = false;
+                ResetAdvancedPersonalizationValues();
+                BeginThemeTransition(UiTheme::Dark);
+                ApplyVisualSettings(true);
+            } else {
+                BeginThemeTransition(wParam != 0 ? UiTheme::Light : UiTheme::Dark);
+            }
+        }
+        return 0;
+    }
     case WM_APP_ANIMATION_DONE:
         return 0;
     case WM_CLOSE:
@@ -9360,6 +9647,9 @@ int WINAPI wWinMain(
     _In_opt_ HINSTANCE,
     _In_ PWSTR commandLine,
     _In_ int showCmd) {
+    if (commandLine && TrimWide(commandLine) == L"--verify-parser") {
+        return RunParserRegressionChecks() ? 0 : 2;
+    }
     HRESULT comInitialization = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     const bool uninitializeCom = SUCCEEDED(comInitialization);
     LoadSettings();
