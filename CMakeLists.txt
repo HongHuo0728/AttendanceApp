@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(AttendanceApp VERSION 2.0.1 LANGUAGES CXX)
+project(AttendanceApp VERSION 2.0.2 LANGUAGES CXX)
 enable_language(RC)
 
 set(CMAKE_CXX_STANDARD 17)

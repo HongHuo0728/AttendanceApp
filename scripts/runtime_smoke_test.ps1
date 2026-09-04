@@ -328,6 +328,26 @@ try {
     }
     $settingsTitleBar = Assert-AppTitleBarMaterial $settingsWindow 3 'Settings window' 1
 
+    $languageSwitchResult = [AttendanceSmokeNative]::SendMessage(
+        $main, 0x802C, [IntPtr]0, [IntPtr]::Zero)
+    if ($languageSwitchResult.ToInt32() -ne 1) {
+        throw 'The atomic language-switch test hook did not run.'
+    }
+    $englishDateName = Get-AccessibleName ([AttendanceSmokeNative]::GetDlgItem($main, 1001))
+    $englishSettingsLanguageName = Get-AccessibleName ([AttendanceSmokeNative]::GetDlgItem($settingsWindow, 4001))
+    if ($englishDateName -ne 'Date/Time' -or $englishSettingsLanguageName -ne 'Language') {
+        throw "Language switch did not update open windows atomically: '$englishDateName', '$englishSettingsLanguageName'."
+    }
+    $languageSwitchBackResult = [AttendanceSmokeNative]::SendMessage(
+        $main, 0x802C, [IntPtr]19, [IntPtr]::Zero)
+    if ($languageSwitchBackResult.ToInt32() -ne 1) {
+        throw 'The atomic language-switch test hook did not restore zh-HK.'
+    }
+    $restoredDateName = Get-AccessibleName ([AttendanceSmokeNative]::GetDlgItem($main, 1001))
+    if ($restoredDateName -ne $dateName) {
+        throw "Language switch did not restore the original accessibility text: '$restoredDateName'."
+    }
+
     $themeStart = Get-ClientPixelRed $main
     $titleBarStart = $mainTitleBar.CaptionLuminance
     [AttendanceSmokeNative]::PostMessage(
@@ -426,6 +446,7 @@ try {
         ListAccessibilityName = $listName
         MainTitleBar = ($mainTitleBar | ConvertTo-Json -Compress)
         SettingsTitleBar = ($settingsTitleBar | ConvertTo-Json -Compress)
+        AtomicLanguageSwitch = "$dateName -> $englishDateName -> $restoredDateName"
         LightTitleBar = ($lightTitleBar | ConvertTo-Json -Compress)
         SettingsLightTitleBar = ($settingsLightTitleBar | ConvertTo-Json -Compress)
         ReturnTitleBar = ($returnTitleBar | ConvertTo-Json -Compress)

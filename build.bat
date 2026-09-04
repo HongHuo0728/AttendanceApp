@@ -17,7 +17,7 @@ if %errorlevel%==0 (
     cmake --build build --config Release
     if errorlevel 1 goto build_failed
     if not exist build\Release\AttendanceApp.exe goto build_failed
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$v=(Get-Item -LiteralPath 'build\Release\AttendanceApp.exe').VersionInfo; if ($v.FileVersion -ne '2.0.1' -or $v.ProductVersion -ne '2.0.1') { exit 1 }"
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$v=(Get-Item -LiteralPath 'build\Release\AttendanceApp.exe').VersionInfo; if ($v.FileVersion -ne '2.0.2' -or $v.ProductVersion -ne '2.0.2') { exit 1 }"
     if errorlevel 1 goto build_failed
     goto build_succeeded
 )
@@ -46,7 +46,7 @@ if errorlevel 1 goto build_failed
 cl /nologo /std:c++17 /EHsc /utf-8 /DUNICODE /D_UNICODE /O2 /Fo:build\ /Fe:build\AttendanceApp.exe src\main.cpp build\app.res /link /SUBSYSTEM:WINDOWS /MANIFEST:NO user32.lib gdi32.lib comdlg32.lib comctl32.lib shell32.lib ole32.lib uxtheme.lib dwmapi.lib msimg32.lib
 if errorlevel 1 goto build_failed
 if not exist build\AttendanceApp.exe goto build_failed
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$v=(Get-Item -LiteralPath 'build\AttendanceApp.exe').VersionInfo; if ($v.FileVersion -ne '2.0.1' -or $v.ProductVersion -ne '2.0.1') { exit 1 }"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$v=(Get-Item -LiteralPath 'build\AttendanceApp.exe').VersionInfo; if ($v.FileVersion -ne '2.0.2' -or $v.ProductVersion -ne '2.0.2') { exit 1 }"
 if errorlevel 1 goto build_failed
 
 :build_succeeded

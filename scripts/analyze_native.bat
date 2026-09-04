@@ -15,10 +15,10 @@ if errorlevel 1 (
     exit /b 1
 )
 
-cmake -S . -B build -A x64
+cmake -S . -B build-analysis -A x64
 if errorlevel 1 exit /b 1
 
-cmake --build build --config Release -- /t:Rebuild /p:RunCodeAnalysis=true /p:EnableMicrosoftCodeAnalysis=true /m:1
+cmake --build build-analysis --config Release -- /t:Rebuild /p:RunCodeAnalysis=true /p:EnableMicrosoftCodeAnalysis=true /m:1
 if errorlevel 1 exit /b 1
 
 exit /b 0
