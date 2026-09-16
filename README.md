@@ -2,7 +2,7 @@
 
 AttendanceApp is a standalone C++/Win32 desktop application for roll call and attendance management. It supports custom `.attd` files, multiple courses/classes, course details, student rosters, lesson workflows, CSV import/export, printable reports, autosave, undo/redo, statistics charts, backup/restore, file icons, and persistent UI settings.
 
-Version `2.0.2` is the current stable bug-fix release. It makes language changes atomic and flicker-free, strengthens in-memory workbook limits and recovery handling, hardens settings and Base64 parsing, and improves large-list performance while preserving the `.attd` V5 format.
+Version `2.0.3` is the current stable bug-fix release. It removes particle feedback stalls when opening complex windows, preloads and reuses the Settings window, enumerates installed fonts in the background, reduces GDI allocation churn, and strengthens Release binary optimization while preserving the `.attd` V5 format.
 
 ## Features
 

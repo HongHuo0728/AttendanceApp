@@ -10,6 +10,7 @@
 #include <uxtheme.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <charconv>
 #include <chrono>
@@ -271,6 +272,9 @@ static constexpr UINT WM_APP_ANIMATION_DONE = WM_APP + 42;
 static constexpr UINT WM_APP_TEST_THEME_TRANSITION = WM_APP + 43;
 static constexpr UINT WM_APP_TEST_LANGUAGE_SWITCH = WM_APP + 44;
 static constexpr UINT WM_APP_COMMIT_COMBO_SELECTION = WM_APP + 45;
+static constexpr UINT WM_APP_PREWARM_SETTINGS = WM_APP + 46;
+static constexpr UINT WM_APP_FONT_CACHE_READY = WM_APP + 47;
+static constexpr UINT WM_APP_TEST_PARTICLE_METRICS = WM_APP + 48;
 
 struct InputDialogState {
     std::wstring title;
@@ -354,11 +358,46 @@ static bool g_showFooterHint = true;
 static bool g_showTableGrid = true;
 static int g_autosaveIntervalSeconds = 30;
 static bool g_languageUpdateActive = false;
+static bool g_fontComboRefreshPending = false;
+static bool g_fontEnumerationShutdown = false;
+static bool g_fontCacheReady = false;
+static uint64_t g_fontRequestedGeneration = 0;
+static uint64_t g_fontPublishedGeneration = 0;
+static std::mutex g_fontEnumerationMutex;
+static std::condition_variable g_fontEnumerationCondition;
+static std::thread g_fontEnumerationThread;
+static std::atomic_uint64_t g_lastParticleSetupUs{0};
+static std::atomic_uint64_t g_maxParticleFrameUs{0};
 static std::wstring g_shortcutSave = L"Ctrl+S";
 static std::wstring g_shortcutImport = L"Ctrl+O";
 static std::wstring g_shortcutUndo = L"Ctrl+Z";
 static std::wstring g_shortcutRedo = L"Ctrl+Y";
 static std::wstring g_shortcutCommand = L"Ctrl+K";
+
+struct SettingToggleBinding {
+    int id;
+    bool* value;
+};
+
+static const std::array<SettingToggleBinding, 10> g_settingToggleBindings{{
+    {IDC_SETTINGS_PARTICLES, &g_particlesEnabled},
+    {IDC_SETTINGS_RISK_ALERTS, &g_riskAlertsEnabled},
+    {IDC_SETTINGS_AUTOSAVE_PROMPT, &g_autosavePromptEnabled},
+    {IDC_SETTINGS_COMMAND_PALETTE, &g_commandPaletteEnabled},
+    {IDC_SETTINGS_ADVANCED_FILTER, &g_advancedFilterEnabled},
+    {IDC_SETTINGS_SMOOTH_SCROLL, &g_smoothScrollingEnabled},
+    {IDC_SETTINGS_EXPERIMENTAL, &g_advancedPersonalizationEnabled},
+    {IDC_SETTINGS_SHOW_STATS, &g_showStatsCards},
+    {IDC_SETTINGS_SHOW_HINT, &g_showFooterHint},
+    {IDC_SETTINGS_TABLE_GRID, &g_showTableGrid},
+}};
+
+bool* FindSettingToggleValue(int id) {
+    for (const auto& binding : g_settingToggleBindings) {
+        if (binding.id == id) return binding.value;
+    }
+    return nullptr;
+}
 static std::wstring g_shortcutFullscreen = L"F11";
 
 static COLORREF COLOR_BG = RGB(0, 0, 0);
@@ -448,6 +487,7 @@ struct ButtonEffectState {
     uint64_t startMs = 0;
     uint32_t durationMs = 0;
     bool rippleEnabled = true;
+    bool active = false;
     std::vector<ButtonParticle> particles;
 };
 
@@ -490,6 +530,8 @@ void ImportAttendance();
 void ExportCsv();
 void BackupNow();
 void ShowSettingsWindow();
+void PrewarmSettingsWindow();
+void HideSettingsWindow();
 void ReviewLessonCompletion();
 void ShowQuickRollCall();
 void StartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t durationMs = 160, bool closeOnDone = false);
@@ -511,12 +553,16 @@ void ApplyGlassTitleBar(HWND hwnd);
 void RefreshOpenAppTitleBars(bool configureBackdrop = false);
 void CancelMainWindowClose();
 void RefreshQuickRollCallWindow(HWND hwnd);
-void FillInstalledFontFamilies();
+std::vector<std::wstring> EnumerateInstalledFontFamilies();
+void RequestFontEnumeration();
+void StopFontEnumerationThread();
+void ApplyFontListToSettings(HWND hwnd);
 std::wstring GetComboSelectedText(HWND combo);
 void CommitComboSelectionNow(HWND combo);
 void ConfigureEditMetrics(HWND hwnd);
 void TriggerButtonFeedback(HWND hwnd, POINT origin);
 void DrawButtonEffects(const DRAWITEMSTRUCT* draw, const RECT& buttonRc, COLORREF baseFill);
+bool IsCoreParticleButton(int id);
 void DrawSoftDivider(HDC hdc, int left, int right, int y);
 int ThemedMessageBox(HWND owner, const std::wstring& message, const std::wstring& title, bool yesNo);
 bool DrawParticleToggleItem(const DRAWITEMSTRUCT* draw);
@@ -643,6 +689,28 @@ void ConfigureEditMetrics(HWND hwnd) {
 uint64_t AnimationNowMs() {
     using namespace std::chrono;
     return (uint64_t)duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
+
+uint64_t PerformanceNowUs() {
+    static LARGE_INTEGER frequency = [] {
+        LARGE_INTEGER value{};
+        QueryPerformanceFrequency(&value);
+        return value;
+    }();
+    LARGE_INTEGER counter{};
+    QueryPerformanceCounter(&counter);
+    if (frequency.QuadPart <= 0) return 0;
+    const uint64_t wholeSeconds = static_cast<uint64_t>(counter.QuadPart / frequency.QuadPart);
+    const uint64_t remainder = static_cast<uint64_t>(counter.QuadPart % frequency.QuadPart);
+    return wholeSeconds * 1000000ull
+        + remainder * 1000000ull / static_cast<uint64_t>(frequency.QuadPart);
+}
+
+void RecordMaximum(std::atomic_uint64_t& maximum, uint64_t value) {
+    uint64_t current = maximum.load(std::memory_order_relaxed);
+    while (current < value
+        && !maximum.compare_exchange_weak(current, value, std::memory_order_relaxed)) {
+    }
 }
 
 double EaseInOut(double value) {
@@ -1567,7 +1635,7 @@ void EnableMouseWheelForward(HWND hwnd) {
 }
 
 void RedrawAnimatedControl(HWND hwnd) {
-    RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_UPDATENOW | RDW_NOERASE);
+    RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_NOERASE);
 }
 
 void DrawAnimatedEditFrame(HWND hwnd) {
@@ -1646,6 +1714,13 @@ LRESULT CALLBACK InteractiveControlProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
 void EnableInteractiveAnimation(HWND hwnd) {
     if (!hwnd) return;
     SetWindowSubclass(hwnd, InteractiveControlProc, 7, 0);
+    wchar_t className[32]{};
+    GetClassNameW(hwnd, className, 32);
+    if (lstrcmpiW(className, L"Button") == 0
+        && (GetWindowLongPtrW(hwnd, GWL_STYLE) & BS_OWNERDRAW) != 0) {
+        ButtonEffectState& state = g_buttonEffects[hwnd];
+        if (IsCoreParticleButton(GetDlgCtrlID(hwnd))) state.particles.reserve(72);
+    }
 }
 
 int MeasureLongestTextLinePx(HWND owner, const std::wstring& text) {
@@ -2788,7 +2863,7 @@ int CALLBACK EnumFontFamilyProc(const LOGFONTW* logFont, const TEXTMETRICW*, DWO
     return 1;
 }
 
-void FillInstalledFontFamilies() {
+std::vector<std::wstring> EnumerateInstalledFontFamilies() {
     std::set<std::wstring> fonts;
     HDC hdc = GetDC(nullptr);
     if (hdc) {
@@ -2801,8 +2876,56 @@ void FillInstalledFontFamilies() {
         fonts.insert(L"Segoe UI");
         fonts.insert(L"Microsoft YaHei UI");
     }
-    fonts.insert(g_fontFamily);
-    g_availableFonts.assign(fonts.begin(), fonts.end());
+    return {fonts.begin(), fonts.end()};
+}
+
+void EnsureFontEnumerationThread() {
+    if (g_fontEnumerationThread.joinable()) return;
+    g_fontEnumerationThread = std::thread([] {
+        while (true) {
+            uint64_t generation = 0;
+            {
+                std::unique_lock<std::mutex> lock(g_fontEnumerationMutex);
+                g_fontEnumerationCondition.wait(lock, [] {
+                    return g_fontEnumerationShutdown
+                        || g_fontPublishedGeneration < g_fontRequestedGeneration;
+                });
+                if (g_fontEnumerationShutdown) return;
+                generation = g_fontRequestedGeneration;
+            }
+
+            auto fonts = EnumerateInstalledFontFamilies();
+            {
+                std::lock_guard<std::mutex> lock(g_fontEnumerationMutex);
+                if (g_fontEnumerationShutdown) return;
+                if (generation != g_fontRequestedGeneration) continue;
+                g_availableFonts = std::move(fonts);
+                g_fontCacheReady = true;
+                g_fontPublishedGeneration = generation;
+            }
+            HWND target = g_hwnd;
+            if (target && IsWindow(target)) PostMessageW(target, WM_APP_FONT_CACHE_READY, 0, 0);
+        }
+    });
+}
+
+void RequestFontEnumeration() {
+    EnsureFontEnumerationThread();
+    {
+        std::lock_guard<std::mutex> lock(g_fontEnumerationMutex);
+        ++g_fontRequestedGeneration;
+        g_fontCacheReady = false;
+    }
+    g_fontEnumerationCondition.notify_one();
+}
+
+void StopFontEnumerationThread() {
+    {
+        std::lock_guard<std::mutex> lock(g_fontEnumerationMutex);
+        g_fontEnumerationShutdown = true;
+    }
+    g_fontEnumerationCondition.notify_all();
+    if (g_fontEnumerationThread.joinable()) g_fontEnumerationThread.join();
 }
 
 std::wstring GetComboSelectedText(HWND combo) {
@@ -7626,6 +7749,38 @@ HWND MakeSettingsControl(HWND parent, const wchar_t* cls, const wchar_t* text, D
     return hwnd;
 }
 
+void ApplyFontListToSettings(HWND hwnd) {
+    if (!hwnd || !IsWindow(hwnd)) return;
+    HWND font = GetDlgItem(hwnd, IDC_SETTINGS_FONT);
+    if (!font) return;
+    if (SendMessageW(font, CB_GETDROPPEDSTATE, 0, 0)) {
+        g_fontComboRefreshPending = true;
+        return;
+    }
+
+    std::vector<std::wstring> fonts;
+    {
+        std::lock_guard<std::mutex> lock(g_fontEnumerationMutex);
+        if (g_fontCacheReady) fonts = g_availableFonts;
+    }
+    if (std::find(fonts.begin(), fonts.end(), g_fontFamily) == fonts.end()) {
+        fonts.push_back(g_fontFamily);
+        std::sort(fonts.begin(), fonts.end());
+    }
+
+    SendMessageW(font, WM_SETREDRAW, FALSE, 0);
+    SendMessageW(font, CB_RESETCONTENT, 0, 0);
+    int selected = 0;
+    for (int i = 0; i < static_cast<int>(fonts.size()); ++i) {
+        SendMessageW(font, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(fonts[i].c_str()));
+        if (g_fontFamily == fonts[i]) selected = i;
+    }
+    SendMessageW(font, CB_SETCURSEL, selected, 0);
+    SendMessageW(font, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(font, nullptr, FALSE);
+    g_fontComboRefreshPending = false;
+}
+
 void FillSettingsCombos(HWND hwnd, bool refillLanguageAndFont = true) {
     HWND language = GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE);
     HWND font = GetDlgItem(hwnd, IDC_SETTINGS_FONT);
@@ -7647,14 +7802,7 @@ void FillSettingsCombos(HWND hwnd, bool refillLanguageAndFont = true) {
     SendMessageW(language, CB_SETCURSEL, (WPARAM)g_language, 0);
 
     if (refillLanguageAndFont) {
-        SendMessageW(font, CB_RESETCONTENT, 0, 0);
-        FillInstalledFontFamilies();
-        int selected = 0;
-        for (int i = 0; i < (int)g_availableFonts.size(); ++i) {
-            SendMessageW(font, CB_ADDSTRING, 0, (LPARAM)g_availableFonts[i].c_str());
-            if (g_fontFamily == g_availableFonts[i]) selected = i;
-        }
-        SendMessageW(font, CB_SETCURSEL, selected, 0);
+        ApplyFontListToSettings(hwnd);
     }
 
     SendMessageW(animation, CB_RESETCONTENT, 0, 0);
@@ -7712,7 +7860,7 @@ void FillSettingsCombos(HWND hwnd, bool refillLanguageAndFont = true) {
     if (!g_languageUpdateActive) {
         const HWND combos[] = {language, font, animation, particle, report, theme, accent, textScale, density, autosave};
         for (HWND combo : combos) {
-            RedrawWindow(combo, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+            RedrawWindow(combo, nullptr, nullptr, RDW_INVALIDATE | RDW_NOERASE);
         }
     }
     EnableWindow(particle, g_particlesEnabled ? TRUE : FALSE);
@@ -7761,16 +7909,10 @@ void ApplySettingsLanguage(HWND hwnd) {
     SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_DENSITY), Tr(L"Interface density", L"\u754c\u9762\u5bc6\u5ea6"));
     SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_INTERVAL), Tr(L"Autosave interval", L"\u81ea\u52a8\u4fdd\u5b58\u95f4\u9694"));
     SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS), ScrollFrameRateLabel());
-    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLES), BM_SETCHECK, g_particlesEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
-    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_RISK_ALERTS), BM_SETCHECK, g_riskAlertsEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
-    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_PROMPT), BM_SETCHECK, g_autosavePromptEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
-    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_COMMAND_PALETTE), BM_SETCHECK, g_commandPaletteEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
-    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_ADVANCED_FILTER), BM_SETCHECK, g_advancedFilterEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
-    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_SMOOTH_SCROLL), BM_SETCHECK, g_smoothScrollingEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
-    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_EXPERIMENTAL), BM_SETCHECK, g_advancedPersonalizationEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
-    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_SHOW_STATS), BM_SETCHECK, g_showStatsCards ? BST_CHECKED : BST_UNCHECKED, 0);
-    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_SHOW_HINT), BM_SETCHECK, g_showFooterHint ? BST_CHECKED : BST_UNCHECKED, 0);
-    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TABLE_GRID), BM_SETCHECK, g_showTableGrid ? BST_CHECKED : BST_UNCHECKED, 0);
+    for (const auto& binding : g_settingToggleBindings) {
+        SendMessageW(GetDlgItem(hwnd, binding.id), BM_SETCHECK,
+            *binding.value ? BST_CHECKED : BST_UNCHECKED, 0);
+    }
     FillSettingsCombos(hwnd, !g_languageUpdateActive);
 }
 
@@ -8166,6 +8308,9 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         if (HIWORD(wParam) == CBN_CLOSEUP) {
             StartAnimation((HWND)lParam, AnimChannel::ComboOpen, 0.0, 220);
+            if (LOWORD(wParam) == IDC_SETTINGS_FONT && g_fontComboRefreshPending) {
+                ApplyFontListToSettings(hwnd);
+            }
             return 0;
         }
         if (LOWORD(wParam) == IDC_SETTINGS_LANGUAGE && HIWORD(wParam) == CBN_SELCHANGE) {
@@ -8239,18 +8384,10 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             || LOWORD(wParam) == IDC_SETTINGS_SMOOTH_SCROLL) && HIWORD(wParam) == BN_CLICKED) {
             int id = LOWORD(wParam);
             HWND toggle = GetDlgItem(hwnd, id);
-            if (id == IDC_SETTINGS_PARTICLES) g_particlesEnabled = !g_particlesEnabled;
-            else if (id == IDC_SETTINGS_RISK_ALERTS) g_riskAlertsEnabled = !g_riskAlertsEnabled;
-            else if (id == IDC_SETTINGS_AUTOSAVE_PROMPT) g_autosavePromptEnabled = !g_autosavePromptEnabled;
-            else if (id == IDC_SETTINGS_COMMAND_PALETTE) g_commandPaletteEnabled = !g_commandPaletteEnabled;
-            else if (id == IDC_SETTINGS_ADVANCED_FILTER) g_advancedFilterEnabled = !g_advancedFilterEnabled;
-            else if (id == IDC_SETTINGS_SMOOTH_SCROLL) g_smoothScrollingEnabled = !g_smoothScrollingEnabled;
-            bool checked = id == IDC_SETTINGS_PARTICLES ? g_particlesEnabled
-                : id == IDC_SETTINGS_RISK_ALERTS ? g_riskAlertsEnabled
-                : id == IDC_SETTINGS_AUTOSAVE_PROMPT ? g_autosavePromptEnabled
-                : id == IDC_SETTINGS_COMMAND_PALETTE ? g_commandPaletteEnabled
-                : id == IDC_SETTINGS_ADVANCED_FILTER ? g_advancedFilterEnabled
-                : g_smoothScrollingEnabled;
+            bool* value = FindSettingToggleValue(id);
+            if (!value) return 0;
+            *value = !*value;
+            bool checked = *value;
             SendMessageW(toggle, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
             if (id == IDC_SETTINGS_PARTICLES) {
                 EnableWindow(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL), checked ? TRUE : FALSE);
@@ -8266,11 +8403,10 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             || LOWORD(wParam) == IDC_SETTINGS_SHOW_HINT
             || LOWORD(wParam) == IDC_SETTINGS_TABLE_GRID) && HIWORD(wParam) == BN_CLICKED) {
             int id = LOWORD(wParam);
-            if (id == IDC_SETTINGS_SHOW_STATS) g_showStatsCards = !g_showStatsCards;
-            else if (id == IDC_SETTINGS_SHOW_HINT) g_showFooterHint = !g_showFooterHint;
-            else g_showTableGrid = !g_showTableGrid;
-            bool checked = id == IDC_SETTINGS_SHOW_STATS ? g_showStatsCards
-                : id == IDC_SETTINGS_SHOW_HINT ? g_showFooterHint : g_showTableGrid;
+            bool* value = FindSettingToggleValue(id);
+            if (!value) return 0;
+            *value = !*value;
+            bool checked = *value;
             SendMessageW((HWND)lParam, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
             ApplyVisualSettings(g_themeTransition.active);
             SaveSettingsWithFeedback(hwnd);
@@ -8282,7 +8418,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
         }
         if (LOWORD(wParam) == IDC_SETTINGS_CLOSE) {
-            BeginAnimatedClose(hwnd);
+            HideSettingsWindow();
             return 0;
         }
         if (LOWORD(wParam) == IDC_SETTINGS_RESET) {
@@ -8367,7 +8503,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     return 0;
                 }
             }
-            DestroyWindow(hwnd);
+            HideSettingsWindow();
             return 0;
         }
         break;
@@ -8376,10 +8512,9 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     case WM_APP_ANIMATION_DONE:
-        DestroyWindow(hwnd);
         return 0;
     case WM_CLOSE:
-        BeginAnimatedClose(hwnd);
+        HideSettingsWindow();
         return 0;
     case WM_DESTROY:
         RemoveAnimationState(hwnd);
@@ -8389,13 +8524,8 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-void ShowSettingsWindow() {
-    if (g_settingsWindow && IsWindow(g_settingsWindow)) {
-        ShowWindow(g_settingsWindow, SW_SHOW);
-        SetForegroundWindow(g_settingsWindow);
-        return;
-    }
-
+HWND EnsureSettingsWindowCreated() {
+    if (g_settingsWindow && IsWindow(g_settingsWindow)) return g_settingsWindow;
     HINSTANCE instance = GetModuleHandleW(nullptr);
     const wchar_t* className = L"AttendanceSettingsWindow";
     static bool registered = false;
@@ -8423,8 +8553,51 @@ void ShowSettingsWindow() {
     ApplyGlassTitleBar(g_settingsWindow);
     ApplyThemedControls(g_settingsWindow);
     CenterOwnedWindow(g_settingsWindow, g_hwnd);
+    return g_settingsWindow;
+}
+
+void SyncSettingsWindowState(HWND hwnd) {
+    if (!hwnd || !IsWindow(hwnd)) return;
+    for (const auto& binding : g_settingToggleBindings) {
+        SendMessageW(GetDlgItem(hwnd, binding.id), BM_SETCHECK,
+            *binding.value ? BST_CHECKED : BST_UNCHECKED, 0);
+    }
+    FillSettingsCombos(hwnd, false);
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS), std::to_wstring(g_scrollAnimationFps.load()));
+    EnableWindow(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL), g_particlesEnabled ? TRUE : FALSE);
+    SetSettingsAdvancedExpanded(hwnd, g_advancedPersonalizationEnabled);
+    ApplyFontListToSettings(hwnd);
+}
+
+void PrewarmSettingsWindow() {
+    EnsureSettingsWindowCreated();
+}
+
+void HideSettingsWindow() {
+    if (!g_settingsWindow || !IsWindow(g_settingsWindow)) return;
+    const int comboIds[] = {
+        IDC_SETTINGS_LANGUAGE, IDC_SETTINGS_FONT, IDC_SETTINGS_ANIMATION_LEVEL,
+        IDC_SETTINGS_PARTICLE_LEVEL, IDC_SETTINGS_REPORT_TEMPLATE, IDC_SETTINGS_THEME,
+        IDC_SETTINGS_ACCENT, IDC_SETTINGS_TEXT_SCALE, IDC_SETTINGS_DENSITY,
+        IDC_SETTINGS_AUTOSAVE_INTERVAL
+    };
+    for (int id : comboIds) {
+        HWND combo = GetDlgItem(g_settingsWindow, id);
+        if (combo) SendMessageW(combo, CB_SHOWDROPDOWN, FALSE, 0);
+    }
+    ShowWindow(g_settingsWindow, SW_HIDE);
+    g_settingsScrollY = 0;
+    if (g_hwnd && IsWindow(g_hwnd)) SetFocus(g_hwnd);
+}
+
+void ShowSettingsWindow() {
+    HWND settings = EnsureSettingsWindowCreated();
+    if (!settings) return;
+    SyncSettingsWindowState(settings);
+    CenterOwnedWindow(settings, g_hwnd);
     ShowWindow(g_settingsWindow, SW_SHOW);
     UpdateWindow(g_settingsWindow);
+    SetForegroundWindow(g_settingsWindow);
 }
 
 void ToggleFullscreen(HWND hwnd) {
@@ -8732,6 +8905,7 @@ int RandomInt(int minValue, int maxValue) {
 }
 
 void TriggerButtonFeedback(HWND hwnd, POINT origin) {
+    const uint64_t setupStartUs = PerformanceNowUs();
     if (!hwnd) return;
     wchar_t className[32]{};
     GetClassNameW(hwnd, className, 32);
@@ -8747,15 +8921,21 @@ void TriggerButtonFeedback(HWND hwnd, POINT origin) {
     bool particlesEnabled = g_particlesEnabled && IsCoreParticleButton(id);
     bool rippleEnabled = g_animationLevel != AnimationLevel::Off;
     if (!rippleEnabled && !particlesEnabled) {
-        g_buttonEffects.erase(hwnd);
+        auto existing = g_buttonEffects.find(hwnd);
+        if (existing != g_buttonEffects.end()) {
+            existing->second.active = false;
+            existing->second.particles.clear();
+        }
         return;
     }
 
-    ButtonEffectState state;
+    ButtonEffectState& state = g_buttonEffects[hwnd];
+    state.particles.clear();
     state.origin = origin;
     state.startMs = AnimationNowMs();
     state.rippleEnabled = rippleEnabled;
     state.durationMs = rippleEnabled ? 400u : 0u;
+    state.active = true;
 
     if (particlesEnabled) {
         int minCount = 30;
@@ -8768,7 +8948,7 @@ void TriggerButtonFeedback(HWND hwnd, POINT origin) {
             maxCount = 72;
         }
         int count = RandomInt(minCount, maxCount);
-        state.particles.reserve(count);
+        if (state.particles.capacity() < 72) state.particles.reserve(72);
         for (int i = 0; i < count; ++i) {
             double angle = RandomRange(0.0, 6.28318530717958647692);
             double speed = RandomRange(95.0, 250.0);
@@ -8788,24 +8968,27 @@ void TriggerButtonFeedback(HWND hwnd, POINT origin) {
         }
     }
 
-    g_buttonEffects[hwnd] = std::move(state);
-    RestartAnimation(hwnd, AnimChannel::Effect, 1.0, g_buttonEffects[hwnd].durationMs + 50);
-    RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+    RestartAnimation(hwnd, AnimChannel::Effect, 1.0, state.durationMs + 50);
+    InvalidateRect(hwnd, nullptr, FALSE);
+    g_lastParticleSetupUs.store(PerformanceNowUs() - setupStartUs, std::memory_order_relaxed);
 }
 
 void DrawButtonEffects(const DRAWITEMSTRUCT* draw, const RECT& buttonRc, COLORREF baseFill) {
+    const uint64_t frameStartUs = PerformanceNowUs();
     auto it = g_buttonEffects.find(draw->hwndItem);
-    if (it == g_buttonEffects.end()) return;
+    if (it == g_buttonEffects.end() || !it->second.active) return;
 
     uint64_t now = AnimationNowMs();
     ButtonEffectState& state = it->second;
     uint64_t elapsedMs = now > state.startMs ? now - state.startMs : 0;
     if (elapsedMs > state.durationMs + 40) {
-        g_buttonEffects.erase(it);
+        state.active = false;
+        state.particles.clear();
         return;
     }
 
     HRGN clip = CreateRoundRectRgn(buttonRc.left, buttonRc.top, buttonRc.right + 1, buttonRc.bottom + 1, 6, 6);
+    int savedDc = SaveDC(draw->hDC);
     SelectClipRgn(draw->hDC, clip);
 
     double rippleProgress = std::clamp(elapsedMs / 400.0, 0.0, 1.0);
@@ -8825,6 +9008,8 @@ void DrawButtonEffects(const DRAWITEMSTRUCT* draw, const RECT& buttonRc, COLORRE
         DeleteObject(ripplePen);
     }
 
+    HGDIOBJ oldBrush = SelectObject(draw->hDC, GetStockObject(DC_BRUSH));
+    HGDIOBJ oldPen = SelectObject(draw->hDC, GetStockObject(DC_PEN));
     for (const auto& particle : state.particles) {
         double progress = std::clamp(elapsedMs / (double)particle.lifetimeMs, 0.0, 1.0);
         if (progress >= 1.0) continue;
@@ -8838,10 +9023,8 @@ void DrawButtonEffects(const DRAWITEMSTRUCT* draw, const RECT& buttonRc, COLORRE
         COLORREF color = BlendColor(particle.color, COLOR_MUTED, progress);
         color = BlendColor(baseFill, color, opacity);
 
-        HBRUSH brush = CreateSolidBrush(color);
-        HPEN pen = CreatePen(PS_SOLID, 1, color);
-        HGDIOBJ oldBrush = SelectObject(draw->hDC, brush);
-        HGDIOBJ oldPen = SelectObject(draw->hDC, pen);
+        SetDCBrushColor(draw->hDC, color);
+        SetDCPenColor(draw->hDC, color);
         if (particle.star) {
             POINT pts[8] = {
                 {x, y - r * 2}, {x + r / 2, y - r / 2}, {x + r * 2, y},
@@ -8852,38 +9035,25 @@ void DrawButtonEffects(const DRAWITEMSTRUCT* draw, const RECT& buttonRc, COLORRE
         } else {
             Ellipse(draw->hDC, x - r, y - r, x + r, y + r);
         }
-        SelectObject(draw->hDC, oldPen);
-        SelectObject(draw->hDC, oldBrush);
-        DeleteObject(pen);
-        DeleteObject(brush);
     }
+    SelectObject(draw->hDC, oldPen);
+    SelectObject(draw->hDC, oldBrush);
 
-    SelectClipRgn(draw->hDC, nullptr);
+    RestoreDC(draw->hDC, savedDc);
     DeleteObject(clip);
+    RecordMaximum(g_maxParticleFrameUs, PerformanceNowUs() - frameStartUs);
 }
 
 bool DrawParticleToggleItem(const DRAWITEMSTRUCT* draw) {
     if (!draw || draw->CtlType != ODT_BUTTON) return false;
-    bool* value = nullptr;
-    if (draw->CtlID == IDC_SETTINGS_PARTICLES) value = &g_particlesEnabled;
-    else if (draw->CtlID == IDC_SETTINGS_RISK_ALERTS) value = &g_riskAlertsEnabled;
-    else if (draw->CtlID == IDC_SETTINGS_AUTOSAVE_PROMPT) value = &g_autosavePromptEnabled;
-    else if (draw->CtlID == IDC_SETTINGS_COMMAND_PALETTE) value = &g_commandPaletteEnabled;
-    else if (draw->CtlID == IDC_SETTINGS_ADVANCED_FILTER) value = &g_advancedFilterEnabled;
-    else if (draw->CtlID == IDC_SETTINGS_SMOOTH_SCROLL) value = &g_smoothScrollingEnabled;
-    else if (draw->CtlID == IDC_SETTINGS_EXPERIMENTAL) value = &g_advancedPersonalizationEnabled;
-    else if (draw->CtlID == IDC_SETTINGS_SHOW_STATS) value = &g_showStatsCards;
-    else if (draw->CtlID == IDC_SETTINGS_SHOW_HINT) value = &g_showFooterHint;
-    else if (draw->CtlID == IDC_SETTINGS_TABLE_GRID) value = &g_showTableGrid;
-    else return false;
+    bool* value = FindSettingToggleValue(draw->CtlID);
+    if (!value) return false;
 
     wchar_t text[160]{};
     GetWindowTextW(draw->hwndItem, text, 160);
 
     RECT rc = draw->rcItem;
-    HBRUSH bg = CreateSolidBrush(COLOR_BG);
-    FillRect(draw->hDC, &rc, bg);
-    DeleteObject(bg);
+    FillRect(draw->hDC, &rc, g_bgBrush ? g_bgBrush : (HBRUSH)GetStockObject(BLACK_BRUSH));
 
     bool checked = *value;
     double hover = GetAnimationValue(draw->hwndItem, AnimChannel::Hover, 0.0);
@@ -8899,15 +9069,13 @@ bool DrawParticleToggleItem(const DRAWITEMSTRUCT* draw) {
         boxTop + box
     };
 
-    HBRUSH fill = CreateSolidBrush(COLOR_CHECK_FILL);
-    HPEN borderPen = CreatePen(PS_SOLID, 1, border);
-    HGDIOBJ oldBrush = SelectObject(draw->hDC, fill);
-    HGDIOBJ oldPen = SelectObject(draw->hDC, borderPen);
+    HGDIOBJ oldBrush = SelectObject(draw->hDC, GetStockObject(DC_BRUSH));
+    HGDIOBJ oldPen = SelectObject(draw->hDC, GetStockObject(DC_PEN));
+    SetDCBrushColor(draw->hDC, COLOR_CHECK_FILL);
+    SetDCPenColor(draw->hDC, border);
     Rectangle(draw->hDC, boxRc.left, boxRc.top, boxRc.right, boxRc.bottom);
     SelectObject(draw->hDC, oldPen);
     SelectObject(draw->hDC, oldBrush);
-    DeleteObject(borderPen);
-    DeleteObject(fill);
 
     if (checked) {
         HPEN checkPen = CreatePen(PS_SOLID, 2, COLOR_TEXT);
@@ -8964,23 +9132,20 @@ bool DrawButtonItem(const DRAWITEMSTRUCT* draw) {
 
     fill = BlendColor(fill, COLOR_SELECTED, press * 0.45);
 
-    HBRUSH outerBrush = CreateSolidBrush(COLOR_BG);
-    FillRect(draw->hDC, &draw->rcItem, outerBrush);
-    DeleteObject(outerBrush);
+    FillRect(draw->hDC, &draw->rcItem,
+        g_bgBrush ? g_bgBrush : (HBRUSH)GetStockObject(BLACK_BRUSH));
 
     RECT buttonRc = draw->rcItem;
     int inset = (int)std::lround(press * 2.0);
     InflateRect(&buttonRc, -inset, -inset);
     OffsetRect(&buttonRc, 0, (int)std::lround(press * 1.0));
-    HBRUSH brush = CreateSolidBrush(fill);
-    HPEN pen = CreatePen(PS_SOLID, 1, border);
-    HGDIOBJ oldPen = SelectObject(draw->hDC, pen);
-    HGDIOBJ oldBrush = SelectObject(draw->hDC, brush);
+    HGDIOBJ oldPen = SelectObject(draw->hDC, GetStockObject(DC_PEN));
+    HGDIOBJ oldBrush = SelectObject(draw->hDC, GetStockObject(DC_BRUSH));
+    SetDCPenColor(draw->hDC, border);
+    SetDCBrushColor(draw->hDC, fill);
     RoundRect(draw->hDC, buttonRc.left, buttonRc.top, buttonRc.right, buttonRc.bottom, 6, 6);
     SelectObject(draw->hDC, oldBrush);
     SelectObject(draw->hDC, oldPen);
-    DeleteObject(pen);
-    DeleteObject(brush);
 
     int r = std::max(buttonRc.left, buttonRc.right - 1);
     int b = std::max(buttonRc.top, buttonRc.bottom - 1);
@@ -10026,6 +10191,30 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         UpdateThemeTransitionFrame();
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
+    case WM_APP_PREWARM_SETTINGS:
+        RequestFontEnumeration();
+        PrewarmSettingsWindow();
+        return 0;
+    case WM_APP_FONT_CACHE_READY:
+        if (g_settingsWindow && IsWindow(g_settingsWindow)) {
+            ApplyFontListToSettings(g_settingsWindow);
+        }
+        return 0;
+    case WM_FONTCHANGE:
+        RequestFontEnumeration();
+        return 0;
+    case WM_APP_TEST_PARTICLE_METRICS: {
+        wchar_t testMode[8]{};
+        if (GetEnvironmentVariableW(L"ATTENDANCEAPP_TEST_MODE", testMode, 8) == 0) return 0;
+        if (wParam == 0) {
+            g_lastParticleSetupUs.store(0, std::memory_order_relaxed);
+            g_maxParticleFrameUs.store(0, std::memory_order_relaxed);
+            return 1;
+        }
+        if (wParam == 1) return static_cast<LRESULT>(g_lastParticleSetupUs.load(std::memory_order_relaxed));
+        if (wParam == 2) return static_cast<LRESULT>(g_maxParticleFrameUs.load(std::memory_order_relaxed));
+        return 0;
+    }
     case WM_APP_TEST_THEME_TRANSITION: {
         wchar_t testMode[8]{};
         if (GetEnvironmentVariableW(L"ATTENDANCEAPP_TEST_MODE", testMode, 8) > 0) {
@@ -10071,6 +10260,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         KillTimer(hwnd, 1);
         KillTimer(hwnd, 2);
         RemoveAnimationState(hwnd);
+        StopFontEnumerationThread();
         StopAnimationThread();
         if (g_font) DeleteObject(g_font);
         if (g_titleFont) DeleteObject(g_titleFont);
@@ -10141,6 +10331,7 @@ int WINAPI wWinMain(
     }
     if (argv) LocalFree(argv);
     if (!loadedFromArg) PromptRestoreAutosave();
+    PostMessageW(hwnd, WM_APP_PREWARM_SETTINGS, 0, 0);
 
     MSG msg{};
     int exitCode = 0;

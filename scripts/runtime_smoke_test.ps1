@@ -92,6 +92,9 @@ public static class AttendanceSmokeNative
     public static extern bool IsWindow(IntPtr hwnd);
 
     [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
     public static extern bool PostThreadMessage(uint threadId, uint message, IntPtr wParam, IntPtr lParam);
 
     [DllImport("oleacc.dll")]
@@ -256,6 +259,10 @@ function Invoke-ToolsMenuCycle {
     Wait-Until {
         return -not [AttendanceSmokeNative]::IsWindow($menu)
     } 2000 "Tools menu did not close on iteration $Iteration."
+    # Wait until the popup's nested message loop has returned to the main window
+    # before posting the next command. IsWindow becomes false slightly earlier.
+    [AttendanceSmokeNative]::SendMessage(
+        $Main, 0x0000, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
     Start-Sleep -Milliseconds 30
 }
 
@@ -327,6 +334,38 @@ try {
         throw 'The settings window did not open for title-bar verification.'
     }
     $settingsTitleBar = Assert-AppTitleBarMaterial $settingsWindow 3 'Settings window' 1
+    $fontCombo = [AttendanceSmokeNative]::GetDlgItem($settingsWindow, 4003)
+    Wait-Until {
+        return [AttendanceSmokeNative]::SendMessage(
+            $fontCombo, 0x0146, [IntPtr]::Zero, [IntPtr]::Zero).ToInt32() -gt 1
+    } 5000 'The background font cache did not populate the Settings font list.'
+
+    $settingsButton = [AttendanceSmokeNative]::GetDlgItem($main, 1017)
+    [AttendanceSmokeNative]::SendMessage(
+        $main, 0x8030, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+    $particleSetupSamples = [System.Collections.Generic.List[int]]::new()
+    for ($iteration = 0; $iteration -lt 50; ++$iteration) {
+        [AttendanceSmokeNative]::SendMessage(
+            $settingsButton, 0x0201, [IntPtr]1, [IntPtr]0x000A000A) | Out-Null
+        [AttendanceSmokeNative]::SendMessage(
+            $settingsButton, 0x0202, [IntPtr]::Zero, [IntPtr]0x000A000A) | Out-Null
+        $setupUs = [AttendanceSmokeNative]::SendMessage(
+            $main, 0x8030, [IntPtr]1, [IntPtr]::Zero).ToInt32()
+        $particleSetupSamples.Add($setupUs)
+        Start-Sleep -Milliseconds 20
+    }
+    $sortedParticleSetup = @($particleSetupSamples | Sort-Object)
+    $particleP95Us = $sortedParticleSetup[[Math]::Min(
+        $sortedParticleSetup.Count - 1,
+        [Math]::Ceiling($sortedParticleSetup.Count * 0.95) - 1)]
+    $particleFrameMaxUs = [AttendanceSmokeNative]::SendMessage(
+        $main, 0x8030, [IntPtr]2, [IntPtr]::Zero).ToInt32()
+    if ($particleP95Us -gt 1000) {
+        throw "Settings particle setup P95 exceeded 1ms: $particleP95Us us."
+    }
+    if ($particleFrameMaxUs -gt 16667) {
+        throw "A particle frame exceeded 16.67ms: $particleFrameMaxUs us."
+    }
 
     $languageSwitchResult = [AttendanceSmokeNative]::SendMessage(
         $main, 0x802C, [IntPtr]0, [IntPtr]::Zero)
@@ -397,8 +436,18 @@ try {
     [AttendanceSmokeNative]::PostMessage(
         $settingsWindow, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
     Wait-Until {
-        return -not [AttendanceSmokeNative]::IsWindow($settingsWindow)
-    } 2000 'The settings window did not close after title-bar verification.'
+        return -not [AttendanceSmokeNative]::IsWindowVisible($settingsWindow)
+    } 2000 'The settings window did not hide after title-bar verification.'
+    if (-not [AttendanceSmokeNative]::IsWindow($settingsWindow)) {
+        throw 'The cached Settings window was destroyed instead of retained.'
+    }
+    $reopenedSettings = [AttendanceSmokeNative]::SendMessage(
+        $main, 0x802B, [IntPtr]3, [IntPtr]::Zero)
+    if ($reopenedSettings -ne $settingsWindow -or -not [AttendanceSmokeNative]::IsWindowVisible($reopenedSettings)) {
+        throw 'The cached Settings window was not reused when reopened.'
+    }
+    [AttendanceSmokeNative]::PostMessage(
+        $settingsWindow, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
     $list = [AttendanceSmokeNative]::GetDlgItem($main, 1004)
     Set-EditTextLikeUser ([AttendanceSmokeNative]::GetDlgItem($main, 1002)) 'Release smoke student'
     [AttendanceSmokeNative]::SendMessage(
@@ -451,6 +500,9 @@ try {
         SettingsLightTitleBar = ($settingsLightTitleBar | ConvertTo-Json -Compress)
         ReturnTitleBar = ($returnTitleBar | ConvertTo-Json -Compress)
         SettingsReturnTitleBar = ($settingsReturnTitleBar | ConvertTo-Json -Compress)
+        ParticleSetupP95Us = $particleP95Us
+        ParticleFrameMaxUs = $particleFrameMaxUs
+        CachedSettingsReused = $true
         LocalizedSearchRows = 1
         ThemeTransitionSamples = ($themeSamples -join ', ')
         TitleBarTransitionSamples = ($titleBarSamples -join ', ')
