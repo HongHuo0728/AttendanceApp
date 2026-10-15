@@ -12,12 +12,13 @@ set "ATTENDANCE_BUILD_PATH="
 where cmake >nul 2>nul
 if %errorlevel%==0 (
     if exist build\Release\AttendanceApp.exe del /q build\Release\AttendanceApp.exe
+    if exist build\Release\AttendanceApp.exe goto build_failed
     cmake -S . -B build -A x64
     if errorlevel 1 goto build_failed
     cmake --build build --config Release
     if errorlevel 1 goto build_failed
     if not exist build\Release\AttendanceApp.exe goto build_failed
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$v=(Get-Item -LiteralPath 'build\Release\AttendanceApp.exe').VersionInfo; if ($v.FileVersion -ne '2.0.3' -or $v.ProductVersion -ne '2.0.3') { exit 1 }"
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$v=(Get-Item -LiteralPath 'build\Release\AttendanceApp.exe').VersionInfo; if ($v.FileVersion -ne '2.0.4' -or $v.ProductVersion -ne '2.0.4') { exit 1 }"
     if errorlevel 1 goto build_failed
     goto build_succeeded
 )
@@ -41,12 +42,13 @@ goto build_failed
 :build_with_cl
 if not exist build mkdir build
 if exist build\AttendanceApp.exe del /q build\AttendanceApp.exe
+if exist build\AttendanceApp.exe goto build_failed
 rc /nologo /fo build\app.res resources\app.rc
 if errorlevel 1 goto build_failed
-cl /nologo /std:c++17 /EHsc /utf-8 /DUNICODE /D_UNICODE /O2 /Os /Gy /Gw /GL /Fo:build\ /Fe:build\AttendanceApp.exe src\main.cpp build\app.res /link /SUBSYSTEM:WINDOWS /MANIFEST:NO /LTCG /OPT:REF /OPT:ICF /INCREMENTAL:NO user32.lib gdi32.lib comdlg32.lib comctl32.lib shell32.lib ole32.lib uxtheme.lib dwmapi.lib msimg32.lib
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\build_msvc.ps1
 if errorlevel 1 goto build_failed
 if not exist build\AttendanceApp.exe goto build_failed
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$v=(Get-Item -LiteralPath 'build\AttendanceApp.exe').VersionInfo; if ($v.FileVersion -ne '2.0.3' -or $v.ProductVersion -ne '2.0.3') { exit 1 }"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$v=(Get-Item -LiteralPath 'build\AttendanceApp.exe').VersionInfo; if ($v.FileVersion -ne '2.0.4' -or $v.ProductVersion -ne '2.0.4') { exit 1 }"
 if errorlevel 1 goto build_failed
 
 :build_succeeded

@@ -96,7 +96,7 @@ inline constexpr HongKongTranslation kHongKongTranslations[] = {
     {L"Delete Selected", L"刪除所選"},
     {L"Delete selected records", L"刪除所選記錄"},
     {L"Delete the current course and its records?", L"要刪除目前課程同入面嘅記錄嗎？"},
-    {L"Dropdown scroll frame rate (60-240)", L"下拉捲動幀率（60–240）"},
+    {L"Dropdown scroll frame rate (60-360)", L"下拉捲動幀率（60–360）"},
     {L"Discard quick roll call changes?", L"要放棄今次快速點名嘅改動嗎？"},
     {L"Double-click row: Edit selected record", L"連按兩下記錄：編輯所選記錄"},
     {L"Duplicate lesson records must be resolved before quick roll call.", L"開始快速點名前，要先處理重複嘅課堂記錄。"},

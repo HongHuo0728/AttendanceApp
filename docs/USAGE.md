@@ -75,20 +75,21 @@ All settings apply immediately when you change a selection or switch. `Apply` sa
 - `Enable advanced filter syntax`: enables terms such as `name:`, `status:`, `from:`, `to:`, `thisweek`, and `thismonth` in the search field.
 - `Enable smooth dropdown scrolling`: adds responsive animated scrolling to combo-box dropdowns and custom popup menus. New wheel or touchpad input immediately updates the current movement, so controls remain usable while scrolling.
 
-### Advanced Personalization (Experimental)
+### Personalization
 
-Settings always opens in the compact basic view. Turn on `Advanced personalization (Experimental)` to open the personalization panel. The program first displays a warning that the experimental feature may make the software unstable; choose `Yes` to continue or `No` to leave the basic view unchanged.
+All personalization controls are available immediately in Settings. No experimental switch or confirmation is required. Existing preferences are preserved when upgrading.
 
 - `Theme`: switches between the default pure-black interface and the pure-white light interface with a synchronized transition across the window and its controls.
 - `Accent tone`: selects Neutral, Muted sage, or Muted cyan accents while keeping text contrast restrained.
 - `Text size`: selects Small, Standard, or Large interface text.
 - `Interface density`: changes control spacing between Compact, Comfortable, and Spacious.
 - `Autosave interval`: turns timed autosave off or runs it every 30 seconds, 1 minute, or 5 minutes.
+- `Dropdown scroll frame rate (60-360)`: sets the target update limit for dropdown scrolling. The default is 60 FPS. The display refresh rate and hardware determine the visible result. Particle counts are unchanged.
 - `Show statistics cards`: shows or hides the four summary cards above the record editor.
 - `Show bottom usage hint`: shows or hides the usage hint at the lower-left window edge.
 - `Show table grid lines`: shows or hides separators in the attendance list.
 
-Turning the experimental switch off immediately discards every advanced personalization choice, collapses the panel, and restores the original pure-black theme and default layout. These discarded choices are not retained for the next time the feature is enabled.
+Individual switches still control particles, smooth scrolling, and other effects. `Reset All Settings` restores default preferences, including the pure-black theme and 60 FPS scroll target.
 
 ## Search / Filter
 

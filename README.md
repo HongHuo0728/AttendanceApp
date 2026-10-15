@@ -1,8 +1,8 @@
-# AttendanceApp
+# AttendanceApp 2.0.4 (Ultra Optimization)
 
 AttendanceApp is a standalone C++/Win32 desktop application for roll call and attendance management. It supports custom `.attd` files, multiple courses/classes, course details, student rosters, lesson workflows, CSV import/export, printable reports, autosave, undo/redo, statistics charts, backup/restore, file icons, and persistent UI settings.
 
-Version `2.0.3` is the current stable bug-fix release. It removes particle feedback stalls when opening complex windows, preloads and reuses the Settings window, enumerates installed fonts in the background, reduces GDI allocation churn, and strengthens Release binary optimization while preserving the `.attd` V5 format.
+Version `2.0.4 (Ultra Optimization)` reorganizes the application into independently compiled modules, makes all personalization settings generally available, raises the dropdown scroll target limit to 360 FPS, and improves data safety, filtering, batch deletion, file processing, and binary size. Existing layouts, particle densities, 20 languages, and the `.attd` V5 format remain compatible.
 
 ## Features
 
@@ -23,7 +23,7 @@ Version `2.0.3` is the current stable bug-fix release. It removes particle feedb
 - Export attendance records to CSV.
 - Print or export to PDF through a generated printable HTML report with selectable report templates.
 - PowerPoint `.pptx` export with a pure-black report theme, summary cards, status charts, trend charts, and template/range-aware summaries.
-- Configurable autosave to `%APPDATA%\AttendanceApp\autosave.attd` (off, 30 seconds, 1 minute, or 5 minutes through experimental personalization).
+- Configurable autosave to `%APPDATA%\AttendanceApp\autosave.attd` (off, 30 seconds, 1 minute, or 5 minutes).
 - Restore, inspect, ignore, or delete autosave files on startup when available.
 - Ignored recovery files are preserved as timestamped protected backups before a new session replaces the active autosave.
 - Closing with dirty data checks the final autosave result and warns before exiting if recovery data could not be written.
@@ -36,17 +36,20 @@ Version `2.0.3` is the current stable bug-fix release. It removes particle feedb
 - Command palette for quick save/import/export/backup/statistics/settings actions, lesson review, and `rollcall` launch.
 - Database mirror export to `%APPDATA%\AttendanceApp\attendance.attddb`.
 - Persistent settings saved to `%APPDATA%\AttendanceApp\settings.ini`.
-- Pure-black default theme with an opt-in experimental personalization panel for pure-white mode, restrained accent tones, text size, interface density, autosave timing, dropdown scroll frame rate, statistics cards, footer hint, and table grid visibility.
+- Pure-black and pure-white themes, restrained accent tones, text size, interface density, autosave timing, dropdown scroll frame rate, statistics cards, footer hint, and table grid visibility are directly available in Settings.
 - Synchronized dark/light theme transitions keep backgrounds, text, inputs, lists, and title bars on one visual timeline.
 - Optional continuous pixel smooth scrolling for combo-box dropdowns and custom popup menus, with responsive mouse-wheel and precision-touchpad motion.
-- Experimental dropdown scroll scheduling is configurable from 60 to 240 FPS, uses a high-resolution timeline, skips stale frames, and applies immediately without restarting.
-- Experimental personalization is warning-gated; switching it off discards its values and transitions the complete interface back to the original pure-black theme.
+- Dropdown scroll scheduling is configurable from 60 to 360 FPS, uses a high-resolution timeline, skips stale frames, and applies immediately without restarting. Actual visible frame rate depends on the display, compositor, and hardware.
+- The experimental gate has been removed. Existing theme, font, layout, and animation choices are retained; individual effect switches and Reset All Settings remain available.
 - CSV, printable HTML, PowerPoint, database mirror, settings, and attendance saves verify complete writes before reporting success.
+- CSV, printable HTML, and database report generation use immutable background snapshots; PowerPoint packaging and report file writes also run on the report worker. Completion feedback returns to the UI thread, and accepted writes finish safely during shutdown.
 - Bounded, scrollable Tools menu with a local double-buffered refresh path, keyboard navigation, and a slim position indicator.
 - Supported languages: English, Simplified Chinese, Maltese, Japanese, French, German, Russian, Traditional Chinese Taiwan, Spanish, Italian, Mongolian, Esperanto, Classical Chinese, Thai, Filipino, Turkish, Lithuanian, Norwegian, Vietnamese, and Traditional Chinese Hong Kong Cantonese. The Hong Kong interface uses an independent local vocabulary, while exported reports use professional written wording.
 - Default window size: `1600x900`; resizable with `F11` fullscreen.
 
 ## Project Structure
+
+See [Architecture](docs/ARCHITECTURE.md) for module responsibilities and [the 2.0.4 audit](docs/V2.0.4_AUDIT.md) for measured changes and validation limits.
 
 ```text
 Attendance Project 2.0/

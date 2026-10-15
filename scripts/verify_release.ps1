@@ -36,7 +36,9 @@ $buildScriptPath = Join-Path $root 'build.bat'
 $resourcePath = Join-Path $root 'resources\app.rc'
 $manifestPath = Join-Path $root 'resources\app.manifest'
 
-$source = Read-Utf8File $sourcePath
+$source = (Get-ChildItem -LiteralPath (Join-Path $root 'src') -Recurse -File |
+    Where-Object { $_.Extension -in '.cpp', '.h' } | Sort-Object FullName |
+    ForEach-Object { Read-Utf8File $_.FullName }) -join "`n"
 $hongKong = Read-Utf8File $hongKongPath
 $readme = Read-Utf8File $readmePath
 $cmake = Read-Utf8File $cmakePath
@@ -45,19 +47,19 @@ $resource = Read-Utf8File $resourcePath
 $manifest = Read-Utf8File $manifestPath
 
 Assert-ReleaseCondition (-not [regex]::IsMatch($readme, '[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]')) 'README.md contains Chinese characters.'
-Assert-ReleaseCondition ($cmake -match 'project\(AttendanceApp VERSION 2\.0\.3 LANGUAGES CXX\)') 'CMake project version is not 2.0.3.'
-Assert-ReleaseCondition ($resource -match 'FILEVERSION\s+2,0,3,0') 'FileVersion resource is not 2.0.3.'
-Assert-ReleaseCondition ($resource -match 'PRODUCTVERSION\s+2,0,3,0') 'ProductVersion resource is not 2.0.3.'
-Assert-ReleaseCondition ($manifest -match 'assemblyIdentity version="2\.0\.3\.0"') 'Manifest version is not 2.0.3.0.'
-Assert-ReleaseCondition ($cmake -match '/Gy /Gw /Os') 'CMake Release compile optimizations are incomplete.'
+Assert-ReleaseCondition ($cmake -match 'project\(AttendanceApp VERSION 2\.0\.4 LANGUAGES CXX\)') 'CMake project version is not 2.0.4.'
+Assert-ReleaseCondition ($resource -match 'FILEVERSION\s+2,0,4,0') 'FileVersion resource is not 2.0.4.'
+Assert-ReleaseCondition ($resource -match 'PRODUCTVERSION\s+2,0,4,0') 'ProductVersion resource is not 2.0.4.'
+Assert-ReleaseCondition ($manifest -match 'assemblyIdentity version="2\.0\.4\.0"') 'Manifest version is not 2.0.4.0.'
+Assert-ReleaseCondition ($cmake -match '/Gy /Gw' -and $cmake -match '/Os') 'CMake Release compile optimizations are incomplete.'
 Assert-ReleaseCondition ($cmake -match '/LTCG /OPT:REF /OPT:ICF /INCREMENTAL:NO') 'CMake Release link optimizations are incomplete.'
-Assert-ReleaseCondition ($buildScript -match '/O2 /Os /Gy /Gw /GL') 'Direct MSVC compile optimizations are incomplete.'
+Assert-ReleaseCondition ((Read-Utf8File (Join-Path $root 'scripts\build_msvc.ps1')) -match '/O2 /Os /Gy /Gw /GL') 'Direct MSVC compile optimizations are incomplete.'
 Assert-ReleaseCondition ($source -match 'WM_APP_PREWARM_SETTINGS') 'Settings idle prewarming is missing.'
 Assert-ReleaseCondition ($source -match 'WM_APP_FONT_CACHE_READY') 'Background font-cache delivery is missing.'
 Assert-ReleaseCondition (-not ($source -match 'FillInstalledFontFamilies')) 'Synchronous font enumeration is still present.'
 Assert-ReleaseCondition ($source -match 'WM_APP_TEST_PARTICLE_METRICS') 'Particle performance test metrics are missing.'
 Assert-ReleaseCondition ($source -match 'CurrentTitleBarVisualState') 'Application title-bar colors are not defined.'
-Assert-ReleaseCondition ($source -match 'state\.caption\s*=\s*COLOR_PANEL') 'The title bar does not follow the rendered application palette.'
+Assert-ReleaseCondition ($source -match 'state\.caption\s*=\s*Ui\(\)\.COLOR_PANEL') 'The title bar does not follow the rendered application palette.'
 Assert-ReleaseCondition ($source -match 'RefreshOpenAppTitleBars\(false\)') 'Theme-transition frames do not update application title bars.'
 Assert-ReleaseCondition (-not ($source -match 'AppsUseLightTheme')) 'Title bars still follow the Windows color mode.'
 Assert-ReleaseCondition ($source -match 'DWMWA_SYSTEMBACKDROP_TYPE') 'The system title-bar backdrop is not enabled.'
@@ -106,8 +108,8 @@ foreach ($key in $requiredKeys) {
 Assert-ReleaseCondition ($duplicateKeys.Count -eq 0) ("Duplicate zh-HK translation keys: " + ($duplicateKeys -join ', '))
 Assert-ReleaseCondition ($emptyKeys.Count -eq 0) ("Empty zh-HK translations: " + ($emptyKeys -join ', '))
 Assert-ReleaseCondition ($missingKeys.Count -eq 0) ("Missing zh-HK translations: " + ($missingKeys -join ', '))
-Assert-ReleaseCondition ($source -match 'if\s*\(g_language\s*==\s*UiLanguage::ChineseTraditionalHongKong\)[\s\S]*?TranslateHongKong') 'zh-HK is not routed through its independent dictionary.'
-Assert-ReleaseCondition (-not ($source -match 'g_language\s*=\s*UiLanguage::ChineseTraditional\s*;')) 'A Traditional Chinese fallback assignment remains in the source.'
+Assert-ReleaseCondition ($source -match 'if\s*\(Settings\(\)\.language\s*==\s*UiLanguage::ChineseTraditionalHongKong\)[\s\S]*?TranslateHongKong') 'zh-HK is not routed through its independent dictionary.'
+Assert-ReleaseCondition (-not ($source -match 'Settings\(\)\.language\s*=\s*UiLanguage::ChineseTraditional\s*;')) 'A Traditional Chinese fallback assignment remains in the source.'
 
 $exeCandidates = @(
     (Join-Path $root 'build\Release\AttendanceApp.exe'),
@@ -120,9 +122,9 @@ $exe = Get-Item -LiteralPath $exePath
 if (-not $SkipBuild) {
     Assert-ReleaseCondition ($exe.LastWriteTime -ge $buildStartedAt.AddSeconds(-2)) 'AttendanceApp.exe was not refreshed by this build.'
 }
-Assert-ReleaseCondition ($exe.VersionInfo.FileVersion -eq '2.0.3') 'Executable FileVersion is not 2.0.3.'
-Assert-ReleaseCondition ($exe.VersionInfo.ProductVersion -eq '2.0.3') 'Executable ProductVersion is not 2.0.3.'
-Assert-ReleaseCondition ($exe.Length -lt 858624) 'The optimized 2.0.3 executable did not improve on the 858624-byte baseline.'
+Assert-ReleaseCondition ($exe.VersionInfo.FileVersion -eq '2.0.4') 'Executable FileVersion is not 2.0.4.'
+Assert-ReleaseCondition ($exe.VersionInfo.ProductVersion -eq '2.0.4') 'Executable ProductVersion is not 2.0.4.'
+Assert-ReleaseCondition ($exe.Length -lt 715776) 'The optimized 2.0.4 executable did not improve on the measured 2.0.3 baseline (715776 bytes).'
 
 Write-Host "Release verification passed."
 Write-Host "Executable: $exePath"

@@ -1,0 +1,4351 @@
+[
+  {
+    "name": "Feature",
+    "fields": [
+      {
+        "name": "key",
+        "kind": "utf8"
+      },
+      {
+        "name": "zh",
+        "kind": "utf16"
+      },
+      {
+        "name": "mt",
+        "kind": "utf8"
+      },
+      {
+        "name": "ja",
+        "kind": "utf16"
+      },
+      {
+        "name": "fr",
+        "kind": "utf8"
+      },
+      {
+        "name": "de",
+        "kind": "utf8"
+      },
+      {
+        "name": "ru",
+        "kind": "utf16"
+      },
+      {
+        "name": "zht",
+        "kind": "utf16"
+      },
+      {
+        "name": "es",
+        "kind": "utf8"
+      },
+      {
+        "name": "it",
+        "kind": "utf8"
+      },
+      {
+        "name": "mn",
+        "kind": "utf16"
+      },
+      {
+        "name": "eo",
+        "kind": "utf8"
+      },
+      {
+        "name": "lzh",
+        "kind": "utf16"
+      },
+      {
+        "name": "th",
+        "kind": "utf16"
+      },
+      {
+        "name": "fil",
+        "kind": "utf8"
+      },
+      {
+        "name": "tr",
+        "kind": "utf8"
+      },
+      {
+        "name": "lt",
+        "kind": "utf8"
+      },
+      {
+        "name": "no",
+        "kind": "utf8"
+      },
+      {
+        "name": "vi",
+        "kind": "utf8"
+      },
+      {
+        "name": "zhhk",
+        "kind": "utf16"
+      }
+    ],
+    "entries": [
+      [
+        "Animation level",
+        "动画强度",
+        "Livell ta' animazzjoni",
+        "アニメーションの強さ",
+        "Niveau d'animation",
+        "Animationsstufe",
+        "Уровень анимации",
+        "動畫強度",
+        "Nivel de animación",
+        "Livello animazione",
+        "Хөдөлгөөний түвшин",
+        "Nivelo de animacio",
+        "動畫之度",
+        "ระดับภาพเคลื่อนไหว",
+        "Antas ng animation",
+        "Animasyon düzeyi",
+        "Animacijos lygis",
+        "Animasjonsnivå",
+        "Mức hoạt ảnh",
+        "動畫強度"
+      ],
+      [
+        "Particle density",
+        "粒子密度",
+        "Densità tal-partiċelli",
+        "パーティクル密度",
+        "Densité des particules",
+        "Partikeldichte",
+        "Плотность частиц",
+        "粒子密度",
+        "Densidad de partículas",
+        "Densità particelle",
+        "Бөөмсийн нягт",
+        "Denseco de eroj",
+        "粒子之密",
+        "ความหนาแน่นของอนุภาค",
+        "Densidad ng particle",
+        "Parçacık yoğunluğu",
+        "Dalelių tankis",
+        "Partikkeltetthet",
+        "Mật độ hạt",
+        "粒子密度"
+      ],
+      [
+        "Report template",
+        "报告模板",
+        "Mudell tar-rapport",
+        "レポートテンプレート",
+        "Modèle de rapport",
+        "Berichtsvorlage",
+        "Шаблон отчёта",
+        "報告範本",
+        "Plantilla de informe",
+        "Modello di rapporto",
+        "Тайлангийн загвар",
+        "Raporta ŝablono",
+        "報告之式",
+        "แม่แบบรายงาน",
+        "Template ng ulat",
+        "Rapor şablonu",
+        "Ataskaitos šablonas",
+        "Rapportmal",
+        "Mẫu báo cáo",
+        "報告範本"
+      ],
+      [
+        "Enable risk student reminders",
+        "启用风险学生提醒",
+        "Ippermetti tfakkiriet għal studenti f'riskju",
+        "要注意生徒の通知を有効にする",
+        "Activer les rappels pour élèves à risque",
+        "Erinnerungen für Risikoschüler aktivieren",
+        "Включить напоминания о группе риска",
+        "啟用風險學生提醒",
+        "Activar avisos de estudiantes en riesgo",
+        "Attiva avvisi studenti a rischio",
+        "Эрсдэлтэй сурагчийн сануулгыг идэвхжүүлэх",
+        "Ŝalti memorigojn pri riskaj lernantoj",
+        "啟危生之告",
+        "เปิดการเตือนนักเรียนกลุ่มเสี่ยง",
+        "I-enable ang paalala sa estudyanteng may panganib",
+        "Riskli öğrenci uyarılarını etkinleştir",
+        "Įjungti rizikos mokinių priminimus",
+        "Aktiver påminnelser om risikostudenter",
+        "Bật nhắc nhở học sinh có nguy cơ",
+        "啟用風險學生提示"
+      ],
+      [
+        "Prompt for autosave recovery",
+        "启动时提示恢复自动保存",
+        "Staqsi dwar irkupru tas-salvataġġ awtomatiku",
+        "自動保存の復元を確認する",
+        "Proposer la récupération automatique",
+        "Wiederherstellung der Autospeicherung anbieten",
+        "Предлагать восстановление автосохранения",
+        "提示復原自動儲存",
+        "Preguntar por recuperación automática",
+        "Chiedi recupero salvataggio automatico",
+        "Автомат хадгалалт сэргээхийг асуух",
+        "Demandi pri aŭtomata reakiro",
+        "問自藏之復",
+        "ถามการกู้คืนบันทึกอัตโนมัติ",
+        "Magtanong tungkol sa awtomatikong pagbawi",
+        "Otomatik kaydetme kurtarmasını sor",
+        "Klausti dėl automatinio atkūrimo",
+        "Spør om gjenoppretting av autolagring",
+        "Nhắc khôi phục lưu tự động",
+        "啟動時提示還原自動儲存"
+      ],
+      [
+        "Enable Ctrl+K command palette",
+        "启用 Ctrl+K 命令面板",
+        "Ippermetti l-paletta tal-kmand Ctrl+K",
+        "Ctrl+K コマンドパレットを有効にする",
+        "Activer la palette de commandes Ctrl+K",
+        "Ctrl+K-Befehlspalette aktivieren",
+        "Включить палитру команд Ctrl+K",
+        "啟用 Ctrl+K 命令面板",
+        "Activar paleta de comandos Ctrl+K",
+        "Attiva tavolozza comandi Ctrl+K",
+        "Ctrl+K командын самбарыг идэвхжүүлэх",
+        "Ŝalti komandan paletron Ctrl+K",
+        "啟 Ctrl+K 命令板",
+        "เปิดจานคำสั่ง Ctrl+K",
+        "I-enable ang command palette na Ctrl+K",
+        "Ctrl+K komut paletini etkinleştir",
+        "Įjungti Ctrl+K komandų paletę",
+        "Aktiver Ctrl+K-kommandopaletten",
+        "Bật bảng lệnh Ctrl+K",
+        "啟用 Ctrl+K 指令面板"
+      ],
+      [
+        "Enable advanced filter syntax",
+        "启用高级筛选语法",
+        "Ippermetti sintassi ta' filtru avvanzat",
+        "高度なフィルター構文を有効にする",
+        "Activer la syntaxe de filtre avancée",
+        "Erweiterte Filtersyntax aktivieren",
+        "Включить расширенный синтаксис фильтра",
+        "啟用進階篩選語法",
+        "Activar sintaxis de filtro avanzado",
+        "Attiva sintassi filtro avanzata",
+        "Дэвшилтэт шүүлтүүрийн хэлбэрийг идэвхжүүлэх",
+        "Ŝalti altnivelan filtrilan sintakson",
+        "啟進篩之式",
+        "เปิดไวยากรณ์ตัวกรองขั้นสูง",
+        "I-enable ang advanced filter syntax",
+        "Gelişmiş filtre sözdizimini etkinleştir",
+        "Įjungti išplėstinę filtro sintaksę",
+        "Aktiver avansert filtersyntaks",
+        "Bật cú pháp bộ lọc nâng cao",
+        "啟用進階篩選語法"
+      ],
+      [
+        "Off",
+        "关闭",
+        "Mitfi",
+        "オフ",
+        "Désactivé",
+        "Aus",
+        "Выкл.",
+        "關閉",
+        "Desactivado",
+        "Disattivato",
+        "Унтраах",
+        "Malŝaltita",
+        "闔",
+        "ปิด",
+        "Naka-off",
+        "Kapalı",
+        "Išjungta",
+        "Av",
+        "Tắt",
+        "關閉"
+      ],
+      [
+        "Standard",
+        "标准",
+        "Standard",
+        "標準",
+        "Standard",
+        "Standard",
+        "Стандартный",
+        "標準",
+        "Estándar",
+        "Standard",
+        "Стандарт",
+        "Norma",
+        "常",
+        "มาตรฐาน",
+        "Pamantayan",
+        "Standart",
+        "Standartinis",
+        "Standard",
+        "Tiêu chuẩn",
+        "標準"
+      ],
+      [
+        "Advanced",
+        "高级",
+        "Avvanzat",
+        "高度",
+        "Avancé",
+        "Erweitert",
+        "Расширенный",
+        "進階",
+        "Avanzado",
+        "Avanzato",
+        "Ахисан",
+        "Altnivela",
+        "高",
+        "ขั้นสูง",
+        "Advanced",
+        "Gelişmiş",
+        "Išplėstinis",
+        "Avansert",
+        "Nâng cao",
+        "進階"
+      ],
+      [
+        "Low",
+        "低",
+        "Baxx",
+        "低",
+        "Faible",
+        "Niedrig",
+        "Низкий",
+        "低",
+        "Bajo",
+        "Basso",
+        "Бага",
+        "Malalta",
+        "低",
+        "ต่ำ",
+        "Mababa",
+        "Düşük",
+        "Žemas",
+        "Lav",
+        "Thấp",
+        "低"
+      ],
+      [
+        "Medium",
+        "中",
+        "Medju",
+        "中",
+        "Moyen",
+        "Mittel",
+        "Средний",
+        "中",
+        "Medio",
+        "Medio",
+        "Дунд",
+        "Meza",
+        "中",
+        "กลาง",
+        "Katamtaman",
+        "Orta",
+        "Vidutinis",
+        "Middels",
+        "Trung bình",
+        "中"
+      ],
+      [
+        "High",
+        "高",
+        "Għoli",
+        "高",
+        "Élevé",
+        "Hoch",
+        "Высокий",
+        "高",
+        "Alto",
+        "Alto",
+        "Өндөр",
+        "Alta",
+        "高",
+        "สูง",
+        "Mataas",
+        "Yüksek",
+        "Aukštas",
+        "Høy",
+        "Cao",
+        "高"
+      ],
+      [
+        "Simple",
+        "简洁版",
+        "Sempliċi",
+        "簡易",
+        "Simple",
+        "Einfach",
+        "Простой",
+        "簡潔版",
+        "Simple",
+        "Semplice",
+        "Энгийн",
+        "Simpla",
+        "簡",
+        "แบบง่าย",
+        "Simple",
+        "Basit",
+        "Paprastas",
+        "Enkel",
+        "Đơn giản",
+        "簡潔版"
+      ],
+      [
+        "Teacher",
+        "教师版",
+        "Għall-għalliem",
+        "教師用",
+        "Enseignant",
+        "Lehrkraft",
+        "Учитель",
+        "教師版",
+        "Profesor",
+        "Insegnante",
+        "Багш",
+        "Instruisto",
+        "師",
+        "ครู",
+        "Guro",
+        "Öğretmen",
+        "Mokytojas",
+        "Lærer",
+        "Giáo viên",
+        "教師版"
+      ],
+      [
+        "Parent",
+        "家长版",
+        "Ġenitur",
+        "保護者用",
+        "Parent",
+        "Eltern",
+        "Родитель",
+        "家長版",
+        "Padre",
+        "Genitore",
+        "Эцэг эх",
+        "Gepatro",
+        "親",
+        "ผู้ปกครอง",
+        "Magulang",
+        "Veli",
+        "Tėvas ar mama",
+        "Foresatt",
+        "Phụ huynh",
+        "家長版"
+      ],
+      [
+        "Complete",
+        "完整版",
+        "Komplet",
+        "完全",
+        "Complet",
+        "Vollständig",
+        "Полный",
+        "完整版",
+        "Completo",
+        "Completo",
+        "Бүрэн",
+        "Kompleta",
+        "全",
+        "สมบูรณ์",
+        "Kumpleto",
+        "Tam",
+        "Visas",
+        "Fullstendig",
+        "Đầy đủ",
+        "完整版"
+      ],
+      [
+        "All time",
+        "全部时间",
+        "Il-ħin kollu",
+        "全期間",
+        "Toute la période",
+        "Gesamter Zeitraum",
+        "За всё время",
+        "全部時間",
+        "Todo el tiempo",
+        "Tutto il periodo",
+        "Бүх хугацаа",
+        "Ĉiu tempo",
+        "通時",
+        "ตลอดเวลา",
+        "Lahat ng oras",
+        "Tüm zamanlar",
+        "Visas laikas",
+        "Hele perioden",
+        "Toàn bộ thời gian",
+        "全部時間"
+      ],
+      [
+        "This week",
+        "本周",
+        "Din il-ġimgħa",
+        "今週",
+        "Cette semaine",
+        "Diese Woche",
+        "Эта неделя",
+        "本週",
+        "Esta semana",
+        "Questa settimana",
+        "Энэ долоо хоног",
+        "Ĉi tiu semajno",
+        "本週",
+        "สัปดาห์นี้",
+        "Ngayong linggo",
+        "Bu hafta",
+        "Ši savaitė",
+        "Denne uken",
+        "Tuần này",
+        "本週"
+      ],
+      [
+        "This month",
+        "本月",
+        "Dan ix-xahar",
+        "今月",
+        "Ce mois-ci",
+        "Dieser Monat",
+        "Этот месяц",
+        "本月",
+        "Este mes",
+        "Questo mese",
+        "Энэ сар",
+        "Ĉi tiu monato",
+        "本月",
+        "เดือนนี้",
+        "Ngayong buwan",
+        "Bu ay",
+        "Šis mėnuo",
+        "Denne måneden",
+        "Tháng này",
+        "本月"
+      ],
+      [
+        "Create today's lesson",
+        "创建今日课次",
+        "Oħloq il-lezzjoni tal-lum",
+        "今日の授業を作成",
+        "Créer la séance du jour",
+        "Heutige Unterrichtsstunde erstellen",
+        "Создать урок на сегодня",
+        "建立今日課次",
+        "Crear la clase de hoy",
+        "Crea la lezione di oggi",
+        "Өнөөдрийн хичээл үүсгэх",
+        "Krei hodiaŭan lecionon",
+        "立今日課",
+        "สร้างคาบเรียนวันนี้",
+        "Gumawa ng aralin ngayon",
+        "Bugünün dersini oluştur",
+        "Sukurti šiandienos pamoką",
+        "Opprett dagens økt",
+        "Tạo buổi học hôm nay",
+        "建立今日課堂"
+      ],
+      [
+        "Switch lesson",
+        "切换课次",
+        "Ibdel lezzjoni",
+        "授業を切り替え",
+        "Changer de séance",
+        "Unterrichtsstunde wechseln",
+        "Сменить урок",
+        "切換課次",
+        "Cambiar clase",
+        "Cambia lezione",
+        "Хичээл солих",
+        "Ŝanĝi lecionon",
+        "易課",
+        "สลับคาบเรียน",
+        "Lumipat ng aralin",
+        "Dersi değiştir",
+        "Keisti pamoką",
+        "Bytt økt",
+        "Chuyển buổi học",
+        "切換課堂"
+      ],
+      [
+        "Student profile",
+        "学生档案",
+        "Profil tal-istudent",
+        "学生プロフィール",
+        "Profil de l'élève",
+        "Schülerprofil",
+        "Профиль ученика",
+        "學生檔案",
+        "Perfil del estudiante",
+        "Profilo studente",
+        "Сурагчийн танилцуулга",
+        "Profilo de lernanto",
+        "弟子檔",
+        "โปรไฟล์นักเรียน",
+        "Profile ng estudyante",
+        "Öğrenci profili",
+        "Mokinio profilis",
+        "Elevprofil",
+        "Hồ sơ học sinh",
+        "學生檔案"
+      ],
+      [
+        "Advanced filter",
+        "高级筛选",
+        "Filtru avvanzat",
+        "高度なフィルター",
+        "Filtre avancé",
+        "Erweiterter Filter",
+        "Расширенный фильтр",
+        "進階篩選",
+        "Filtro avanzado",
+        "Filtro avanzato",
+        "Дэвшилтэт шүүлтүүр",
+        "Altnivela filtrilo",
+        "進篩",
+        "ตัวกรองขั้นสูง",
+        "Advanced filter",
+        "Gelişmiş filtre",
+        "Išplėstinis filtras",
+        "Avansert filter",
+        "Bộ lọc nâng cao",
+        "進階篩選"
+      ],
+      [
+        "Statistics range",
+        "统计范围",
+        "Medda tal-istatistika",
+        "統計範囲",
+        "Période statistique",
+        "Statistikzeitraum",
+        "Диапазон статистики",
+        "統計範圍",
+        "Rango de estadísticas",
+        "Intervallo statistiche",
+        "Статистикийн хүрээ",
+        "Statistika intervalo",
+        "計數之域",
+        "ช่วงสถิติ",
+        "Saklaw ng istatistika",
+        "İstatistik aralığı",
+        "Statistikos intervalas",
+        "Statistikkområde",
+        "Phạm vi thống kê",
+        "統計範圍"
+      ],
+      [
+        "Risk students",
+        "风险学生",
+        "Studenti f'riskju",
+        "要注意生徒",
+        "Élèves à risque",
+        "Risikoschüler",
+        "Учащиеся группы риска",
+        "風險學生",
+        "Estudiantes en riesgo",
+        "Studenti a rischio",
+        "Эрсдэлтэй сурагчид",
+        "Riskaj lernantoj",
+        "危弟",
+        "นักเรียนกลุ่มเสี่ยง",
+        "Mga estudyanteng may panganib",
+        "Riskli öğrenciler",
+        "Rizikos mokiniai",
+        "Risikostudenter",
+        "Học sinh có nguy cơ",
+        "風險學生"
+      ],
+      [
+        "Backup manager",
+        "备份管理中心",
+        "Maniġer tal-backup",
+        "バックアップ管理",
+        "Gestionnaire de sauvegardes",
+        "Sicherungsverwaltung",
+        "Менеджер резервных копий",
+        "備份管理中心",
+        "Gestor de copias",
+        "Gestore backup",
+        "Нөөцийн менежер",
+        "Sekurkopi-administrilo",
+        "備份司",
+        "ตัวจัดการข้อมูลสำรอง",
+        "Backup manager",
+        "Yedek yöneticisi",
+        "Atsarginių kopijų tvarkyklė",
+        "Sikkerhetskopi-behandler",
+        "Trình quản lý sao lưu",
+        "備份管理中心"
+      ],
+      [
+        "Command palette",
+        "命令面板",
+        "Paletta tal-kmand",
+        "コマンドパレット",
+        "Palette de commandes",
+        "Befehlspalette",
+        "Палитра команд",
+        "命令面板",
+        "Paleta de comandos",
+        "Tavolozza comandi",
+        "Командын самбар",
+        "Komanda paletro",
+        "命令板",
+        "จานคำสั่ง",
+        "Command palette",
+        "Komut paleti",
+        "Komandų paletė",
+        "Kommandopalett",
+        "Bảng lệnh",
+        "指令面板"
+      ],
+      [
+        "Shortcut center",
+        "快捷键中心",
+        "Ċentru shortcuts",
+        "ショートカットセンター",
+        "Centre des raccourcis",
+        "Tastenkürzelzentrale",
+        "Центр сочетаний клавиш",
+        "快速鍵中心",
+        "Centro de atajos",
+        "Centro scorciatoie",
+        "Товчлолын төв",
+        "Ŝparvoja centro",
+        "捷鍵司",
+        "ศูนย์คีย์ลัด",
+        "Sentro ng shortcut",
+        "Kısayol merkezi",
+        "Spartųjų klavišų centras",
+        "Snarveissenter",
+        "Trung tâm phím tắt",
+        "快速鍵中心"
+      ],
+      [
+        "Lesson",
+        "课次",
+        "Lezzjoni",
+        "授業",
+        "Séance",
+        "Unterrichtsstunde",
+        "Урок",
+        "課次",
+        "Clase",
+        "Lezione",
+        "Хичээл",
+        "Leciono",
+        "課",
+        "คาบเรียน",
+        "Aralin",
+        "Ders",
+        "Pamoka",
+        "Økt",
+        "Buổi học",
+        "課堂"
+      ],
+      [
+        "Lesson name:",
+        "课次名称：",
+        "Isem tal-lezzjoni:",
+        "授業名:",
+        "Nom de la séance :",
+        "Name der Unterrichtsstunde:",
+        "Название урока:",
+        "課次名稱：",
+        "Nombre de la clase:",
+        "Nome della lezione:",
+        "Хичээлийн нэр:",
+        "Leciona nomo:",
+        "課名：",
+        "ชื่อคาบเรียน:",
+        "Pangalan ng aralin:",
+        "Ders adı:",
+        "Pamokos pavadinimas:",
+        "Øktnavn:",
+        "Tên buổi học:",
+        "課堂名稱："
+      ],
+      [
+        "Recent history",
+        "最近记录",
+        "Storja riċenti",
+        "最近の履歴",
+        "Historique récent",
+        "Letzte Historie",
+        "Недавняя история",
+        "最近紀錄",
+        "Historial reciente",
+        "Cronologia recente",
+        "Сүүлийн түүх",
+        "Lastatempa historio",
+        "近錄",
+        "ประวัติล่าสุด",
+        "Kamakailang kasaysayan",
+        "Son geçmiş",
+        "Naujausia istorija",
+        "Nylig historikk",
+        "Lịch sử gần đây",
+        "最近紀錄"
+      ],
+      [
+        "Lesson completion check",
+        "课次完成检查",
+        "Kontroll tat-tlestija tal-lezzjoni",
+        "授業完了チェック",
+        "Vérification de séance",
+        "Unterrichtsprüfung",
+        "Проверка урока",
+        "課次完成檢查",
+        "Comprobación de clase",
+        "Controllo lezione",
+        "Хичээлийн шалгалт",
+        "Leciona kompletiga kontrolo",
+        "課成檢",
+        "ตรวจสอบความครบถ้วนของคาบ",
+        "Pagsusuri ng aralin",
+        "Ders tamamlama denetimi",
+        "Pamokos patikra",
+        "Kontroll av økt",
+        "Kiểm tra buổi học",
+        "課堂完成檢查"
+      ],
+      [
+        "Quick roll call",
+        "快速点名",
+        "Sejħa rapida",
+        "クイック点呼",
+        "Appel rapide",
+        "Schnelle Anwesenheit",
+        "Быстрая перекличка",
+        "快速點名",
+        "Pase de lista rápido",
+        "Appello rapido",
+        "Шуурхай бүртгэл",
+        "Rapida nomvoko",
+        "速點",
+        "เช็กชื่อด่วน",
+        "Mabilis na roll call",
+        "Hızlı yoklama",
+        "Greita patikra",
+        "Hurtig opprop",
+        "Điểm danh nhanh",
+        "快速點名"
+      ],
+      [
+        "Reviewed",
+        "已检查",
+        "Iċċekkjati",
+        "確認済み",
+        "Vérifiés",
+        "Geprüft",
+        "Проверено",
+        "已檢查",
+        "Revisados",
+        "Verificati",
+        "Шалгасан",
+        "Kontrolitaj",
+        "已檢",
+        "ตรวจแล้ว",
+        "Nasuri",
+        "İncelenen",
+        "Patikrinta",
+        "Kontrollert",
+        "Đã kiểm tra",
+        "已檢查"
+      ],
+      [
+        "Remaining",
+        "剩余",
+        "Fadal",
+        "残り",
+        "Restants",
+        "Verbleibend",
+        "Осталось",
+        "剩餘",
+        "Restantes",
+        "Rimanenti",
+        "Үлдсэн",
+        "Restantaj",
+        "餘",
+        "คงเหลือ",
+        "Natitira",
+        "Kalan",
+        "Liko",
+        "Gjenstår",
+        "Còn lại",
+        "剩餘"
+      ],
+      [
+        "Course:",
+        "课程：",
+        "Kors:",
+        "コース：",
+        "Cours :",
+        "Kurs:",
+        "Курс:",
+        "課程：",
+        "Curso:",
+        "Corso:",
+        "Хичээл:",
+        "Kurso:",
+        "課程：",
+        "รายวิชา:",
+        "Kurso:",
+        "Ders:",
+        "Kursas:",
+        "Kurs:",
+        "Khóa học:",
+        "課程："
+      ],
+      [
+        "Lesson:",
+        "课次：",
+        "Lezzjoni:",
+        "授業：",
+        "Séance :",
+        "Unterricht:",
+        "Урок:",
+        "課次：",
+        "Clase:",
+        "Lezione:",
+        "Хичээл:",
+        "Leciono:",
+        "課：",
+        "คาบเรียน:",
+        "Aralin:",
+        "Ders:",
+        "Pamoka:",
+        "Økt:",
+        "Buổi học:",
+        "課堂："
+      ],
+      [
+        "Current status:",
+        "当前状态：",
+        "Status kurrenti:",
+        "現在の状態：",
+        "Statut actuel :",
+        "Aktueller Status:",
+        "Текущий статус:",
+        "目前狀態：",
+        "Estado actual:",
+        "Stato attuale:",
+        "Одоогийн төлөв:",
+        "Nuna stato:",
+        "今態：",
+        "สถานะปัจจุบัน:",
+        "Kasalukuyang katayuan:",
+        "Geçerli durum:",
+        "Dabartinė būsena:",
+        "Gjeldende status:",
+        "Trạng thái hiện tại:",
+        "目前狀態："
+      ],
+      [
+        "Unmarked",
+        "未标记",
+        "Mhux immarkat",
+        "未マーク",
+        "Non marqué",
+        "Nicht markiert",
+        "Не отмечено",
+        "未標記",
+        "Sin marcar",
+        "Non segnato",
+        "Тэмдэглээгүй",
+        "Nemarkita",
+        "未標",
+        "ยังไม่ระบุ",
+        "Hindi pa namarkahan",
+        "İşaretlenmedi",
+        "Nepažymėta",
+        "Ikke markert",
+        "Chưa đánh dấu",
+        "未標記"
+      ],
+      [
+        "Notes:",
+        "备注：",
+        "Noti:",
+        "メモ：",
+        "Notes :",
+        "Notizen:",
+        "Примечания:",
+        "備註：",
+        "Notas:",
+        "Note:",
+        "Тэмдэглэл:",
+        "Notoj:",
+        "註：",
+        "หมายเหตุ:",
+        "Tala:",
+        "Notlar:",
+        "Pastabos:",
+        "Merknader:",
+        "Ghi chú:",
+        "備註："
+      ],
+      [
+        "Previous",
+        "上一位",
+        "Preċedenti",
+        "前へ",
+        "Précédent",
+        "Zurück",
+        "Предыдущий",
+        "上一位",
+        "Anterior",
+        "Precedente",
+        "Өмнөх",
+        "Antaŭa",
+        "前",
+        "ก่อนหน้า",
+        "Nakaraan",
+        "Önceki",
+        "Ankstesnis",
+        "Forrige",
+        "Trước",
+        "上一位"
+      ],
+      [
+        "Skip",
+        "跳过",
+        "Aqbeż",
+        "スキップ",
+        "Passer",
+        "Überspringen",
+        "Пропустить",
+        "略過",
+        "Omitir",
+        "Salta",
+        "Алгасах",
+        "Preterlasi",
+        "略",
+        "ข้าม",
+        "Laktawan",
+        "Atla",
+        "Praleisti",
+        "Hopp over",
+        "Bỏ qua",
+        "略過"
+      ],
+      [
+        "Finish",
+        "完成",
+        "Lesti",
+        "完了",
+        "Terminer",
+        "Fertig",
+        "Завершить",
+        "完成",
+        "Finalizar",
+        "Termina",
+        "Дуусгах",
+        "Fini",
+        "畢",
+        "เสร็จสิ้น",
+        "Tapusin",
+        "Bitir",
+        "Baigti",
+        "Fullfør",
+        "Hoàn tất",
+        "完成"
+      ],
+      [
+        "Cancel",
+        "取消",
+        "Ikkanċella",
+        "キャンセル",
+        "Annuler",
+        "Abbrechen",
+        "Отмена",
+        "取消",
+        "Cancelar",
+        "Annulla",
+        "Цуцлах",
+        "Nuligi",
+        "罷",
+        "ยกเลิก",
+        "Kanselahin",
+        "İptal",
+        "Atšaukti",
+        "Avbryt",
+        "Hủy",
+        "取消"
+      ],
+      [
+        "No students in the roster.",
+        "当前课程名单中没有学生。",
+        "M'hemmx studenti fil-lista.",
+        "名簿に生徒がいません。",
+        "La liste ne contient aucun élève.",
+        "Die Liste enthält keine Schüler.",
+        "В списке нет учащихся.",
+        "目前課程名單中沒有學生。",
+        "No hay estudiantes en la lista.",
+        "Nessuno studente nell'elenco.",
+        "Жагсаалтад сурагч алга.",
+        "Neniuj lernantoj en la listo.",
+        "名簿無生。",
+        "ไม่มีนักเรียนในรายชื่อ",
+        "Walang estudyante sa talaan.",
+        "Listede öğrenci yok.",
+        "Sąraše nėra mokinių.",
+        "Ingen elever i listen.",
+        "Không có học sinh trong danh sách.",
+        "目前課程名單中沒有學生。"
+      ],
+      [
+        "Other status requires a note.",
+        "选择其他状态时必须填写备注。",
+        "L-istatus Ieħor jeħtieġ nota.",
+        "その他にはメモが必要です。",
+        "Le statut Autre exige une note.",
+        "Für Sonstiges ist eine Notiz erforderlich.",
+        "Для статуса Другое нужна заметка.",
+        "選擇其他狀態時必須填寫備註。",
+        "El estado Otro requiere una nota.",
+        "Lo stato Altro richiede una nota.",
+        "Бусад төлөвт тэмдэглэл шаардлагатай.",
+        "Alia stato postulas noton.",
+        "他態須註。",
+        "สถานะอื่นต้องมีหมายเหตุ",
+        "Kailangan ng tala para sa Iba pa.",
+        "Diğer durumu için not gerekir.",
+        "Būsenai Kita reikia pastabos.",
+        "Annen status krever merknad.",
+        "Trạng thái Khác cần ghi chú.",
+        "其他狀態必須填寫備註。"
+      ],
+      [
+        "Duplicate lesson records must be resolved before quick roll call.",
+        "开始快速点名前必须先处理重复课次记录。",
+        "Ir-rekords duplikati għandhom jiġu solvuti qabel is-sejħa rapida.",
+        "クイック点呼の前に重複記録を解決してください。",
+        "Corrigez les doublons avant l'appel rapide.",
+        "Doppelte Einträge müssen vorher bereinigt werden.",
+        "Перед перекличкой устраните дубликаты.",
+        "快速點名前必須先處理重複課次紀錄。",
+        "Resuelva los registros duplicados antes del pase rápido.",
+        "Risolvi i record duplicati prima dell'appello rapido.",
+        "Шуурхай бүртгэлээс өмнө давхардлыг засна уу.",
+        "Solvu duoblajn registrojn antaŭ la rapida nomvoko.",
+        "速點前必去重錄。",
+        "ต้องแก้ไขรายการซ้ำก่อนเช็กชื่อด่วน",
+        "Ayusin muna ang dobleng tala bago ang mabilis na roll call.",
+        "Hızlı yoklamadan önce yinelenen kayıtları çözün.",
+        "Prieš greitą patikrą pašalinkite dublikatus.",
+        "Løs duplikater før hurtig opprop.",
+        "Hãy xử lý bản ghi trùng trước khi điểm danh nhanh.",
+        "快速點名前必須先處理重複課堂紀錄。"
+      ],
+      [
+        "Discard quick roll call changes?",
+        "放弃本次快速点名的修改吗？",
+        "Twarrab il-bidliet tas-sejħa rapida?",
+        "クイック点呼の変更を破棄しますか？",
+        "Abandonner les modifications de l'appel rapide ?",
+        "Änderungen der Schnellkontrolle verwerfen?",
+        "Отменить изменения быстрой переклички?",
+        "放棄本次快速點名的修改嗎？",
+        "¿Descartar los cambios del pase rápido?",
+        "Scartare le modifiche dell'appello rapido?",
+        "Шуурхай бүртгэлийн өөрчлөлтийг цуцлах уу?",
+        "Forĵeti la ŝanĝojn de rapida nomvoko?",
+        "棄速點之改乎？",
+        "ยกเลิกการเปลี่ยนแปลงเช็กชื่อด่วนหรือไม่",
+        "Itapon ang mga pagbabago sa mabilis na roll call?",
+        "Hızlı yoklama değişiklikleri atılsın mı?",
+        "Atmesti greitos patikros pakeitimus?",
+        "Forkaste endringer fra hurtig opprop?",
+        "Hủy thay đổi điểm danh nhanh?",
+        "放棄本次快速點名的修改嗎？"
+      ],
+      [
+        "students have not been reviewed. Finish and keep the partial results?",
+        "名学生尚未检查。是否完成并保留部分结果？",
+        "studenti għadhom ma ġewx iċċekkjati. Tispiċċa u żżomm ir-riżultati parzjali?",
+        "名が未確認です。部分結果を保持して完了しますか？",
+        "élèves restent à vérifier. Terminer et conserver les résultats partiels ?",
+        "Schüler sind ungeprüft. Beenden und Teilergebnisse behalten?",
+        "учащихся не проверено. Завершить и сохранить частичные результаты?",
+        "名學生尚未檢查。是否完成並保留部分結果？",
+        "estudiantes no han sido revisados. ¿Finalizar y conservar los resultados parciales?",
+        "studenti non sono stati verificati. Terminare e conservare i risultati parziali?",
+        "сурагч шалгагдаагүй. Дуусгаж хэсэгчилсэн үр дүнг хадгалах уу?",
+        "lernantoj ne estas kontrolitaj. Fini kaj konservi la partajn rezultojn?",
+        "生未檢。畢而存其半果乎？",
+        "คนยังไม่ได้ตรวจ จะเสร็จสิ้นและเก็บผลบางส่วนหรือไม่",
+        "estudyante ang hindi pa nasuri. Tapusin at panatilihin ang bahagyang resulta?",
+        "öğrenci incelenmedi. Bitirip kısmi sonuçlar tutulsun mu?",
+        "mokiniai nepatikrinti. Baigti ir palikti dalinius rezultatus?",
+        "elever er ikke kontrollert. Fullføre og beholde delresultatene?",
+        "học sinh chưa được kiểm tra. Hoàn tất và giữ kết quả một phần?",
+        "名學生尚未檢查。是否完成並保留部分結果？"
+      ],
+      [
+        "Quick roll call changes were applied.",
+        "快速点名修改已应用。",
+        "Il-bidliet tas-sejħa rapida ġew applikati.",
+        "クイック点呼の変更を適用しました。",
+        "Les modifications de l'appel rapide ont été appliquées.",
+        "Die Änderungen wurden übernommen.",
+        "Изменения быстрой переклички применены.",
+        "快速點名修改已套用。",
+        "Se aplicaron los cambios del pase rápido.",
+        "Le modifiche dell'appello rapido sono state applicate.",
+        "Шуурхай бүртгэлийн өөрчлөлтийг хэрэгжүүллээ.",
+        "La ŝanĝoj de rapida nomvoko estis aplikitaj.",
+        "速點之改已施。",
+        "ใช้การเปลี่ยนแปลงเช็กชื่อด่วนแล้ว",
+        "Nailapat ang mga pagbabago sa mabilis na roll call.",
+        "Hızlı yoklama değişiklikleri uygulandı.",
+        "Greitos patikros pakeitimai pritaikyti.",
+        "Endringene fra hurtig opprop er brukt.",
+        "Đã áp dụng thay đổi điểm danh nhanh.",
+        "快速點名修改已套用。"
+      ],
+      [
+        "Keyboard: 1 Present, 2 Absent, 3 Late, 4 Other, Left Previous, Right Skip",
+        "键盘：1 出席，2 缺席，3 迟到，4 其他，左方向键上一位，右方向键跳过",
+        "Tastiera: 1 Preżenti, 2 Assenti, 3 Tard, 4 Ieħor, Xellug Qabel, Lemin Aqbeż",
+        "キー：1 出席、2 欠席、3 遅刻、4 その他、左 前へ、右 スキップ",
+        "Clavier : 1 Présent, 2 Absent, 3 Retard, 4 Autre, Gauche Précédent, Droite Passer",
+        "Tasten: 1 Anwesend, 2 Abwesend, 3 Verspätet, 4 Sonstiges, Links Zurück, Rechts Überspringen",
+        "Клавиши: 1 Присутствует, 2 Отсутствует, 3 Опоздал, 4 Другое, Влево Назад, Вправо Пропустить",
+        "鍵盤：1 出席，2 缺席，3 遲到，4 其他，左鍵上一位，右鍵略過",
+        "Teclado: 1 Presente, 2 Ausente, 3 Tarde, 4 Otro, Izquierda Anterior, Derecha Omitir",
+        "Tasti: 1 Presente, 2 Assente, 3 Ritardo, 4 Altro, Sinistra Precedente, Destra Salta",
+        "Товч: 1 Ирсэн, 2 Тасалсан, 3 Хоцорсон, 4 Бусад, Зүүн Өмнөх, Баруун Алгасах",
+        "Klavoj: 1 Ĉeestas, 2 Forestas, 3 Malfrua, 4 Alia, Maldekstre Antaŭa, Dekstre Preterlasi",
+        "鍵：一出席，二缺席，三遲，四他，左前，右略",
+        "แป้น: 1 มา, 2 ขาด, 3 สาย, 4 อื่น, ซ้าย ก่อนหน้า, ขวา ข้าม",
+        "Key: 1 Present, 2 Absent, 3 Late, 4 Iba pa, Kaliwa Nakaraan, Kanan Laktawan",
+        "Tuşlar: 1 Var, 2 Yok, 3 Geç, 4 Diğer, Sol Önceki, Sağ Atla",
+        "Klavišai: 1 Yra, 2 Nėra, 3 Vėluoja, 4 Kita, Kairė Ankstesnis, Dešinė Praleisti",
+        "Taster: 1 Tilstede, 2 Fravær, 3 Sen, 4 Annet, Venstre Forrige, Høyre Hopp over",
+        "Phím: 1 Có mặt, 2 Vắng, 3 Muộn, 4 Khác, Trái Trước, Phải Bỏ qua",
+        "鍵盤：1 出席，2 缺席，3 遲到，4 其他，左鍵上一位，右鍵略過"
+      ],
+      [
+        "Type a command: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings",
+        "输入命令：save、import、export、backup、stats、risk、filter、lesson、rollcall、点名、review、profile、settings",
+        "Ikteb kmand: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings",
+        "コマンドを入力：save、import、export、backup、stats、risk、filter、lesson、rollcall、review、profile、settings",
+        "Saisissez une commande : save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings",
+        "Befehl eingeben: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings",
+        "Введите команду: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings",
+        "輸入命令：save、import、export、backup、stats、risk、filter、lesson、rollcall、點名、review、profile、settings",
+        "Escriba un comando: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings",
+        "Digita un comando: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings",
+        "Тушаал оруулна уу: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings",
+        "Tajpu komandon: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings",
+        "輸命：save、import、export、backup、stats、risk、filter、lesson、rollcall、review、profile、settings",
+        "พิมพ์คำสั่ง: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings",
+        "Mag-type ng command: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings",
+        "Komut girin: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings",
+        "Įveskite komandą: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings",
+        "Skriv en kommando: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings",
+        "Nhập lệnh: save, import, export, backup, stats, risk, filter, lesson, rollcall, review, profile, settings",
+        "輸入指令：save、import、export、backup、stats、risk、filter、lesson、rollcall、點名、review、profile、settings"
+      ],
+      [
+        "Default Course",
+        "默认课程",
+        "Kors awtomatiku",
+        "既定コース",
+        "Cours par défaut",
+        "Standardkurs",
+        "Курс по умолчанию",
+        "預設課程",
+        "Curso predeterminado",
+        "Corso predefinito",
+        "Үндсэн хичээл",
+        "Defaŭlta kurso",
+        "常課",
+        "รายวิชาเริ่มต้น",
+        "Default na kurso",
+        "Varsayılan ders",
+        "Numatytasis kursas",
+        "Standardkurs",
+        "Khóa học mặc định",
+        "預設課程"
+      ]
+    ]
+  },
+  {
+    "name": "Legacy",
+    "fields": [
+      {
+        "name": "key",
+        "kind": "utf8"
+      },
+      {
+        "name": "no",
+        "kind": "utf8"
+      },
+      {
+        "name": "vi",
+        "kind": "utf8"
+      },
+      {
+        "name": "zhhk",
+        "kind": "utf16"
+      }
+    ],
+    "entries": [
+      [
+        "AttendanceApp - .attd Roll Call Manager",
+        "AttendanceApp - .attd oppropsbehandler",
+        "AttendanceApp - Trình quản lý điểm danh .attd",
+        "AttendanceApp - .attd 點名管理"
+      ],
+      [
+        "Attendance Manager",
+        "Fraværsbehandler",
+        "Quản lý điểm danh",
+        "點名管理"
+      ],
+      [
+        "Create, edit, export, save, import, and batch clean .attd roll calls.",
+        "Opprett, rediger, eksporter, lagre, importer og rydd .attd-opprop.",
+        "Tạo, sửa, xuất, lưu, nhập và dọn dẹp điểm danh .attd.",
+        "建立、編輯、匯出、儲存、匯入同批量清理 .attd 點名記錄。"
+      ],
+      [
+        "Date/Time",
+        "Dato/tid",
+        "Ngày/giờ",
+        "日期/時間"
+      ],
+      [
+        "Date / Time",
+        "Dato / tid",
+        "Ngày / giờ",
+        "日期 / 時間"
+      ],
+      [
+        "Name",
+        "Navn",
+        "Tên",
+        "姓名"
+      ],
+      [
+        "Status",
+        "Status",
+        "Trạng thái",
+        "狀態"
+      ],
+      [
+        "Other",
+        "Annet",
+        "Khác",
+        "其他"
+      ],
+      [
+        "Present",
+        "Tilstede",
+        "Có mặt",
+        "出席"
+      ],
+      [
+        "Absent",
+        "Fraværende",
+        "Vắng",
+        "缺席"
+      ],
+      [
+        "Late",
+        "Sen",
+        "Đi trễ",
+        "遲到"
+      ],
+      [
+        "Search",
+        "Søk",
+        "Tìm kiếm",
+        "搜尋"
+      ],
+      [
+        "Clear Filter",
+        "Tøm filter",
+        "Xóa bộ lọc",
+        "清除篩選"
+      ],
+      [
+        "Total",
+        "Totalt",
+        "Tổng",
+        "總數"
+      ],
+      [
+        "Attendance",
+        "Oppmøte",
+        "Chuyên cần",
+        "出勤"
+      ],
+      [
+        "Absent/Late",
+        "Fravær/sen",
+        "Vắng/trễ",
+        "缺席/遲到"
+      ],
+      [
+        "Save .attd",
+        "Lagre .attd",
+        "Lưu .attd",
+        "儲存 .attd"
+      ],
+      [
+        "Import .attd",
+        "Importer .attd",
+        "Nhập .attd",
+        "匯入 .attd"
+      ],
+      [
+        "Export CSV",
+        "Eksporter CSV",
+        "Xuất CSV",
+        "匯出 CSV"
+      ],
+      [
+        "Tools",
+        "Verktøy",
+        "Công cụ",
+        "工具"
+      ],
+      [
+        "Courses",
+        "Kurs",
+        "Khóa/lớp",
+        "課程"
+      ],
+      [
+        "Settings",
+        "Innstillinger",
+        "Cài đặt",
+        "設定"
+      ],
+      [
+        "Language",
+        "Språk",
+        "Ngôn ngữ",
+        "語言"
+      ],
+      [
+        "Style",
+        "Stil",
+        "Giao diện",
+        "風格"
+      ],
+      [
+        "Interface Font",
+        "Grensesnittskrift",
+        "Phông giao diện",
+        "介面字型"
+      ],
+      [
+        "Apply",
+        "Bruk",
+        "Áp dụng",
+        "套用"
+      ],
+      [
+        "Close",
+        "Lukk",
+        "Đóng",
+        "關閉"
+      ],
+      [
+        "OK",
+        "OK",
+        "OK",
+        "確定"
+      ],
+      [
+        "Cancel",
+        "Avbryt",
+        "Hủy",
+        "取消"
+      ],
+      [
+        "Import student roster (CSV)",
+        "Importer elevliste (CSV)",
+        "Nhập danh sách học sinh (CSV)",
+        "匯入學生名單 (CSV)"
+      ],
+      [
+        "Manage students",
+        "Administrer elever",
+        "Quản lý học sinh",
+        "管理學生"
+      ],
+      [
+        "Add student to roster",
+        "Legg elev til liste",
+        "Thêm học sinh vào danh sách",
+        "加學生入名單"
+      ],
+      [
+        "Remove student from roster",
+        "Fjern elev fra liste",
+        "Xóa học sinh khỏi danh sách",
+        "從名單移除學生"
+      ],
+      [
+        "Create records from roster",
+        "Opprett poster fra liste",
+        "Tạo bản ghi từ danh sách",
+        "用名單建立點名記錄"
+      ],
+      [
+        "Course details",
+        "Kursdetaljer",
+        "Chi tiết khóa/lớp",
+        "課程資料"
+      ],
+      [
+        "Teacher/owner:",
+        "Lærer/ansvarlig:",
+        "Giáo viên/phụ trách:",
+        "老師/負責人："
+      ],
+      [
+        "Location:",
+        "Sted:",
+        "Địa điểm:",
+        "地點："
+      ],
+      [
+        "Course notes:",
+        "Kursnotater:",
+        "Ghi chú khóa/lớp:",
+        "課程備註："
+      ],
+      [
+        "Student name:",
+        "Elevnavn:",
+        "Tên học sinh:",
+        "學生姓名："
+      ],
+      [
+        "Student added.",
+        "Elev lagt til.",
+        "Đã thêm học sinh.",
+        "已加入學生。"
+      ],
+      [
+        "Student removed.",
+        "Elev fjernet.",
+        "Đã xóa học sinh.",
+        "已移除學生。"
+      ],
+      [
+        "No students in the roster.",
+        "Ingen elever i listen.",
+        "Chưa có học sinh trong danh sách.",
+        "名單未有學生。"
+      ],
+      [
+        "Roster records created.",
+        "Listeposter opprettet.",
+        "Đã tạo bản ghi từ danh sách.",
+        "已用名單建立記錄。"
+      ],
+      [
+        "Statistics summary",
+        "Statistikksammendrag",
+        "Tóm tắt thống kê",
+        "統計摘要"
+      ],
+      [
+        "Top absent/late students",
+        "Flest fravær/sene elever",
+        "Học sinh vắng/trễ nhiều nhất",
+        "缺席/遲到最多學生"
+      ],
+      [
+        "Backup now",
+        "Sikkerhetskopier nå",
+        "Sao lưu ngay",
+        "立即備份"
+      ],
+      [
+        "Restore latest backup",
+        "Gjenopprett siste kopi",
+        "Khôi phục bản sao lưu mới nhất",
+        "還原最新備份"
+      ],
+      [
+        "Open recent file",
+        "Åpne nylig fil",
+        "Mở tệp gần đây",
+        "開啟最近檔案"
+      ],
+      [
+        "Backup created:",
+        "Sikkerhetskopi opprettet:",
+        "Đã tạo sao lưu:",
+        "已建立備份："
+      ],
+      [
+        "No backup file was found.",
+        "Ingen sikkerhetskopi funnet.",
+        "Không tìm thấy bản sao lưu.",
+        "找不到備份檔。"
+      ],
+      [
+        "No recent file was found.",
+        "Ingen nylig fil funnet.",
+        "Không tìm thấy tệp gần đây.",
+        "找不到最近檔案。"
+      ],
+      [
+        "Set default save folder",
+        "Velg standard lagringsmappe",
+        "Đặt thư mục lưu mặc định",
+        "設定預設儲存資料夾"
+      ],
+      [
+        "Default save folder updated:",
+        "Standard lagringsmappe oppdatert:",
+        "Đã cập nhật thư mục lưu mặc định:",
+        "預設儲存資料夾已更新："
+      ]
+    ]
+  },
+  {
+    "name": "Classical",
+    "fields": [
+      {
+        "name": "key",
+        "kind": "utf8"
+      },
+      {
+        "name": "text",
+        "kind": "utf16"
+      }
+    ],
+    "entries": [
+      [
+        "AttendanceApp - .attd Roll Call Manager",
+        "AttendanceApp · 點名簿"
+      ],
+      [
+        "Attendance Manager",
+        "點名司"
+      ],
+      [
+        "Create, edit, export, save, import, and batch clean .attd roll calls.",
+        "造簿、校錄、匯出、藏檔、載入，皆可為也。"
+      ],
+      [
+        "Tip: double-click a row to edit. Ctrl/Shift supports multi-select.",
+        "按行再三，則可修；Ctrl/Shift，可兼擇。"
+      ],
+      [
+        "Date/Time",
+        "日辰"
+      ],
+      [
+        "Date / Time",
+        "日 / 時"
+      ],
+      [
+        "Name",
+        "姓名"
+      ],
+      [
+        "Other",
+        "別記"
+      ],
+      [
+        "Status",
+        "狀"
+      ],
+      [
+        "Search",
+        "覓"
+      ],
+      [
+        "Clear Filter",
+        "去篩"
+      ],
+      [
+        "Present",
+        "在"
+      ],
+      [
+        "Absent",
+        "闕"
+      ],
+      [
+        "Late",
+        "遲"
+      ],
+      [
+        "Total",
+        "凡"
+      ],
+      [
+        "Showing",
+        "見"
+      ],
+      [
+        "Attendance",
+        "出勤"
+      ],
+      [
+        "Absent/Late",
+        "闕/遲"
+      ],
+      [
+        "Attendance Sheet",
+        "點名簿"
+      ],
+      [
+        "Update Selected",
+        "更所擇"
+      ],
+      [
+        "Edit Selected",
+        "修所擇"
+      ],
+      [
+        "Mark All Present",
+        "咸記其在"
+      ],
+      [
+        "Create New",
+        "新立"
+      ],
+      [
+        "Delete Options",
+        "刪法"
+      ],
+      [
+        "Delete",
+        "刪"
+      ],
+      [
+        "selected record(s)?",
+        "條所擇之錄乎？"
+      ],
+      [
+        "Delete Selected",
+        "刪所擇"
+      ],
+      [
+        "Delete selected records",
+        "刪所擇之錄"
+      ],
+      [
+        "Delete all Absent records",
+        "刪諸闕錄"
+      ],
+      [
+        "Delete all Late records",
+        "刪諸遲錄"
+      ],
+      [
+        "Clear all records",
+        "清諸錄"
+      ],
+      [
+        "Delete all",
+        "盡刪"
+      ],
+      [
+        "records?",
+        "錄乎？"
+      ],
+      [
+        "Batch Delete",
+        "批刪"
+      ],
+      [
+        "Clear every attendance record in this sheet?",
+        "欲盡清此簿之點名錄乎？"
+      ],
+      [
+        "Clear All",
+        "盡清"
+      ],
+      [
+        "Save .attd",
+        "藏 .attd"
+      ],
+      [
+        "Import .attd",
+        "載 .attd"
+      ],
+      [
+        "Export CSV",
+        "匯出 CSV"
+      ],
+      [
+        "Settings",
+        "設定"
+      ],
+      [
+        "Courses",
+        "課程"
+      ],
+      [
+        "Tools",
+        "器用"
+      ],
+      [
+        "OK",
+        "可"
+      ],
+      [
+        "Cancel",
+        "罷"
+      ],
+      [
+        "Add course/class",
+        "增課/班"
+      ],
+      [
+        "Rename current course/class",
+        "易此課/班名"
+      ],
+      [
+        "Delete current course/class",
+        "刪此課/班"
+      ],
+      [
+        "Add Course/Class",
+        "增課/班"
+      ],
+      [
+        "Course or class name:",
+        "課或班之名："
+      ],
+      [
+        "Rename Course/Class",
+        "易課/班名"
+      ],
+      [
+        "New course or class name:",
+        "新課或班之名："
+      ],
+      [
+        "Import student roster (CSV)",
+        "載弟子名冊 (CSV)"
+      ],
+      [
+        "Print / export PDF",
+        "印 / 匯出 PDF"
+      ],
+      [
+        "Export PowerPoint (.pptx)",
+        "匯出 PowerPoint (.pptx)"
+      ],
+      [
+        "Statistics chart",
+        "計數圖"
+      ],
+      [
+        "Undo",
+        "復前"
+      ],
+      [
+        "Redo",
+        "再行"
+      ],
+      [
+        "Keyboard shortcuts",
+        "捷鍵"
+      ],
+      [
+        "Export database mirror",
+        "匯出庫鏡"
+      ],
+      [
+        "Open autosave",
+        "啟自藏"
+      ],
+      [
+        "At least one course must remain.",
+        "至少當留一課。"
+      ],
+      [
+        "Delete the current course and its records?",
+        "欲刪此課及其錄乎？"
+      ],
+      [
+        "Delete Course",
+        "刪課"
+      ],
+      [
+        "Nothing to undo.",
+        "無可復者。"
+      ],
+      [
+        "Nothing to redo.",
+        "無可再行者。"
+      ],
+      [
+        "Keyboard Shortcuts",
+        "捷鍵"
+      ],
+      [
+        "Statistics Chart",
+        "計數圖"
+      ],
+      [
+        "Print / Save as PDF",
+        "印 / 另藏 PDF"
+      ],
+      [
+        "New attendance sheet name:",
+        "新點名簿之名："
+      ],
+      [
+        "New Attendance",
+        "新點名"
+      ],
+      [
+        "Interface Settings",
+        "介面諸設"
+      ],
+      [
+        "Language",
+        "語"
+      ],
+      [
+        "Style",
+        "貌"
+      ],
+      [
+        "Interface Font",
+        "字體"
+      ],
+      [
+        "Apply",
+        "行之"
+      ],
+      [
+        "Close",
+        "閉"
+      ],
+      [
+        "Reset All Settings",
+        "盡復初設"
+      ],
+      [
+        "Imported successfully.",
+        "妙哉，載入已成！"
+      ],
+      [
+        "Saved successfully.",
+        "善哉，檔已藏！"
+      ],
+      [
+        "CSV exported successfully.",
+        "妙哉，CSV 已匯出！"
+      ],
+      [
+        "PowerPoint exported successfully.",
+        "妙哉，演示稿已成！"
+      ],
+      [
+        "Could not export the PowerPoint file.",
+        "噫，演示稿未能匯出。"
+      ],
+      [
+        "Please enter a date and time.",
+        "請書日辰。"
+      ],
+      [
+        "Please enter a name.",
+        "請書姓名。"
+      ],
+      [
+        "Please fill the Other field.",
+        "請補別記之欄。"
+      ],
+      [
+        "Please select a record to edit.",
+        "請擇一錄而修之。"
+      ],
+      [
+        "There are no records to mark.",
+        "無錄可記。"
+      ],
+      [
+        "Mark every record as Present?",
+        "欲以諸錄咸記為在乎？"
+      ],
+      [
+        "All Present",
+        "咸在"
+      ],
+      [
+        "Please select one or more records to delete.",
+        "請擇一錄或數錄而刪之。"
+      ],
+      [
+        "No matching records found.",
+        "觓之不得。"
+      ],
+      [
+        "There are no records to clear.",
+        "無錄可清。"
+      ],
+      [
+        "There are no records to export.",
+        "無錄可匯出。"
+      ],
+      [
+        "Could not export the CSV file.",
+        "噫，CSV 未能匯出。"
+      ],
+      [
+        "Could not save the file.",
+        "噫，檔未能藏。"
+      ],
+      [
+        "Could not open the file.",
+        "噫，檔未能啟。"
+      ],
+      [
+        "This .attd file could not be decoded.",
+        "噫，此 .attd 不可解。"
+      ]
+    ]
+  },
+  {
+    "name": "Additional",
+    "fields": [
+      {
+        "name": "key",
+        "kind": "utf8"
+      },
+      {
+        "name": "it",
+        "kind": "utf8"
+      },
+      {
+        "name": "mn",
+        "kind": "utf16"
+      },
+      {
+        "name": "eo",
+        "kind": "utf8"
+      },
+      {
+        "name": "lzh",
+        "kind": "utf16"
+      },
+      {
+        "name": "th",
+        "kind": "utf16"
+      },
+      {
+        "name": "fil",
+        "kind": "utf8"
+      },
+      {
+        "name": "tr",
+        "kind": "utf8"
+      },
+      {
+        "name": "lt",
+        "kind": "utf8"
+      }
+    ],
+    "entries": [
+      [
+        "AttendanceApp - .attd Roll Call Manager",
+        "AttendanceApp - Gestore appello .attd",
+        "AttendanceApp - .attd ирцийн менежер",
+        "AttendanceApp - .attd ĉeestadministrilo",
+        "AttendanceApp - 點名簿",
+        "AttendanceApp - ตัวจัดการเช็กชื่อ .attd",
+        "AttendanceApp - tagapamahala ng roll call .attd",
+        "AttendanceApp - .attd yoklama yöneticisi",
+        "AttendanceApp - .attd lankomumo valdiklis"
+      ],
+      [
+        "Attendance Manager",
+        "Gestore presenze",
+        "Ирцийн менежер",
+        "Ĉeestadministrilo",
+        "點名管理",
+        "จัดการการเช็กชื่อ",
+        "Tagapamahala ng attendance",
+        "Yoklama yöneticisi",
+        "Lankomumo valdiklis"
+      ],
+      [
+        "Create, edit, export, save, import, and batch clean .attd roll calls.",
+        "Crea, modifica, esporta, salva, importa e pulisci appelli .attd.",
+        ".attd ирцийг үүсгэх, засах, экспорт, хадгалах, импорт хийх.",
+        "Kreu, redaktu, eksportu, konservu kaj importu .attd ĉeestojn.",
+        "建簿、編輯、匯出、儲存、匯入、批清 .attd 點名。",
+        "สร้าง แก้ไข ส่งออก บันทึก นำเข้า และล้าง .attd",
+        "Gumawa, mag-edit, mag-export, mag-save, mag-import, at maglinis ng .attd.",
+        ".attd yoklamaları oluştur, düzenle, dışa aktar, kaydet ve içe aktar.",
+        "Kurkite, taisykite, eksportuokite, saugokite ir importuokite .attd lankomumą."
+      ],
+      [
+        "Tip: double-click a row to edit. Ctrl/Shift supports multi-select.",
+        "Suggerimento: doppio clic per modificare. Ctrl/Maiusc seleziona più righe.",
+        "Зөвлөгөө: мөрийг давхар дарж засна. Ctrl/Shift олон сонгоно.",
+        "Konsilo: duoble alklaku vicon por redakti. Ctrl/Shift elektas plurajn.",
+        "提示：雙擊行可編，Ctrl/Shift 可多選。",
+        "เคล็ดลับ: ดับเบิลคลิกแถวเพื่อแก้ไข Ctrl/Shift เลือกหลายแถว",
+        "Tip: i-double click ang row para mag-edit. Ctrl/Shift para multi-select.",
+        "İpucu: düzenlemek için satıra çift tıkla. Ctrl/Shift çoklu seçer.",
+        "Patarimas: dukart spustelėkite eilutę redagavimui. Ctrl/Shift kelioms eilutėms."
+      ],
+      [
+        "Date/Time",
+        "Data/Ora",
+        "Огноо/цаг",
+        "Dato/tempo",
+        "日時",
+        "วัน/เวลา",
+        "Petsa/Oras",
+        "Tarih/Saat",
+        "Data/laikas"
+      ],
+      [
+        "Date / Time",
+        "Data / Ora",
+        "Огноо / цаг",
+        "Dato / tempo",
+        "日 / 時",
+        "วัน / เวลา",
+        "Petsa / Oras",
+        "Tarih / Saat",
+        "Data / laikas"
+      ],
+      [
+        "Name",
+        "Nome",
+        "Нэр",
+        "Nomo",
+        "姓名",
+        "ชื่อ",
+        "Pangalan",
+        "Ad",
+        "Vardas"
+      ],
+      [
+        "Other",
+        "Altro",
+        "Бусад",
+        "Alia",
+        "其他",
+        "อื่นๆ",
+        "Iba pa",
+        "Diğer",
+        "Kita"
+      ],
+      [
+        "Status",
+        "Stato",
+        "Төлөв",
+        "Stato",
+        "狀態",
+        "สถานะ",
+        "Katayuan",
+        "Durum",
+        "Būsena"
+      ],
+      [
+        "Search",
+        "Cerca",
+        "Хайх",
+        "Serĉi",
+        "尋",
+        "ค้นหา",
+        "Hanapin",
+        "Ara",
+        "Ieškoti"
+      ],
+      [
+        "Clear Filter",
+        "Cancella filtro",
+        "Шүүлтүүр цэвэрлэх",
+        "Malplenigi filtrilon",
+        "清篩",
+        "ล้างตัวกรอง",
+        "I-clear ang filter",
+        "Filtreyi temizle",
+        "Išvalyti filtrą"
+      ],
+      [
+        "Present",
+        "Presente",
+        "Ирсэн",
+        "Ĉeestas",
+        "出席",
+        "มา",
+        "Present",
+        "Var",
+        "Dalyvauja"
+      ],
+      [
+        "Absent",
+        "Assente",
+        "Тасалсан",
+        "Forestas",
+        "缺席",
+        "ขาด",
+        "Absent",
+        "Yok",
+        "Nedalyvauja"
+      ],
+      [
+        "Late",
+        "In ritardo",
+        "Хоцорсон",
+        "Malfrua",
+        "遲到",
+        "สาย",
+        "Late",
+        "Geç",
+        "Vėluoja"
+      ],
+      [
+        "Total",
+        "Totale",
+        "Нийт",
+        "Sumo",
+        "總",
+        "รวม",
+        "Kabuuan",
+        "Toplam",
+        "Iš viso"
+      ],
+      [
+        "Showing",
+        "Mostra",
+        "Харуулж байна",
+        "Montras",
+        "顯示",
+        "แสดง",
+        "Ipinapakita",
+        "Gösteriliyor",
+        "Rodoma"
+      ],
+      [
+        "Attendance",
+        "Presenza",
+        "Ирц",
+        "Ĉeesto",
+        "出勤",
+        "การมาเรียน",
+        "Attendance",
+        "Katılım",
+        "Lankomumas"
+      ],
+      [
+        "Absent/Late",
+        "Assente/Ritardo",
+        "Тасалсан/хоцорсон",
+        "Foresta/malfrua",
+        "缺/遲",
+        "ขาด/สาย",
+        "Absent/Late",
+        "Yok/Geç",
+        "Nėra/vėluoja"
+      ],
+      [
+        "Update Selected",
+        "Aggiorna selezionato",
+        "Сонгосныг шинэчлэх",
+        "Ĝisdatigi elektitan",
+        "更新所選",
+        "อัปเดตที่เลือก",
+        "I-update ang napili",
+        "Seçileni güncelle",
+        "Atnaujinti pasirinktą"
+      ],
+      [
+        "Edit Selected",
+        "Modifica selezionato",
+        "Сонгосныг засах",
+        "Redakti elektitan",
+        "編所選",
+        "แก้ไขที่เลือก",
+        "I-edit ang napili",
+        "Seçileni düzenle",
+        "Redaguoti pasirinktą"
+      ],
+      [
+        "Mark All Present",
+        "Segna tutti presenti",
+        "Бүгдийг ирсэн болгох",
+        "Marki ĉiujn ĉeestaj",
+        "全為出席",
+        "ทำเครื่องหมายว่ามาทั้งหมด",
+        "Markahan lahat na present",
+        "Tümünü var işaretle",
+        "Pažymėti visus dalyvaujančiais"
+      ],
+      [
+        "Create New",
+        "Nuovo",
+        "Шинэ үүсгэх",
+        "Krei novan",
+        "新建",
+        "สร้างใหม่",
+        "Gumawa ng bago",
+        "Yeni oluştur",
+        "Kurti naują"
+      ],
+      [
+        "Delete Options",
+        "Opzioni elimina",
+        "Устгах сонголт",
+        "Forigaj opcioj",
+        "刪除選項",
+        "ตัวเลือกลบ",
+        "Mga opsyon sa delete",
+        "Silme seçenekleri",
+        "Trinimo parinktys"
+      ],
+      [
+        "Save .attd",
+        "Salva .attd",
+        ".attd хадгалах",
+        "Konservi .attd",
+        "儲存 .attd",
+        "บันทึก .attd",
+        "I-save .attd",
+        ".attd kaydet",
+        "Išsaugoti .attd"
+      ],
+      [
+        "Import .attd",
+        "Importa .attd",
+        ".attd импорт",
+        "Importi .attd",
+        "匯入 .attd",
+        "นำเข้า .attd",
+        "I-import .attd",
+        ".attd içe aktar",
+        "Importuoti .attd"
+      ],
+      [
+        "Export CSV",
+        "Esporta CSV",
+        "CSV экспорт",
+        "Eksporti CSV",
+        "匯出 CSV",
+        "ส่งออก CSV",
+        "I-export CSV",
+        "CSV dışa aktar",
+        "Eksportuoti CSV"
+      ],
+      [
+        "Export PowerPoint (.pptx)",
+        "Esporta PowerPoint (.pptx)",
+        "PowerPoint экспорт (.pptx)",
+        "Eksporti PowerPoint (.pptx)",
+        "匯出演示稿 (.pptx)",
+        "ส่งออก PowerPoint (.pptx)",
+        "I-export PowerPoint (.pptx)",
+        "PowerPoint dışa aktar (.pptx)",
+        "Eksportuoti PowerPoint (.pptx)"
+      ],
+      [
+        "Courses",
+        "Corsi",
+        "Курсууд",
+        "Kursoj",
+        "課程",
+        "คอร์ส",
+        "Mga kurso",
+        "Kurslar",
+        "Kursai"
+      ],
+      [
+        "Tools",
+        "Strumenti",
+        "Хэрэгсэл",
+        "Iloj",
+        "工具",
+        "เครื่องมือ",
+        "Mga tool",
+        "Araçlar",
+        "Įrankiai"
+      ],
+      [
+        "Settings",
+        "Impostazioni",
+        "Тохиргоо",
+        "Agordoj",
+        "設定",
+        "ตั้งค่า",
+        "Settings",
+        "Ayarlar",
+        "Nustatymai"
+      ],
+      [
+        "Interface Settings",
+        "Impostazioni interfaccia",
+        "Интерфейсийн тохиргоо",
+        "Interfacaj agordoj",
+        "介面設定",
+        "ตั้งค่าอินเทอร์เฟซ",
+        "Interface settings",
+        "Arayüz ayarları",
+        "Sąsajos nustatymai"
+      ],
+      [
+        "Language",
+        "Lingua",
+        "Хэл",
+        "Lingvo",
+        "語言",
+        "ภาษา",
+        "Wika",
+        "Dil",
+        "Kalba"
+      ],
+      [
+        "Style",
+        "Stile",
+        "Хэв маяг",
+        "Stilo",
+        "風格",
+        "สไตล์",
+        "Estilo",
+        "Stil",
+        "Stilius"
+      ],
+      [
+        "Interface Font",
+        "Carattere interfaccia",
+        "Интерфейсийн фонт",
+        "Interfaca tiparo",
+        "介面字型",
+        "ฟอนต์อินเทอร์เฟซ",
+        "Font ng interface",
+        "Arayüz yazı tipi",
+        "Sąsajos šriftas"
+      ],
+      [
+        "Apply",
+        "Applica",
+        "Хэрэгжүүлэх",
+        "Apliki",
+        "套用",
+        "นำไปใช้",
+        "Ilapat",
+        "Uygula",
+        "Taikyti"
+      ],
+      [
+        "Close",
+        "Chiudi",
+        "Хаах",
+        "Fermi",
+        "關閉",
+        "ปิด",
+        "Isara",
+        "Kapat",
+        "Uždaryti"
+      ],
+      [
+        "Reset All Settings",
+        "Ripristina tutto",
+        "Бүх тохиргоог сэргээх",
+        "Restarigi ĉiujn agordojn",
+        "重設諸設",
+        "รีเซ็ตทั้งหมด",
+        "I-reset lahat ng settings",
+        "Tüm ayarları sıfırla",
+        "Atkurti visus nustatymus"
+      ],
+      [
+        "OK",
+        "OK",
+        "OK",
+        "Bone",
+        "可",
+        "OK",
+        "OK",
+        "Tamam",
+        "Gerai"
+      ],
+      [
+        "Cancel",
+        "Annulla",
+        "Цуцлах",
+        "Nuligi",
+        "取消",
+        "ยกเลิก",
+        "Kanselahin",
+        "İptal",
+        "Atšaukti"
+      ],
+      [
+        "Imported successfully.",
+        "Importazione riuscita.",
+        "Амжилттай импортлоо.",
+        "Sukcese importita.",
+        "匯入已成。",
+        "นำเข้าสำเร็จ",
+        "Matagumpay na na-import.",
+        "Başarıyla içe aktarıldı.",
+        "Sėkmingai importuota."
+      ],
+      [
+        "Saved successfully.",
+        "Salvato.",
+        "Амжилттай хадгаллаа.",
+        "Sukcese konservita.",
+        "儲存已成。",
+        "บันทึกสำเร็จ",
+        "Matagumpay na na-save.",
+        "Başarıyla kaydedildi.",
+        "Sėkmingai išsaugota."
+      ],
+      [
+        "PowerPoint exported successfully.",
+        "PowerPoint esportato.",
+        "PowerPoint амжилттай экспортлоо.",
+        "PowerPoint sukcese eksportita.",
+        "演示稿已成。",
+        "ส่งออก PowerPoint สำเร็จ",
+        "Matagumpay na na-export ang PowerPoint.",
+        "PowerPoint başarıyla dışa aktarıldı.",
+        "PowerPoint sėkmingai eksportuotas."
+      ],
+      [
+        "Could not export the PowerPoint file.",
+        "Impossibile esportare il file PowerPoint.",
+        "PowerPoint файл экспортлож чадсангүй.",
+        "Ne eblis eksporti la PowerPoint-dosieron.",
+        "不能匯出演示稿。",
+        "ส่งออกไฟล์ PowerPoint ไม่ได้",
+        "Hindi ma-export ang PowerPoint file.",
+        "PowerPoint dosyası dışa aktarılamadı.",
+        "Nepavyko eksportuoti PowerPoint failo."
+      ],
+      [
+        "Could not save the file.",
+        "Impossibile salvare il file.",
+        "Файл хадгалж чадсангүй.",
+        "Ne eblis konservi la dosieron.",
+        "不能儲檔。",
+        "บันทึกไฟล์ไม่ได้",
+        "Hindi ma-save ang file.",
+        "Dosya kaydedilemedi.",
+        "Nepavyko išsaugoti failo."
+      ],
+      [
+        "Could not open the file.",
+        "Impossibile aprire il file.",
+        "Файл нээж чадсангүй.",
+        "Ne eblis malfermi la dosieron.",
+        "不能開檔。",
+        "เปิดไฟล์ไม่ได้",
+        "Hindi mabuksan ang file.",
+        "Dosya açılamadı.",
+        "Nepavyko atidaryti failo."
+      ],
+      [
+        "Please enter a date and time.",
+        "Inserisci data e ora.",
+        "Огноо, цаг оруулна уу.",
+        "Enigu daton kaj tempon.",
+        "請輸日時。",
+        "กรุณาใส่วันและเวลา",
+        "Ilagay ang petsa at oras.",
+        "Lütfen tarih ve saat girin.",
+        "Įveskite datą ir laiką."
+      ],
+      [
+        "Please enter a name.",
+        "Inserisci un nome.",
+        "Нэр оруулна уу.",
+        "Enigu nomon.",
+        "請輸姓名。",
+        "กรุณาใส่ชื่อ",
+        "Ilagay ang pangalan.",
+        "Lütfen ad girin.",
+        "Įveskite vardą."
+      ],
+      [
+        "Please fill the Other field.",
+        "Compila il campo Altro.",
+        "Бусад талбарыг бөглөнө үү.",
+        "Plenigu la kampon Alia.",
+        "請填其他欄。",
+        "กรุณากรอกช่องอื่นๆ",
+        "Punan ang field na Iba pa.",
+        "Lütfen Diğer alanını doldurun.",
+        "Užpildykite lauką Kita."
+      ],
+      [
+        "Manage students",
+        "Gestisci studenti",
+        "Сурагчдыг удирдах",
+        "Administri studentojn",
+        "管弟子",
+        "จัดการนักเรียน",
+        "Pamahalaan ang mga estudyante",
+        "Öğrencileri yönet",
+        "Tvarkyti mokinius"
+      ],
+      [
+        "Add student to roster",
+        "Aggiungi studente alla lista",
+        "Сурагчийг жагсаалтад нэмэх",
+        "Aldoni studenton al listo",
+        "籍中增弟子",
+        "เพิ่มนักเรียนลงรายชื่อ",
+        "Magdagdag ng estudyante sa roster",
+        "Öğrenciyi listeye ekle",
+        "Pridėti mokinį į sąrašą"
+      ],
+      [
+        "Remove student from roster",
+        "Rimuovi studente dalla lista",
+        "Сурагчийг жагсаалтаас хасах",
+        "Forigi studenton el listo",
+        "籍中去弟子",
+        "ลบนักเรียนออกจากรายชื่อ",
+        "Alisin ang estudyante sa roster",
+        "Öğrenciyi listeden kaldır",
+        "Pašalinti mokinį iš sąrašo"
+      ],
+      [
+        "Create records from roster",
+        "Crea registri dalla lista",
+        "Жагсаалтаас бичлэг үүсгэх",
+        "Krei registrojn el listo",
+        "據名籍立錄",
+        "สร้างรายการจากรายชื่อ",
+        "Gumawa ng records mula sa roster",
+        "Listeden kayıt oluştur",
+        "Kurti įrašus iš sąrašo"
+      ],
+      [
+        "Course details",
+        "Dettagli corso",
+        "Курсын дэлгэрэнгүй",
+        "Kursaj detaloj",
+        "課之詳",
+        "รายละเอียดคอร์ส",
+        "Detalye ng kurso",
+        "Kurs ayrıntıları",
+        "Kurso informacija"
+      ],
+      [
+        "Teacher/owner:",
+        "Insegnante/responsabile:",
+        "Багш/хариуцагч:",
+        "Instruisto/posedanto:",
+        "師/主者：",
+        "ครู/ผู้รับผิดชอบ:",
+        "Guro/may-ari:",
+        "Öğretmen/sorumlu:",
+        "Mokytojas/savininkas:"
+      ],
+      [
+        "Location:",
+        "Luogo:",
+        "Байршил:",
+        "Loko:",
+        "所在：",
+        "สถานที่:",
+        "Lokasyon:",
+        "Konum:",
+        "Vieta:"
+      ],
+      [
+        "Course notes:",
+        "Note corso:",
+        "Курсын тэмдэглэл:",
+        "Kursaj notoj:",
+        "課記：",
+        "หมายเหตุคอร์ส:",
+        "Tala ng kurso:",
+        "Kurs notları:",
+        "Kurso pastabos:"
+      ],
+      [
+        "Student name:",
+        "Nome studente:",
+        "Сурагчийн нэр:",
+        "Studenta nomo:",
+        "弟子姓名：",
+        "ชื่อนักเรียน:",
+        "Pangalan ng estudyante:",
+        "Öğrenci adı:",
+        "Mokinio vardas:"
+      ],
+      [
+        "Student added.",
+        "Studente aggiunto.",
+        "Сурагч нэмэгдлээ.",
+        "Studento aldonita.",
+        "已增弟子。",
+        "เพิ่มนักเรียนแล้ว",
+        "Naidagdag ang estudyante.",
+        "Öğrenci eklendi.",
+        "Mokinys pridėtas."
+      ],
+      [
+        "Student removed.",
+        "Studente rimosso.",
+        "Сурагч хасагдлаа.",
+        "Studento forigita.",
+        "已去弟子。",
+        "ลบนักเรียนแล้ว",
+        "Naalis ang estudyante.",
+        "Öğrenci kaldırıldı.",
+        "Mokinys pašalintas."
+      ],
+      [
+        "No students in the roster.",
+        "Nessuno studente nella lista.",
+        "Жагсаалтад сурагч алга.",
+        "Neniu studento en la listo.",
+        "名籍無弟子。",
+        "ไม่มีนักเรียนในรายชื่อ",
+        "Walang estudyante sa roster.",
+        "Listede öğrenci yok.",
+        "Sąraše nėra mokinių."
+      ],
+      [
+        "Roster records created.",
+        "Registri creati dalla lista.",
+        "Жагсаалтын бичлэг үүслээ.",
+        "Listaj registroj kreitaj.",
+        "名籍之錄已立。",
+        "สร้างรายการจากรายชื่อแล้ว",
+        "Nagawa ang records mula sa roster.",
+        "Liste kayıtları oluşturuldu.",
+        "Įrašai iš sąrašo sukurti."
+      ],
+      [
+        "Statistics summary",
+        "Riepilogo statistiche",
+        "Статистикийн хураангуй",
+        "Statistika resumo",
+        "數據摘要",
+        "สรุปสถิติ",
+        "Buod ng estadistika",
+        "İstatistik özeti",
+        "Statistikos santrauka"
+      ],
+      [
+        "Top absent/late students",
+        "Studenti più assenti/in ritardo",
+        "Хамгийн их тасалсан/хоцорсон сурагчид",
+        "Plej forestantaj/malfruaj studentoj",
+        "闕遲最多者",
+        "นักเรียนขาด/สายมากสุด",
+        "Pinakamaraming absent/late",
+        "En çok yok/geç kalan öğrenciler",
+        "Daugiausia nedalyvavę/vėlavę mokiniai"
+      ],
+      [
+        "Backup now",
+        "Esegui backup ora",
+        "Одоо нөөцлөх",
+        "Sekurkopii nun",
+        "即備份",
+        "สำรองตอนนี้",
+        "Mag-backup ngayon",
+        "Şimdi yedekle",
+        "Kurti atsarginę kopiją"
+      ],
+      [
+        "Restore latest backup",
+        "Ripristina ultimo backup",
+        "Сүүлийн нөөцийг сэргээх",
+        "Restarigi lastan sekurkopion",
+        "還最新備份",
+        "กู้คืนไฟล์สำรองล่าสุด",
+        "I-restore ang pinakabagong backup",
+        "Son yedeği geri yükle",
+        "Atkurti naujausią kopiją"
+      ],
+      [
+        "Open recent file",
+        "Apri file recente",
+        "Сүүлийн файлыг нээх",
+        "Malfermi lastatempan dosieron",
+        "開近檔",
+        "เปิดไฟล์ล่าสุด",
+        "Buksan ang recent file",
+        "Son dosyayı aç",
+        "Atidaryti naujausią failą"
+      ],
+      [
+        "Backup created:",
+        "Backup creato:",
+        "Нөөц үүслээ:",
+        "Sekurkopio kreita:",
+        "備份已成：",
+        "สร้างไฟล์สำรองแล้ว:",
+        "Nagawa ang backup:",
+        "Yedek oluşturuldu:",
+        "Atsarginė kopija sukurta:"
+      ],
+      [
+        "No backup file was found.",
+        "Nessun file di backup trovato.",
+        "Нөөц файл олдсонгүй.",
+        "Neniu sekurkopia dosiero trovita.",
+        "未得備份檔。",
+        "ไม่พบไฟล์สำรอง",
+        "Walang nakitang backup file.",
+        "Yedek dosyası bulunamadı.",
+        "Atsarginės kopijos failas nerastas."
+      ],
+      [
+        "No recent file was found.",
+        "Nessun file recente trovato.",
+        "Сүүлийн файл олдсонгүй.",
+        "Neniu lastatempa dosiero trovita.",
+        "未得近檔。",
+        "ไม่พบไฟล์ล่าสุด",
+        "Walang nakitang recent file.",
+        "Son dosya bulunamadı.",
+        "Naujausias failas nerastas."
+      ],
+      [
+        "Set default save folder",
+        "Imposta cartella di salvataggio",
+        "Өгөгдмөл хадгалах хавтас",
+        "Agordi defaŭltan konservan dosierujon",
+        "定預設藏檔處",
+        "ตั้งโฟลเดอร์บันทึกเริ่มต้น",
+        "Itakda ang default save folder",
+        "Varsayılan kayıt klasörünü ayarla",
+        "Nustatyti numatytąjį aplanką"
+      ],
+      [
+        "Default save folder updated:",
+        "Cartella di salvataggio aggiornata:",
+        "Өгөгдмөл хадгалах хавтас шинэчлэгдлээ:",
+        "Defaŭlta konserva dosierujo ĝisdatigita:",
+        "預設藏檔處已更：",
+        "อัปเดตโฟลเดอร์บันทึกเริ่มต้นแล้ว:",
+        "Na-update ang default save folder:",
+        "Varsayılan kayıt klasörü güncellendi:",
+        "Numatytasis aplankas atnaujintas:"
+      ]
+    ]
+  },
+  {
+    "name": "Main",
+    "fields": [
+      {
+        "name": "key",
+        "kind": "utf8"
+      },
+      {
+        "name": "zh",
+        "kind": "utf16"
+      },
+      {
+        "name": "mt",
+        "kind": "utf8"
+      },
+      {
+        "name": "ja",
+        "kind": "utf16"
+      },
+      {
+        "name": "fr",
+        "kind": "utf8"
+      },
+      {
+        "name": "de",
+        "kind": "utf8"
+      },
+      {
+        "name": "ru",
+        "kind": "utf16"
+      },
+      {
+        "name": "zht",
+        "kind": "utf16"
+      },
+      {
+        "name": "es",
+        "kind": "utf8"
+      }
+    ],
+    "entries": [
+      [
+        "AttendanceApp - .attd Roll Call Manager",
+        "AttendanceApp - .attd 点名管理器",
+        "AttendanceApp - Maniġer tal-Attendenza .attd",
+        "AttendanceApp - .attd 出席管理",
+        "AttendanceApp - Gestionnaire d'appel .attd",
+        "AttendanceApp - .attd Anwesenheitsmanager",
+        "AttendanceApp - журнал .attd",
+        "AttendanceApp - .attd 點名管理器",
+        "AttendanceApp - gestor de asistencia .attd"
+      ],
+      [
+        "Attendance Manager",
+        "点名管理器",
+        "Maniġer tal-Attendenza",
+        "出席管理",
+        "Gestionnaire d'appel",
+        "Anwesenheitsmanager",
+        "Журнал посещаемости",
+        "點名管理器",
+        "Gestor de asistencia"
+      ],
+      [
+        "Create, edit, export, save, import, and batch clean .attd roll calls.",
+        "创建、编辑、导出、保存、导入并批量整理 .attd 点名记录。",
+        "Oħloq, editja, esporta, issejvja, importa u naddaf reġistri .attd.",
+        ".attd の出席記録を作成、編集、エクスポート、保存、インポート、一括整理。",
+        "Créer, modifier, exporter, enregistrer, importer et nettoyer les appels .attd.",
+        ".attd-Anwesenheiten erstellen, bearbeiten, exportieren, speichern, importieren und bereinigen.",
+        "Создавайте, редактируйте, экспортируйте и импортируйте .attd.",
+        "建立、編輯、匯出、儲存、匯入並批次整理 .attd 點名記錄。",
+        "Crea, edita, exporta, guarda, importa y limpia registros .attd."
+      ],
+      [
+        "Tip: double-click a row to edit. Ctrl/Shift supports multi-select.",
+        "提示：双击记录可编辑，Ctrl/Shift 可多选。",
+        "Ħjiel: ikklikkja darbtejn biex teditja. Ctrl/Shift jagħżel aktar minn waħda.",
+        "ヒント：行をダブルクリックで編集。Ctrl/Shift で複数選択。",
+        "Astuce : double-cliquez une ligne pour modifier. Ctrl/Shift pour sélection multiple.",
+        "Tipp: Doppelklick zum Bearbeiten. Strg/Umschalt für Mehrfachauswahl.",
+        "Совет: двойной щелчок для правки. Ctrl/Shift для выбора.",
+        "提示：雙擊記錄可編輯，Ctrl/Shift 可多選。",
+        "Consejo: doble clic para editar. Ctrl/Shift permite selección múltiple."
+      ],
+      [
+        "Date/Time",
+        "日期时间",
+        "Data/Ħin",
+        "日時",
+        "Date/heure",
+        "Datum/Uhrzeit",
+        "Дата/время",
+        "日期時間",
+        "Fecha/hora"
+      ],
+      [
+        "Name",
+        "姓名",
+        "Isem",
+        "名前",
+        "Nom",
+        "Name",
+        "Имя",
+        "姓名",
+        "Nombre"
+      ],
+      [
+        "Other",
+        "其他",
+        "Ieħor",
+        "その他",
+        "Autre",
+        "Andere",
+        "Другое",
+        "其他",
+        "Otro"
+      ],
+      [
+        "Search",
+        "搜索",
+        "Fittex",
+        "検索",
+        "Recherche",
+        "Suchen",
+        "Поиск",
+        "搜尋",
+        "Buscar"
+      ],
+      [
+        "Clear Filter",
+        "清除筛选",
+        "Naddaf filtru",
+        "フィルター解除",
+        "Effacer filtre",
+        "Filter leeren",
+        "Сбросить фильтр",
+        "清除篩選",
+        "Limpiar filtro"
+      ],
+      [
+        "Present",
+        "出席",
+        "Preżenti",
+        "出席",
+        "Présent",
+        "Anwesend",
+        "Присутствует",
+        "出席",
+        "Presente"
+      ],
+      [
+        "Absent",
+        "缺席",
+        "Assenti",
+        "欠席",
+        "Absent",
+        "Abwesend",
+        "Отсутствует",
+        "缺席",
+        "Ausente"
+      ],
+      [
+        "Late",
+        "迟到",
+        "Tard",
+        "遅刻",
+        "En retard",
+        "Verspätet",
+        "Опоздал",
+        "遲到",
+        "Tarde"
+      ],
+      [
+        "Total",
+        "总数",
+        "Total",
+        "合計",
+        "Total",
+        "Gesamt",
+        "Всего",
+        "總數",
+        "Total"
+      ],
+      [
+        "Showing",
+        "显示",
+        "Qed jintwerew",
+        "表示",
+        "Affichage",
+        "Angezeigt",
+        "Показано",
+        "顯示",
+        "Mostrando"
+      ],
+      [
+        "Attendance",
+        "出勤率",
+        "Attendenza",
+        "出席率",
+        "Présence",
+        "Anwesenheit",
+        "Посещаемость",
+        "出勤率",
+        "Asistencia"
+      ],
+      [
+        "Attendance Sheet",
+        "点名表",
+        "Folja tal-attendenza",
+        "出席シート",
+        "Feuille d'appel",
+        "Anwesenheitsblatt",
+        "Лист посещаемости",
+        "點名表",
+        "Hoja de asistencia"
+      ],
+      [
+        "Absent/Late",
+        "缺席/迟到",
+        "Assenti/Tard",
+        "欠席/遅刻",
+        "Absent/retard",
+        "Abwesend/verspätet",
+        "Отсут./опозд.",
+        "缺席/遲到",
+        "Ausente/tarde"
+      ],
+      [
+        "Update Selected",
+        "更新选中",
+        "Aġġorna magħżul",
+        "選択を更新",
+        "Mettre à jour",
+        "Auswahl aktualisieren",
+        "Обновить",
+        "更新選取",
+        "Actualizar selección"
+      ],
+      [
+        "Edit Selected",
+        "编辑选中",
+        "Editja magħżul",
+        "選択を編集",
+        "Modifier",
+        "Auswahl bearbeiten",
+        "Изменить",
+        "編輯選取",
+        "Editar selección"
+      ],
+      [
+        "Mark All Present",
+        "全员出席",
+        "Kollha preżenti",
+        "全員出席",
+        "Tout présent",
+        "Alle anwesend",
+        "Все присутствуют",
+        "全員出席",
+        "Todos presentes"
+      ],
+      [
+        "Create New",
+        "新建点名",
+        "Ġdid",
+        "新規作成",
+        "Nouveau",
+        "Neu erstellen",
+        "Создать",
+        "新增點名",
+        "Crear nuevo"
+      ],
+      [
+        "Delete Options",
+        "删除选项",
+        "Għażliet ta' tħassir",
+        "削除オプション",
+        "Options de suppression",
+        "Löschoptionen",
+        "Параметры удаления",
+        "刪除選項",
+        "Opciones de borrar"
+      ],
+      [
+        "Delete",
+        "删除",
+        "Ħassar",
+        "削除",
+        "Supprimer",
+        "Löschen",
+        "Удалить",
+        "刪除",
+        "Eliminar"
+      ],
+      [
+        "selected record(s)?",
+        "条选中记录？",
+        "rekord(s) magħżula?",
+        "件の選択記録？",
+        "enregistrement(s) sélectionné(s) ?",
+        "ausgewählte Einträge löschen?",
+        "выбранных записей?",
+        "筆選取記錄？",
+        "registro(s) seleccionado(s)?"
+      ],
+      [
+        "Delete Selected",
+        "删除选中",
+        "Ħassar magħżul",
+        "選択を削除",
+        "Supprimer la sélection",
+        "Auswahl löschen",
+        "Удалить выбранное",
+        "刪除選取",
+        "Eliminar selección"
+      ],
+      [
+        "Delete selected records",
+        "删除选中记录",
+        "Ħassar rekords magħżula",
+        "選択した記録を削除",
+        "Supprimer les enregistrements sélectionnés",
+        "Ausgewählte Einträge löschen",
+        "Удалить выбранные записи",
+        "刪除選取記錄",
+        "Eliminar registros seleccionados"
+      ],
+      [
+        "Delete all Absent records",
+        "删除所有缺席记录",
+        "Ħassar ir-rekords Assenti kollha",
+        "すべての欠席記録を削除",
+        "Supprimer tous les absents",
+        "Alle abwesenden Einträge löschen",
+        "Удалить все отсутствия",
+        "刪除所有缺席記錄",
+        "Eliminar todos los ausentes"
+      ],
+      [
+        "Delete all Late records",
+        "删除所有迟到记录",
+        "Ħassar ir-rekords Tard kollha",
+        "すべての遅刻記録を削除",
+        "Supprimer tous les retards",
+        "Alle verspäteten Einträge löschen",
+        "Удалить все опоздания",
+        "刪除所有遲到記錄",
+        "Eliminar todos los tarde"
+      ],
+      [
+        "Clear all records",
+        "清空所有记录",
+        "Naddaf ir-rekords kollha",
+        "すべての記録をクリア",
+        "Effacer tous les enregistrements",
+        "Alle Einträge löschen",
+        "Очистить все записи",
+        "清空所有記錄",
+        "Borrar todos los registros"
+      ],
+      [
+        "Delete all",
+        "删除所有",
+        "Ħassar kollha",
+        "すべて削除",
+        "Supprimer tous les",
+        "Alle löschen",
+        "Удалить все",
+        "刪除所有",
+        "Eliminar todos"
+      ],
+      [
+        "records?",
+        "记录？",
+        "rekords?",
+        "記録？",
+        "enregistrements ?",
+        "Einträge?",
+        "записи?",
+        "記錄？",
+        "registros?"
+      ],
+      [
+        "Batch Delete",
+        "批量删除",
+        "Tħassir bil-lott",
+        "一括削除",
+        "Suppression groupée",
+        "Mehrfach löschen",
+        "Пакетное удаление",
+        "批次刪除",
+        "Eliminación por lote"
+      ],
+      [
+        "Clear every attendance record in this sheet?",
+        "清空当前表内的所有点名记录？",
+        "Tnaddaf kull rekord f'din il-folja?",
+        "このシートの出席記録をすべてクリアしますか？",
+        "Effacer tous les enregistrements de cette feuille ?",
+        "Alle Einträge in diesem Blatt löschen?",
+        "Очистить все записи этого листа?",
+        "清空此表內所有點名記錄？",
+        "¿Borrar todos los registros de esta hoja?"
+      ],
+      [
+        "Clear All",
+        "全部清空",
+        "Naddaf kollox",
+        "すべてクリア",
+        "Tout effacer",
+        "Alles löschen",
+        "Очистить все",
+        "全部清空",
+        "Borrar todo"
+      ],
+      [
+        "Save .attd",
+        "保存 .attd",
+        "Issejvja .attd",
+        ".attd 保存",
+        "Enregistrer .attd",
+        ".attd speichern",
+        "Сохранить .attd",
+        "儲存 .attd",
+        "Guardar .attd"
+      ],
+      [
+        "Import .attd",
+        "导入 .attd",
+        "Importa .attd",
+        ".attd 読み込み",
+        "Importer .attd",
+        ".attd importieren",
+        "Импорт .attd",
+        "匯入 .attd",
+        "Importar .attd"
+      ],
+      [
+        "Export CSV",
+        "导出 CSV",
+        "Esporta CSV",
+        "CSV エクスポート",
+        "Exporter CSV",
+        "CSV exportieren",
+        "Экспорт CSV",
+        "匯出 CSV",
+        "Exportar CSV"
+      ],
+      [
+        "Settings",
+        "设置",
+        "Settings",
+        "設定",
+        "Paramètres",
+        "Einstellungen",
+        "Настройки",
+        "設定",
+        "Configuración"
+      ],
+      [
+        "Courses",
+        "课程",
+        "Korsijiet",
+        "コース",
+        "Cours",
+        "Kurse",
+        "Курсы",
+        "課程",
+        "Cursos"
+      ],
+      [
+        "Tools",
+        "工具",
+        "Għodod",
+        "ツール",
+        "Outils",
+        "Werkzeuge",
+        "Инструменты",
+        "工具",
+        "Herramientas"
+      ],
+      [
+        "OK",
+        "确定",
+        "OK",
+        "OK",
+        "OK",
+        "OK",
+        "OK",
+        "確定",
+        "OK"
+      ],
+      [
+        "Cancel",
+        "取消",
+        "Ikkanċella",
+        "キャンセル",
+        "Annuler",
+        "Abbrechen",
+        "Отмена",
+        "取消",
+        "Cancelar"
+      ],
+      [
+        "Add course/class",
+        "新增课程/班级",
+        "Żid kors/klassi",
+        "コース/クラスを追加",
+        "Ajouter cours/classe",
+        "Kurs/Klasse hinzufügen",
+        "Добавить курс/класс",
+        "新增課程/班級",
+        "Añadir curso/clase"
+      ],
+      [
+        "Rename current course/class",
+        "重命名当前课程/班级",
+        "Semmi mill-ġdid il-kors/klassi",
+        "現在のコース/クラス名を変更",
+        "Renommer cours/classe",
+        "Kurs/Klasse umbenennen",
+        "Переименовать курс/класс",
+        "重新命名目前課程/班級",
+        "Renombrar curso/clase"
+      ],
+      [
+        "Delete current course/class",
+        "删除当前课程/班级",
+        "Ħassar il-kors/klassi",
+        "現在のコース/クラスを削除",
+        "Supprimer cours/classe",
+        "Kurs/Klasse löschen",
+        "Удалить курс/класс",
+        "刪除目前課程/班級",
+        "Eliminar curso/clase"
+      ],
+      [
+        "Add Course/Class",
+        "新增课程/班级",
+        "Żid kors/klassi",
+        "コース/クラス追加",
+        "Ajouter cours/classe",
+        "Kurs/Klasse hinzufügen",
+        "Добавить курс/класс",
+        "新增課程/班級",
+        "Añadir curso/clase"
+      ],
+      [
+        "Course or class name:",
+        "课程或班级名称：",
+        "Isem tal-kors jew klassi:",
+        "コースまたはクラス名:",
+        "Nom du cours ou de la classe :",
+        "Kurs- oder Klassenname:",
+        "Имя курса/класса:",
+        "課程或班級名稱：",
+        "Nombre del curso o clase:"
+      ],
+      [
+        "Rename Course/Class",
+        "重命名课程/班级",
+        "Semmi mill-ġdid",
+        "コース/クラス名変更",
+        "Renommer cours/classe",
+        "Kurs/Klasse umbenennen",
+        "Переименовать",
+        "重新命名課程/班級",
+        "Renombrar curso/clase"
+      ],
+      [
+        "New course or class name:",
+        "新课程或班级名称：",
+        "Isem ġdid tal-kors jew klassi:",
+        "新しいコース/クラス名:",
+        "Nouveau nom :",
+        "Neuer Kurs-/Klassenname:",
+        "Новое имя:",
+        "新課程或班級名稱：",
+        "Nuevo nombre:"
+      ],
+      [
+        "Import student roster (CSV)",
+        "导入学生名单 (CSV)",
+        "Importa lista tal-istudenti (CSV)",
+        "学生名簿を読み込む (CSV)",
+        "Importer liste d'étudiants (CSV)",
+        "Schülerliste importieren (CSV)",
+        "Импорт списка (CSV)",
+        "匯入學生名單 (CSV)",
+        "Importar lista de estudiantes (CSV)"
+      ],
+      [
+        "Manage students",
+        "管理学生",
+        "Immaniġġja studenti",
+        "学生管理",
+        "Gérer les étudiants",
+        "Schüler verwalten",
+        "Управлять учениками",
+        "管理學生",
+        "Gestionar estudiantes"
+      ],
+      [
+        "Add student to roster",
+        "添加学生到名单",
+        "Żid student mal-lista",
+        "名簿に学生を追加",
+        "Ajouter un étudiant à la liste",
+        "Schüler zur Liste hinzufügen",
+        "Добавить ученика в список",
+        "新增學生到名單",
+        "Agregar estudiante a la lista"
+      ],
+      [
+        "Remove student from roster",
+        "从名单移除学生",
+        "Neħħi student mil-lista",
+        "名簿から学生を削除",
+        "Retirer un étudiant de la liste",
+        "Schüler aus Liste entfernen",
+        "Удалить ученика из списка",
+        "從名單移除學生",
+        "Quitar estudiante de la lista"
+      ],
+      [
+        "Create records from roster",
+        "从名单创建点名记录",
+        "Oħloq rekords mil-lista",
+        "名簿から記録を作成",
+        "Créer des enregistrements depuis la liste",
+        "Einträge aus Liste erstellen",
+        "Создать записи из списка",
+        "從名單建立點名記錄",
+        "Crear registros desde la lista"
+      ],
+      [
+        "Course details",
+        "课程资料",
+        "Dettalji tal-kors",
+        "コース詳細",
+        "Détails du cours",
+        "Kursdetails",
+        "Сведения о курсе",
+        "課程資料",
+        "Detalles del curso"
+      ],
+      [
+        "Teacher/owner:",
+        "教师/负责人：",
+        "Għalliem/sid:",
+        "教師/担当:",
+        "Enseignant/responsable :",
+        "Lehrer/verantwortlich:",
+        "Учитель/ответственный:",
+        "教師/負責人：",
+        "Profesor/responsable:"
+      ],
+      [
+        "Location:",
+        "地点：",
+        "Post:",
+        "場所:",
+        "Lieu :",
+        "Ort:",
+        "Место:",
+        "地點：",
+        "Ubicación:"
+      ],
+      [
+        "Course notes:",
+        "课程备注：",
+        "Noti tal-kors:",
+        "コースメモ:",
+        "Notes du cours :",
+        "Kursnotizen:",
+        "Заметки курса:",
+        "課程備註：",
+        "Notas del curso:"
+      ],
+      [
+        "Student name:",
+        "学生姓名：",
+        "Isem tal-istudent:",
+        "学生名:",
+        "Nom de l'étudiant :",
+        "Schülername:",
+        "Имя ученика:",
+        "學生姓名：",
+        "Nombre del estudiante:"
+      ],
+      [
+        "Student added.",
+        "已添加学生。",
+        "Student miżjud.",
+        "学生を追加しました。",
+        "Étudiant ajouté.",
+        "Schüler hinzugefügt.",
+        "Ученик добавлен.",
+        "已新增學生。",
+        "Estudiante agregado."
+      ],
+      [
+        "Student removed.",
+        "已移除学生。",
+        "Student imneħħi.",
+        "学生を削除しました。",
+        "Étudiant retiré.",
+        "Schüler entfernt.",
+        "Ученик удалён.",
+        "已移除學生。",
+        "Estudiante quitado."
+      ],
+      [
+        "No students in the roster.",
+        "名单中没有学生。",
+        "M'hemmx studenti fil-lista.",
+        "名簿に学生がいません。",
+        "Aucun étudiant dans la liste.",
+        "Keine Schüler in der Liste.",
+        "В списке нет учеников.",
+        "名單中沒有學生。",
+        "No hay estudiantes en la lista."
+      ],
+      [
+        "Roster records created.",
+        "已从名单创建记录。",
+        "Inħolqu rekords mil-lista.",
+        "名簿から記録を作成しました。",
+        "Enregistrements créés depuis la liste.",
+        "Einträge aus Liste erstellt.",
+        "Записи из списка созданы.",
+        "已從名單建立記錄。",
+        "Registros creados desde la lista."
+      ],
+      [
+        "Statistics summary",
+        "统计摘要",
+        "Sommarju statistiku",
+        "統計サマリー",
+        "Résumé statistique",
+        "Statistikübersicht",
+        "Сводка статистики",
+        "統計摘要",
+        "Resumen estadístico"
+      ],
+      [
+        "Top absent/late students",
+        "缺席/迟到最多学生",
+        "L-aktar studenti assenti/tard",
+        "欠席/遅刻が多い学生",
+        "Étudiants les plus absents/en retard",
+        "Schüler mit meisten Fehlzeiten/Verspätungen",
+        "Чаще всего отсутствуют/опаздывают",
+        "缺席/遲到最多學生",
+        "Estudiantes con más ausencias/tardanzas"
+      ],
+      [
+        "Backup now",
+        "立即备份",
+        "Agħmel backup issa",
+        "今すぐバックアップ",
+        "Sauvegarder maintenant",
+        "Jetzt sichern",
+        "Создать резервную копию",
+        "立即備份",
+        "Hacer copia ahora"
+      ],
+      [
+        "Restore latest backup",
+        "恢复最新备份",
+        "Irrestawra l-aħħar backup",
+        "最新バックアップを復元",
+        "Restaurer la dernière sauvegarde",
+        "Letzte Sicherung wiederherstellen",
+        "Восстановить последнюю копию",
+        "還原最新備份",
+        "Restaurar copia reciente"
+      ],
+      [
+        "Open recent file",
+        "打开最近文件",
+        "Iftaħ fajl reċenti",
+        "最近のファイルを開く",
+        "Ouvrir un fichier récent",
+        "Zuletzt verwendete Datei öffnen",
+        "Открыть недавний файл",
+        "開啟最近檔案",
+        "Abrir archivo reciente"
+      ],
+      [
+        "Backup created:",
+        "备份已创建：",
+        "Backup maħluq:",
+        "バックアップ作成先:",
+        "Sauvegarde créée :",
+        "Sicherung erstellt:",
+        "Резервная копия создана:",
+        "備份已建立：",
+        "Copia creada:"
+      ],
+      [
+        "No backup file was found.",
+        "未找到备份文件。",
+        "Ma nstabx fajl backup.",
+        "バックアップファイルがありません。",
+        "Aucune sauvegarde trouvée.",
+        "Keine Sicherungsdatei gefunden.",
+        "Файл копии не найден.",
+        "未找到備份檔案。",
+        "No se encontró copia."
+      ],
+      [
+        "No recent file was found.",
+        "未找到最近文件。",
+        "Ma nstabx fajl reċenti.",
+        "最近のファイルがありません。",
+        "Aucun fichier récent trouvé.",
+        "Keine zuletzt verwendete Datei gefunden.",
+        "Недавний файл не найден.",
+        "未找到最近檔案。",
+        "No se encontró archivo reciente."
+      ],
+      [
+        "Set default save folder",
+        "设置默认保存文件夹",
+        "Issettja folder ta' save default",
+        "既定の保存フォルダーを設定",
+        "Définir le dossier d'enregistrement",
+        "Standard-Speicherordner festlegen",
+        "Задать папку сохранения",
+        "設定預設儲存資料夾",
+        "Definir carpeta predeterminada"
+      ],
+      [
+        "Default save folder updated:",
+        "默认保存文件夹已更新：",
+        "Folder ta' save default aġġornat:",
+        "既定の保存フォルダーを更新:",
+        "Dossier d'enregistrement mis à jour :",
+        "Standard-Speicherordner aktualisiert:",
+        "Папка сохранения обновлена:",
+        "預設儲存資料夾已更新：",
+        "Carpeta predeterminada actualizada:"
+      ],
+      [
+        "Print / export PDF",
+        "打印 / 导出 PDF",
+        "Stampa / esporta PDF",
+        "印刷 / PDF 出力",
+        "Imprimer / exporter PDF",
+        "Drucken / PDF exportieren",
+        "Печать / PDF",
+        "列印 / 匯出 PDF",
+        "Imprimir / exportar PDF"
+      ],
+      [
+        "Export PowerPoint (.pptx)",
+        "导出 PowerPoint (.pptx)",
+        "Esporta PowerPoint (.pptx)",
+        "PowerPoint 出力 (.pptx)",
+        "Exporter PowerPoint (.pptx)",
+        "PowerPoint exportieren (.pptx)",
+        "Экспорт PowerPoint (.pptx)",
+        "匯出 PowerPoint (.pptx)",
+        "Exportar PowerPoint (.pptx)"
+      ],
+      [
+        "Statistics chart",
+        "统计图表",
+        "Ċart tal-istatistika",
+        "統計グラフ",
+        "Graphique statistique",
+        "Statistikdiagramm",
+        "График",
+        "統計圖表",
+        "Gráfico estadístico"
+      ],
+      [
+        "Undo",
+        "撤销",
+        "Ħoll",
+        "元に戻す",
+        "Annuler",
+        "Rückgängig",
+        "Отменить",
+        "復原",
+        "Deshacer"
+      ],
+      [
+        "Redo",
+        "重做",
+        "Erġa'",
+        "やり直し",
+        "Rétablir",
+        "Wiederholen",
+        "Повторить",
+        "重做",
+        "Rehacer"
+      ],
+      [
+        "Keyboard shortcuts",
+        "快捷键",
+        "Shortcuts",
+        "ショートカット",
+        "Raccourcis clavier",
+        "Tastenkürzel",
+        "Горячие клавиши",
+        "快捷鍵",
+        "Atajos de teclado"
+      ],
+      [
+        "Export database mirror",
+        "导出数据库镜像",
+        "Esporta kopja tad-database",
+        "データベースミラー出力",
+        "Exporter miroir de base",
+        "Datenbankspiegel exportieren",
+        "Экспорт зеркала БД",
+        "匯出資料庫鏡像",
+        "Exportar espejo de base"
+      ],
+      [
+        "Open autosave",
+        "打开自动保存",
+        "Iftaħ autosave",
+        "自動保存を開く",
+        "Ouvrir autosauvegarde",
+        "Autosave öffnen",
+        "Открыть автосохр.",
+        "開啟自動儲存",
+        "Abrir autoguardado"
+      ],
+      [
+        "At least one course must remain.",
+        "至少需要保留一个课程。",
+        "Irid jibqa' mill-inqas kors wieħed.",
+        "少なくとも1つのコースが必要です。",
+        "Au moins un cours doit rester.",
+        "Mindestens ein Kurs muss bleiben.",
+        "Должен остаться хотя бы один курс.",
+        "至少需保留一個課程。",
+        "Debe quedar al menos un curso."
+      ],
+      [
+        "Delete the current course and its records?",
+        "删除当前课程及其记录？",
+        "Ħassar il-kors u r-rekords?",
+        "現在のコースと記録を削除しますか？",
+        "Supprimer ce cours et ses enregistrements ?",
+        "Aktuellen Kurs und Einträge löschen?",
+        "Удалить текущий курс и записи?",
+        "刪除目前課程及其記錄？",
+        "¿Eliminar el curso actual y sus registros?"
+      ],
+      [
+        "Delete Course",
+        "删除课程",
+        "Ħassar kors",
+        "コース削除",
+        "Supprimer le cours",
+        "Kurs löschen",
+        "Удалить курс",
+        "刪除課程",
+        "Eliminar curso"
+      ],
+      [
+        "Nothing to undo.",
+        "没有可撤销的操作。",
+        "Xejn x'treġġa' lura.",
+        "元に戻す操作はありません。",
+        "Rien à annuler.",
+        "Nichts rückgängig zu machen.",
+        "Нечего отменять.",
+        "沒有可復原的操作。",
+        "Nada que deshacer."
+      ],
+      [
+        "Nothing to redo.",
+        "没有可重做的操作。",
+        "Xejn x'terġa' tagħmel.",
+        "やり直す操作はありません。",
+        "Rien à rétablir.",
+        "Nichts zu wiederholen.",
+        "Нечего повторять.",
+        "沒有可重做的操作。",
+        "Nada que rehacer."
+      ],
+      [
+        "Could not export the print file.",
+        "无法导出打印文件。",
+        "Ma setax jiġi esportat il-fajl.",
+        "印刷ファイルを出力できません。",
+        "Impossible d'exporter le fichier.",
+        "Druckdatei konnte nicht exportiert werden.",
+        "Не удалось экспорт.",
+        "無法匯出列印檔案。",
+        "No se pudo exportar el archivo."
+      ],
+      [
+        "Could not open the roster file.",
+        "无法打开名单文件。",
+        "Ma setax jinfetaħ il-fajl.",
+        "名簿ファイルを開けません。",
+        "Impossible d'ouvrir la liste.",
+        "Listendatei konnte nicht geöffnet werden.",
+        "Не удалось открыть список.",
+        "無法開啟名單檔案。",
+        "No se pudo abrir la lista."
+      ],
+      [
+        "Imported",
+        "已导入",
+        "Importati",
+        "読み込み済み",
+        "Importé",
+        "Importiert",
+        "Импортировано",
+        "已匯入",
+        "Importado"
+      ],
+      [
+        "students into the current course.",
+        "名学生到当前课程。",
+        "studenti fil-kors attwali.",
+        "人の学生を現在のコースに追加。",
+        "étudiants dans le cours actuel.",
+        "Schüler in den aktuellen Kurs.",
+        "студентов в текущий курс.",
+        "名學生到目前課程。",
+        "estudiantes al curso actual."
+      ],
+      [
+        "Imported roster entries start as Absent until marked.",
+        "导入的名单记录在点名前默认为缺席。",
+        "Rekords importati jibdew bħala Assenti.",
+        "読み込んだ名簿は出席確認まで欠席として扱われます。",
+        "Les entrées importées commencent comme absentes.",
+        "Importierte Einträge starten als abwesend.",
+        "Импортированные записи сначала отмечены как отсутствующие.",
+        "匯入的名單記錄在點名前預設為缺席。",
+        "Las entradas importadas empiezan como ausentes."
+      ],
+      [
+        "Could not write the database file.",
+        "无法写入数据库文件。",
+        "Ma setax jinkiteb id-database.",
+        "データベースファイルを書き込めません。",
+        "Impossible d'écrire la base.",
+        "Datenbankdatei konnte nicht geschrieben werden.",
+        "Не удалось записать БД.",
+        "無法寫入資料庫檔案。",
+        "No se pudo escribir la base."
+      ],
+      [
+        "Database mirror exported to:",
+        "数据库镜像已导出到：",
+        "Kopja tad-database esportata lejn:",
+        "データベースミラーの出力先:",
+        "Miroir de base exporté vers :",
+        "Datenbankspiegel exportiert nach:",
+        "Зеркало БД экспортировано:",
+        "資料庫鏡像已匯出到：",
+        "Espejo exportado a:"
+      ],
+      [
+        "No autosave file was found.",
+        "未找到自动保存文件。",
+        "Ma nstabx autosave.",
+        "自動保存ファイルはありません。",
+        "Aucune autosauvegarde trouvée.",
+        "Keine Autosave-Datei gefunden.",
+        "Автосохр. не найдено.",
+        "未找到自動儲存檔案。",
+        "No se encontró autoguardado."
+      ],
+      [
+        "An autosaved attendance file was found. Restore it now?",
+        "找到自动保存的点名文件。是否现在恢复？",
+        "Instab fajl autosave. Tirrestawrah issa?",
+        "自動保存が見つかりました。復元しますか？",
+        "Autosauvegarde trouvée. Restaurer ?",
+        "Autosave gefunden. Jetzt wiederherstellen?",
+        "Найдено автосохр. Восстановить?",
+        "找到自動儲存檔。是否現在還原？",
+        "Se encontró autoguardado. ¿Restaurar?"
+      ],
+      [
+        "Restore Autosave",
+        "恢复自动保存",
+        "Irrestawra autosave",
+        "自動保存復元",
+        "Restaurer autosauvegarde",
+        "Autosave wiederherstellen",
+        "Восст. автосохр.",
+        "還原自動儲存",
+        "Restaurar autoguardado"
+      ],
+      [
+        "Keyboard Shortcuts",
+        "快捷键",
+        "Shortcuts",
+        "ショートカット",
+        "Raccourcis clavier",
+        "Tastenkürzel",
+        "Горячие клавиши",
+        "快捷鍵",
+        "Atajos de teclado"
+      ],
+      [
+        "Statistics Chart",
+        "统计图表",
+        "Ċart tal-istatistika",
+        "統計グラフ",
+        "Graphique statistique",
+        "Statistikdiagramm",
+        "График",
+        "統計圖表",
+        "Gráfico estadístico"
+      ],
+      [
+        "Print / Save as PDF",
+        "打印 / 另存为 PDF",
+        "Stampa / PDF",
+        "印刷 / PDF保存",
+        "Imprimer / PDF",
+        "Drucken / PDF speichern",
+        "Печать / PDF",
+        "列印 / 另存 PDF",
+        "Imprimir / guardar PDF"
+      ],
+      [
+        "New attendance sheet name:",
+        "新点名表名称：",
+        "Isem tal-folja ġdida:",
+        "新しい出席シート名:",
+        "Nom de la nouvelle feuille :",
+        "Name des neuen Blatts:",
+        "Имя нового листа:",
+        "新點名表名稱：",
+        "Nombre de la nueva hoja:"
+      ],
+      [
+        "New Attendance",
+        "新建点名",
+        "Attendenza ġdida",
+        "新規出席",
+        "Nouvel appel",
+        "Neue Anwesenheit",
+        "Новая посещаемость",
+        "新增點名",
+        "Nueva asistencia"
+      ],
+      [
+        "Please enter a date and time.",
+        "请输入日期和时间。",
+        "Daħħal data u ħin.",
+        "日時を入力してください。",
+        "Veuillez saisir la date et l'heure.",
+        "Bitte Datum und Uhrzeit eingeben.",
+        "Введите дату и время.",
+        "請輸入日期和時間。",
+        "Introduce fecha y hora."
+      ],
+      [
+        "Please enter a name.",
+        "请输入姓名。",
+        "Daħħal isem.",
+        "名前を入力してください。",
+        "Veuillez saisir un nom.",
+        "Bitte Namen eingeben.",
+        "Введите имя.",
+        "請輸入姓名。",
+        "Introduce un nombre."
+      ],
+      [
+        "Please fill the Other field.",
+        "请填写其他字段。",
+        "Imla l-qasam Other.",
+        "Other 欄を入力してください。",
+        "Veuillez remplir le champ Autre.",
+        "Bitte das Feld Andere ausfüllen.",
+        "Заполните поле Other.",
+        "請填寫其他欄位。",
+        "Rellena el campo Otro."
+      ],
+      [
+        "Please select a record to edit.",
+        "请选择要编辑的记录。",
+        "Agħżel rekord biex teditja.",
+        "編集する記録を選択してください。",
+        "Sélectionnez un enregistrement.",
+        "Bitte einen Eintrag auswählen.",
+        "Выберите запись.",
+        "請選擇要編輯的記錄。",
+        "Selecciona un registro."
+      ],
+      [
+        "There are no records to mark.",
+        "没有可标记的记录。",
+        "M'hemmx rekords.",
+        "マークする記録がありません。",
+        "Aucun enregistrement.",
+        "Keine Einträge vorhanden.",
+        "Нет записей.",
+        "沒有可標記的記錄。",
+        "No hay registros."
+      ],
+      [
+        "Mark every record as Present?",
+        "将所有记录标记为出席？",
+        "Immarka kollha Present?",
+        "すべて Present にしますか？",
+        "Tout marquer présent ?",
+        "Alle als anwesend markieren?",
+        "Всех отметить Present?",
+        "將所有記錄標記為出席？",
+        "¿Marcar todo como Present?"
+      ],
+      [
+        "All Present",
+        "全员出席",
+        "Kollha preżenti",
+        "全員出席",
+        "Tout présent",
+        "Alle anwesend",
+        "Все Present",
+        "全員出席",
+        "Todos presentes"
+      ],
+      [
+        "Please select one or more records to delete.",
+        "请选择要删除的一条或多条记录。",
+        "Agħżel rekord/i biex tħassar.",
+        "削除する記録を選択してください。",
+        "Sélectionnez des enregistrements.",
+        "Bitte Einträge zum Löschen auswählen.",
+        "Выберите записи.",
+        "請選擇要刪除的記錄。",
+        "Selecciona registros."
+      ],
+      [
+        "No matching records found.",
+        "未找到匹配记录。",
+        "Ma nstabux rekords.",
+        "該当記録はありません。",
+        "Aucun enregistrement.",
+        "Keine passenden Einträge.",
+        "Нет совпадений.",
+        "未找到符合記錄。",
+        "No hay coincidencias."
+      ],
+      [
+        "There are no records to clear.",
+        "没有可清空的记录。",
+        "M'hemmx rekords x'tħassar.",
+        "クリアする記録がありません。",
+        "Aucun enregistrement à effacer.",
+        "Keine Einträge zum Leeren.",
+        "Нет записей.",
+        "沒有可清空的記錄。",
+        "No hay registros."
+      ],
+      [
+        "There are no records to export.",
+        "没有可导出的记录。",
+        "M'hemmx rekords x'tesporta.",
+        "出力する記録がありません。",
+        "Aucun enregistrement à exporter.",
+        "Keine Einträge zum Exportieren.",
+        "Нет записей для экспорта.",
+        "沒有可匯出的記錄。",
+        "No hay registros para exportar."
+      ],
+      [
+        "Could not export the CSV file.",
+        "无法导出 CSV 文件。",
+        "Ma setax jiġi esportat CSV.",
+        "CSV を出力できません。",
+        "Impossible d'exporter le CSV.",
+        "CSV konnte nicht exportiert werden.",
+        "Не удалось CSV.",
+        "無法匯出 CSV。",
+        "No se pudo exportar CSV."
+      ],
+      [
+        "CSV exported successfully.",
+        "CSV 导出成功。",
+        "CSV esportat.",
+        "CSV を出力しました。",
+        "CSV exporté.",
+        "CSV exportiert.",
+        "CSV экспортирован.",
+        "CSV 匯出成功。",
+        "CSV exportado."
+      ],
+      [
+        "Could not save the file.",
+        "无法保存文件。",
+        "Ma setax jiġi ssejvjat.",
+        "ファイルを保存できません。",
+        "Impossible d'enregistrer.",
+        "Datei konnte nicht gespeichert werden.",
+        "Не удалось сохранить.",
+        "無法儲存檔案。",
+        "No se pudo guardar."
+      ],
+      [
+        "Saved successfully.",
+        "保存成功。",
+        "Issejvjat.",
+        "保存しました。",
+        "Enregistré.",
+        "Gespeichert.",
+        "Сохранено.",
+        "儲存成功。",
+        "Guardado."
+      ],
+      [
+        "PowerPoint exported successfully.",
+        "PowerPoint 导出成功。",
+        "PowerPoint esportat.",
+        "PowerPoint を出力しました。",
+        "PowerPoint exporté.",
+        "PowerPoint exportiert.",
+        "PowerPoint экспортирован.",
+        "PowerPoint 匯出成功。",
+        "PowerPoint exportado."
+      ],
+      [
+        "Could not export the PowerPoint file.",
+        "无法导出 PowerPoint 文件。",
+        "Ma setax jiġi esportat PowerPoint.",
+        "PowerPoint ファイルを出力できません。",
+        "Impossible d'exporter PowerPoint.",
+        "PowerPoint konnte nicht exportiert werden.",
+        "Не удалось PowerPoint.",
+        "無法匯出 PowerPoint 檔案。",
+        "No se pudo exportar PowerPoint."
+      ],
+      [
+        "Could not open the file.",
+        "无法打开文件。",
+        "Ma setax jinfetaħ.",
+        "ファイルを開けません。",
+        "Impossible d'ouvrir.",
+        "Datei konnte nicht geöffnet werden.",
+        "Не удалось открыть.",
+        "無法開啟檔案。",
+        "No se pudo abrir."
+      ],
+      [
+        "This .attd file could not be decoded.",
+        "无法解码该 .attd 文件。",
+        "Dan il-fajl .attd ma setax jinqara.",
+        ".attd をデコードできません。",
+        "Impossible de décoder ce .attd.",
+        ".attd konnte nicht dekodiert werden.",
+        "Не удалось декодировать .attd.",
+        "無法解碼此 .attd 檔。",
+        "No se pudo decodificar .attd."
+      ],
+      [
+        "Imported successfully.",
+        "导入成功。",
+        "Importat.",
+        "読み込み成功。",
+        "Importé.",
+        "Importiert.",
+        "Импортировано.",
+        "匯入成功。",
+        "Importado."
+      ],
+      [
+        "Fullscreen",
+        "全屏",
+        "Skrin sħiħ",
+        "全画面",
+        "Plein écran",
+        "Vollbild",
+        "Полный экран",
+        "全螢幕",
+        "Pantalla completa"
+      ],
+      [
+        "Double-click row: Edit selected record",
+        "双击行：编辑选中记录",
+        "Ikklikkja darbtejn: editja",
+        "行をダブルクリック：編集",
+        "Double-clic : modifier",
+        "Doppelklick: bearbeiten",
+        "Двойной щелчок: правка",
+        "雙擊行：編輯選取記錄",
+        "Doble clic: editar"
+      ],
+      [
+        "Ctrl/Shift click: Multi-select rows",
+        "Ctrl/Shift 点击：多选行",
+        "Ctrl/Shift: agħżel aktar",
+        "Ctrl/Shift：複数選択",
+        "Ctrl/Shift : multi-sélection",
+        "Strg/Umschalt: Mehrfachauswahl",
+        "Ctrl/Shift: мультивыбор",
+        "Ctrl/Shift 點擊：多選行",
+        "Ctrl/Shift: selección múltiple"
+      ],
+      [
+        "Date / Time",
+        "日期 / 时间",
+        "Data / Ħin",
+        "日時",
+        "Date / heure",
+        "Datum / Uhrzeit",
+        "Дата / время",
+        "日期 / 時間",
+        "Fecha / hora"
+      ],
+      [
+        "Status",
+        "状态",
+        "Status",
+        "状態",
+        "Statut",
+        "Status",
+        "Статус",
+        "狀態",
+        "Estado"
+      ],
+      [
+        "Interface Settings",
+        "界面设置",
+        "Settings tal-interface",
+        "インターフェース設定",
+        "Paramètres de l'interface",
+        "Oberflächeneinstellungen",
+        "Настройки интерфейса",
+        "介面設定",
+        "Configuración de interfaz"
+      ],
+      [
+        "Language",
+        "语言",
+        "Lingwa",
+        "言語",
+        "Langue",
+        "Sprache",
+        "Язык",
+        "語言",
+        "Idioma"
+      ],
+      [
+        "Style",
+        "风格",
+        "Stil",
+        "スタイル",
+        "Style",
+        "Stil",
+        "Стиль",
+        "風格",
+        "Estilo"
+      ],
+      [
+        "Interface Font",
+        "界面字体",
+        "Font tal-interface",
+        "インターフェースフォント",
+        "Police de l'interface",
+        "Schriftart",
+        "Шрифт",
+        "介面字型",
+        "Fuente de interfaz"
+      ],
+      [
+        "Apply",
+        "应用",
+        "Applika",
+        "適用",
+        "Appliquer",
+        "Anwenden",
+        "Применить",
+        "套用",
+        "Aplicar"
+      ],
+      [
+        "Close",
+        "关闭",
+        "Agħlaq",
+        "閉じる",
+        "Fermer",
+        "Schließen",
+        "Закрыть",
+        "關閉",
+        "Cerrar"
+      ],
+      [
+        "Reset All Settings",
+        "重置所有设置",
+        "Irrisettja kollox",
+        "すべてリセット",
+        "Tout réinitialiser",
+        "Alles zurücksetzen",
+        "Сбросить всё",
+        "重設所有設定",
+        "Restablecer todo"
+      ]
+    ]
+  }
+]
