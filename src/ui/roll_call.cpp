@@ -1,3 +1,4 @@
+#include "core/status.h"
 #include "ui/roll_call.h"
 #include "model/workbook.h"
 #include "ui/common.h"
@@ -34,12 +35,7 @@ int FindQuickRollCallRecord(const QuickRollCallState& state, const std::wstring&
 }
 
 std::wstring LocalizedQuickRollCallStatus(const std::wstring& status){
-    if (status == L"Present") return Tr(L"Present", L"出席");
-    if (status == L"Absent") return Tr(L"Absent", L"缺席");
-    if (status == L"Late") return Tr(L"Late", L"迟到");
-    if (status == L"Other") return Tr(L"Other", L"其他");
-    if (status.empty()) return Tr(L"Unmarked", L"未标记");
-    return status;
+    return status.empty()?StatusDisplayText(L"Pending"):StatusDisplayText(status);
 }
 
 void ResizeQuickRollCallLayout(HWND hwnd){
@@ -52,10 +48,10 @@ void ResizeQuickRollCallLayout(HWND hwnd){
     int pad = 28;
     int innerW = std::max(320, width - pad * 2);
     int gap = 12;
-    int statusW = std::max(110, (innerW - gap * 3) / 4);
+    int statusW = std::max(70, (innerW - gap * 5) / 6);
     int navW = std::max(110, (innerW - gap * 3) / 4);
 
-    HDWP defer = BeginDeferWindowPos(17);
+    HDWP defer = BeginDeferWindowPos(19);
     auto move = [&](int id, int x, int y, int w, int h) {
         HWND control = GetDlgItem(hwnd, id);
         if (control && defer) {
@@ -77,7 +73,9 @@ void ResizeQuickRollCallLayout(HWND hwnd){
     move(IDC_QUICK_PRESENT, pad, statusY, statusW, 54);
     move(IDC_QUICK_ABSENT, pad + statusW + gap, statusY, statusW, 54);
     move(IDC_QUICK_LATE, pad + (statusW + gap) * 2, statusY, statusW, 54);
-    move(IDC_QUICK_OTHER, pad + (statusW + gap) * 3, statusY, innerW - (statusW + gap) * 3, 54);
+    move(IDC_QUICK_OTHER, pad + (statusW + gap) * 3, statusY, statusW, 54);
+    move(IDC_QUICK_LEAVE, pad+(statusW+gap)*4,statusY,statusW,54);
+    move(IDC_QUICK_PENDING,pad+(statusW+gap)*5,statusY,innerW-(statusW+gap)*5,54);
 
     int navY = std::max(statusY + 74, height - 112);
     move(IDC_QUICK_PREVIOUS, pad, navY, navW, 40);
@@ -125,8 +123,8 @@ bool ApplyQuickRollCallStatus(HWND hwnd, const std::wstring& status){
     if (!state || state->students.empty()) return false;
 
     std::wstring notes = TrimWide(GetText(GetDlgItem(hwnd, IDC_QUICK_NOTES)));
-    if (status == L"Other" && notes.empty()) {
-        ThemedMessageBox(hwnd, Tr(L"Other status requires a note.", L"选择其他状态时必须填写备注。"),
+    if (!ValidStatusNote(status,notes)) {
+        ThemedMessageBox(hwnd, Tr(L"A note is required for Other and Leave.",L"其他和请假必须填写备注。"),
             Tr(L"Quick roll call", L"快速点名"), false);
         SetFocus(GetDlgItem(hwnd, IDC_QUICK_NOTES));
         return false;
@@ -195,12 +193,12 @@ void CancelQuickRollCall(HWND hwnd){
 void FinishQuickRollCall(HWND hwnd){
     auto* state = reinterpret_cast<QuickRollCallState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     if (!state) return;
-    size_t unreviewed = (size_t)std::count(state->reviewed.begin(), state->reviewed.end(), false);
+    size_t unreviewed=0;
+    for(size_t i=0;i<state->students.size();++i){int row=FindQuickRollCallRecord(*state,state->students[i]);if(!state->reviewed[i]||row<0||state->workingRecords[row].status==L"Pending")++unreviewed;}
     if (unreviewed > 0) {
         std::wstringstream warning;
         warning << unreviewed << L" "
-                << Tr(L"students have not been reviewed. Finish and keep the partial results?",
-                      L"名学生尚未检查。是否完成并保留部分结果？");
+                << Tr(L"Students remain unreviewed or Pending. Keep partial results?",L"仍有学生未检查或未点名，是否保留部分结果？");
         if (ThemedMessageBox(hwnd, warning.str(), Tr(L"Quick roll call", L"快速点名"), true) != IDYES) return;
     }
 
@@ -241,13 +239,14 @@ LRESULT CALLBACK QuickRollCallProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         MakeSettingsControl(hwnd, L"BUTTON", Tr(L"Absent", L"缺席").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_QUICK_ABSENT);
         MakeSettingsControl(hwnd, L"BUTTON", Tr(L"Late", L"迟到").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_QUICK_LATE);
         MakeSettingsControl(hwnd, L"BUTTON", Tr(L"Other", L"其他").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_QUICK_OTHER);
+        MakeSettingsControl(hwnd,L"BUTTON",Tr(L"Leave",L"请假").c_str(),BS_PUSHBUTTON|BS_OWNERDRAW|WS_TABSTOP,IDC_QUICK_LEAVE);
+        MakeSettingsControl(hwnd,L"BUTTON",Tr(L"Pending",L"未点名").c_str(),BS_PUSHBUTTON|BS_OWNERDRAW|WS_TABSTOP,IDC_QUICK_PENDING);
         MakeSettingsControl(hwnd, L"BUTTON", Tr(L"Previous", L"上一位").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_QUICK_PREVIOUS);
         MakeSettingsControl(hwnd, L"BUTTON", Tr(L"Skip", L"跳过").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_QUICK_SKIP);
         MakeSettingsControl(hwnd, L"BUTTON", Tr(L"Finish", L"完成").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_QUICK_FINISH);
         MakeSettingsControl(hwnd, L"BUTTON", Tr(L"Cancel", L"取消").c_str(), BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_QUICK_CANCEL);
         MakeSettingsControl(hwnd, L"STATIC",
-            Tr(L"Keyboard: 1 Present, 2 Absent, 3 Late, 4 Other, Left Previous, Right Skip",
-               L"键盘：1 出席，2 缺席，3 迟到，4 其他，左方向键上一位，右方向键跳过").c_str(),
+            Tr(L"Keys 1-6: Present, Absent, Late, Other, Leave, Pending; arrows: Previous / Skip",L"数字键1至6选择六种状态，方向键上一位或跳过").c_str(),
             SS_CENTER | SS_NOPREFIX | SS_ENDELLIPSIS, IDC_QUICK_HINT);
 
         SendMessageW(GetDlgItem(hwnd, IDC_QUICK_TITLE), WM_SETFONT, (WPARAM)Ui().titleFont, TRUE);
@@ -265,6 +264,8 @@ LRESULT CALLBACK QuickRollCallProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
     case WM_COMMAND:
         if (HIWORD(wParam) != BN_CLICKED) break;
         switch (LOWORD(wParam)) {
+        case IDC_QUICK_LEAVE: ApplyQuickRollCallStatus(hwnd,L"Leave"); return 0;
+        case IDC_QUICK_PENDING: ApplyQuickRollCallStatus(hwnd,L"Pending"); return 0;
         case IDC_QUICK_PRESENT: ApplyQuickRollCallStatus(hwnd, L"Present"); return 0;
         case IDC_QUICK_ABSENT: ApplyQuickRollCallStatus(hwnd, L"Absent"); return 0;
         case IDC_QUICK_LATE: ApplyQuickRollCallStatus(hwnd, L"Late"); return 0;
@@ -280,6 +281,8 @@ LRESULT CALLBACK QuickRollCallProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         if (wParam == L'2' || wParam == VK_NUMPAD2) { ApplyQuickRollCallStatus(hwnd, L"Absent"); return 0; }
         if (wParam == L'3' || wParam == VK_NUMPAD3) { ApplyQuickRollCallStatus(hwnd, L"Late"); return 0; }
         if (wParam == L'4' || wParam == VK_NUMPAD4) { ApplyQuickRollCallStatus(hwnd, L"Other"); return 0; }
+        if (wParam == L'5' || wParam == VK_NUMPAD5) { ApplyQuickRollCallStatus(hwnd,L"Leave"); return 0; }
+        if (wParam == L'6' || wParam == VK_NUMPAD6) { ApplyQuickRollCallStatus(hwnd,L"Pending"); return 0; }
         if (wParam == VK_LEFT) { PreviousQuickRollCallStudent(hwnd); return 0; }
         if (wParam == VK_RIGHT) { SkipQuickRollCallStudent(hwnd); return 0; }
         if (wParam == VK_ESCAPE) { CancelQuickRollCall(hwnd); return 0; }

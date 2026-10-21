@@ -1,3 +1,5 @@
+#include "model/query.h"
+#include "core/status.h"
 #include "reports/csv.h"
 #include "localization/strings.h"
 #include "storage/files.h"
@@ -15,8 +17,10 @@ std::function<bool()> PrepareCsvExport(const std::wstring& path) {
     const ReportLabels headers = {Tr(L"Date/Time", L"\u65e5\u671f\u65f6\u95f4"),
         Tr(L"Name", L"\u59d3\u540d"), Tr(L"Status", L"\u72b6\u6001"), Tr(L"Other", L"\u5176\u4ed6")};
     const ReportLabels statuses = {StatusDisplayText(L"Present"), StatusDisplayText(L"Absent"),
-        StatusDisplayText(L"Late"), StatusDisplayText(L"Other")};
-    return [path, headers, statuses, records = Document().Records()] {
+        StatusDisplayText(L"Late"), StatusDisplayText(L"Other"), StatusDisplayText(L"Leave"), StatusDisplayText(L"Pending")};
+    auto records=Document().Records();
+    records.erase(std::remove_if(records.begin(),records.end(),[](const auto& r){return !RecordMatchesStatsRange(r);}),records.end());
+    return [path, headers, statuses, records = std::move(records)] {
         return WriteStreamFileAtomically(std::filesystem::path(path), [&](std::ofstream& file) {
             file << "\xEF\xBB\xBF";
             file << CsvCell(headers[0]) << ',' << CsvCell(headers[1]) << ','

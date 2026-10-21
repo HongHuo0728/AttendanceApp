@@ -1,3 +1,5 @@
+#include "core/text.h"
+#include "ui/state.h"
 #include "app/documents.h"
 #include "ui/dialogs.h"
 #include "localization/strings.h"
@@ -27,12 +29,14 @@ void SaveAttendance(){
     }
     std::string payload;
     if (!EncodeCurrentWorkbook(payload)
+        || !EnsureMigrationBackup(std::filesystem::path(path))
         || !WriteBinaryFileAtomically(std::filesystem::path(path), payload)) {
         ShowMessage(Tr(L"Could not save the file.", L"\u65e0\u6cd5\u4fdd\u5b58\u6587\u4ef6\u3002"));
         return;
     }
     bool autosaveCleared = ClearAutosaveFile();
     Document().dirty = false;
+    Document().currentFile=path;
     if (autosaveCleared) Document().allowAutosaveOverwrite = true;
     SaveRecentFilePath(path);
     std::wstring message = Tr(L"Saved successfully.", L"\u4fdd\u5b58\u6210\u529f\u3002");
@@ -56,13 +60,6 @@ bool LoadAttendanceFile(const std::wstring& path, bool showSuccess, AttendanceLo
         ShowMessage(Tr(L"This .attd file could not be decoded.", L"\u65e0\u6cd5\u89e3\u7801\u8be5 .attd \u6587\u4ef6\u3002"));
         return false;
     }
-    if (plainText.rfind("ATTENDANCE_V5\n", 0) != 0) {
-        std::filesystem::path backupPath = std::filesystem::path(path).wstring() + L".pre-v5.bak";
-        if (!FileExistsNoThrow(backupPath)) {
-            std::error_code ec;
-            std::filesystem::copy_file(std::filesystem::path(path), backupPath, std::filesystem::copy_options::skip_existing, ec);
-        }
-    }
 
     if ((intent == AttendanceLoadIntent::OpenFile || intent == AttendanceLoadIntent::CommandLine)
         && !ArchiveExistingAutosaveForReplacement()) {
@@ -73,7 +70,9 @@ bool LoadAttendanceFile(const std::wstring& path, bool showSuccess, AttendanceLo
     }
 
     Document().sheets = std::move(imported);
+    Document().currentFile=(intent==AttendanceLoadIntent::OpenFile||intent==AttendanceLoadIntent::CommandLine)?path:L"";
     Document().visibleRows.clear();
+    Document().lessonFilter.clear();
     Document().activeSheet = std::clamp(Document().loadedActiveSheet, 0, (int)Document().sheets.size() - 1);
     Document().undoStack.clear();
     Document().redoStack.clear();
@@ -103,4 +102,27 @@ void ImportAttendance(){
     LoadAttendanceFile(path, true);
 }
 
+
+bool EnsureMigrationBackup(const std::filesystem::path& path){
+ if(!FileExistsNoThrow(path))return true;
+ std::string bytes,plain;std::vector<AttendanceSheet> parsed;
+ if(!ReadBinaryFileLimited(path,bytes,MAX_ATTD_FILE_BYTES)||!DecodeAttd(bytes,plain))return false;
+ if(plain.rfind("ATTENDANCE_V6\n",0)==0)return true;
+ if(!DeserializeWorkbook(plain,parsed))return false;
+ auto backup=std::filesystem::path(path.wstring()+L".pre-v6.bak");
+ std::error_code ec;if(std::filesystem::is_regular_file(backup,ec)&&!ec)return true;
+ return CopyFileW(path.c_str(),backup.c_str(),TRUE)!=FALSE;
+}
+void ExportV5Compatible(){
+ if(ThemedMessageBox(Ui().hwnd,Tr(L"V5 changes Leave and Pending to Other with notes. Older versions calculate rates differently. Export a separate copy?",L"V5 将请假和未点名转换为带说明的其他状态。旧版本统计方式不同。是否导出单独副本？"),Tr(L"Export V5 compatible file",L"导出 V5 兼容文件"),true)!=IDYES)return;
+ auto path=SaveFileDialog();if(path.empty())return;
+ std::error_code ec;bool same=!Document().currentFile.empty()&&std::filesystem::equivalent(std::filesystem::path(path),std::filesystem::path(Document().currentFile),ec);
+ if(!same&&!Document().currentFile.empty())same=LowerText(std::filesystem::absolute(path).lexically_normal().wstring())==LowerText(std::filesystem::absolute(Document().currentFile).lexically_normal().wstring());
+ std::string bytes,plain;
+ if(same||(ReadBinaryFileLimited(path,bytes,MAX_ATTD_FILE_BYTES)&&DecodeAttd(bytes,plain)&&plain.rfind("ATTENDANCE_V6\n",0)==0)){
+  ShowMessage(Tr(L"Choose a separate file; the active workbook and V6 files cannot be overwritten by V5 export.",L"请选择其他文件；V5 导出不能覆盖当前工作簿或 V6 文件。"));return;
+ }
+ std::string payload;bool success=EncodeV5Compatible(payload)&&WriteBinaryFileAtomically(path,payload);
+ ShowMessage(success?Tr(L"Saved successfully.",L"保存成功。"):Tr(L"Could not save the file.",L"无法保存文件。"));
+}
 } // namespace attendance

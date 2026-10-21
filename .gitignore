@@ -55,3 +55,8 @@ Desktop.ini
 *.log
 *.bak
 *.orig
+
+# Bounded generated work
+build-*/
+.codex/backups/
+release/

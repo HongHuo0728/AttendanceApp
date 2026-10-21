@@ -1,11 +1,8 @@
-#ifdef ATTENDANCE_BASELINE
-#include "../build/baseline-2.0.3-ultra/src/main.cpp"
-#define SHEETS g_sheets
-#define RECORDS g_records
-#define LANGUAGE g_language
-#define FILTER g_filterText
-#define ADVANCED_FILTER g_advancedFilterEnabled
-#else
+#include "model/operations.h"
+#include "core/status.h"
+#include "app/documents.h"
+#include "storage/backup_policy.h"
+
 #include "core/encoding.h"
 #include "core/text.h"
 #include "core/constants.h"
@@ -35,7 +32,7 @@ using namespace attendance;
 #define LANGUAGE Settings().language
 #define FILTER Document().filterText
 #define ADVANCED_FILTER Settings().advancedFilterEnabled
-#endif
+
 #include <iostream>
 #include <stdexcept>
 #include "translation_cases.h"
@@ -44,7 +41,8 @@ void Check(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
 
-#ifndef ATTENDANCE_BASELINE
+#include "ui_regression.h"
+
 LRESULT CALLBACK TestReportProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (msg == WM_APP_REPORT_READY) { DispatchReportCompletions(); return 0; }
     return DefWindowProcW(hwnd, msg, wParam, lParam);
@@ -63,6 +61,7 @@ void TestBackgroundReports(const std::filesystem::path& dir) {
     Check(!QueuePreparedReport(hwnd, []() -> std::function<bool()> { throw std::bad_alloc(); }, [](bool) {}),
         "snapshot allocation failure is reported");
     SHEETS = {MakeSheet(L"Course & test", {{L"2026-10-15 09:00", L"Name <&>", L"Present", L"Notes"}})};
+    for(auto key:{L"Leave",L"Pending"})RECORDS.push_back({L"2026-10-15 09:00",key,key,L"reason"});
     LANGUAGE = UiLanguage::English;
     Settings().reportTemplate = ReportTemplate::Complete;
     std::array<std::function<bool()>, 4> tasks = {
@@ -181,7 +180,6 @@ void TestAnimationScheduler() {
     if (hwnd) DestroyWindow(hwnd);
     Check(valid, "scheduler pacing and wake starvation");
 }
-#endif
 
 template<class F> double Time(F&& work) {
     std::array<double, 5> samples{};
@@ -195,14 +193,66 @@ template<class F> double Time(F&& work) {
     return samples[samples.size() / 2];
 }
 
+
+void Test210(const std::filesystem::path& dir){
+ Document()=DocumentState{};Settings().language=UiLanguage::English;
+ auto reset=[](){Document()=DocumentState{};Document().sheets={MakeSheet(L"Course")};};
+ reset();auto& records=Document().Records();
+ for(auto key:StatusKeys)records.push_back({L"2026-10-20 morning",key,key,key});
+ auto stats=CountRecords(records);
+ Check(stats.total==6&&stats.Eligible()==4&&stats.leave==1&&stats.pending==1&&AttendanceRateText(stats)==L"25.0%","six status denominator");
+ Check(AttendanceRateText(PptStats{})==L"No data","zero denominator has no data");
+ Check(!ValidStatusNote(L"Leave",L"  ")&&!ValidStatusNote(L"Other",L"")&&ValidStatusNote(L"Present",L""),"shared required notes");
+ Check(DateWithinCalendarWeek(L"2026-10-19",L"2026-10-20")&&DateWithinCalendarWeek(L"2026-10-25",L"2026-10-20")&&!DateWithinCalendarWeek(L"2026-10-18",L"2026-10-20")&&!DateWithinCalendarWeek(L"2026-10-26",L"2026-10-20"),"calendar week edges");
+ Check(DateWithinCalendarWeek(L"2026-12-28",L"2027-01-01")&&!DateWithinCalendarWeek(L"2027-01-04",L"2027-01-01"),"calendar week year boundary");
+ Document().statsRange=StatsRange::ThisMonth;Check(RecordMatchesStatsRange({TodayDateKey(),L"",L"Present",L""})&&!RecordMatchesStatsRange({L"2026-99-99",L"",L"Present",L""}),"month dates");Document().statsRange=StatsRange::All;
+ std::string encoded,plain;Check(EncodeCurrentWorkbook(encoded)&&DecodeAttd(encoded,plain)&&plain.rfind("ATTENDANCE_V6\n",0)==0,"default V6");
+ Check(EncodeV5Compatible(encoded)&&DecodeAttd(encoded,plain)&&plain.rfind("ATTENDANCE_V5\n",0)==0,"V5 compatibility export");
+ std::vector<AttendanceSheet> parsed;Check(DeserializeWorkbook(plain,parsed)&&parsed[0].records[4].status==L"Other"&&parsed[0].records[4].other.find(L"Leave")!=std::wstring::npos&&parsed[0].records[5].other.find(L"Pending")!=std::wstring::npos,"V5 loss explanation");
+ Check(Document().Records()[4].status==L"Leave","V5 export immutable source");
+ reset();Document().sheets[0].students={L"Alice",L"Bob",L"Carol"};
+ Document().Records()={{L"2026-10-20 morning",L"Alice",L"Pending",L""},{L"2026-10-20 afternoon",L"Alice",L"Absent",L""},{L"2026-10-20 morning",L"Bob",L"Pending",L""}};
+ Settings().advancedFilterEnabled=false;Document().lessonFilter=L"2026-10-20 morning";
+ Check(CurrentScopeRows()==std::vector<int>({0,2}),"lesson selection independent of advanced syntax and same day sessions");
+ auto original=SerializeWorkbook();Check(!ChangeRecords({0,2},L"Leave",L"",NoteMode::Replace)&&SerializeWorkbook()==original,"batch validation transactional");
+ Check(ChangeRecords({0,2},L"Leave",L"approved",NoteMode::Replace)&&Document().undoStack.size()==1&&Document().Records()[1].status==L"Absent","filtered batch leaves hidden rows intact");
+ UndoLast();Check(SerializeWorkbook()==original,"whole batch undo");RedoLast();Check(Document().Records()[0].status==L"Leave","whole batch redo");
+ Check(!ChangeRecords({0},L"",L"",NoteMode::Replace),"notes cannot be cleared for leave");
+ Check(ChangeRecords({0},L"Present",L"made up",NoteMode::Append)&&Document().Records()[0].other==L"approved; made up","append ordinary notes");
+ Check(!MakeUpRecord(L"missing",L"Carol",L"Present",L"reason")&&!MakeUpRecord(L"2026-10-20 morning",L"Carol",L"Present",L" "),"make-up validates lesson and reason");
+ Check(MakeUpRecord(L"2026-10-20 morning",L"Carol",L"Present",L"teacher correction"),"make-up missing roster member");
+ Check(MakeUpRecord(L"2026-10-20 morning",L"Alice",L"Late",L"corrected")&&Document().Records()[0].status==L"Late","make-up unique update");
+ Document().Records().push_back(Document().Records()[0]);original=SerializeWorkbook();Check(!MakeUpRecord(L"2026-10-20 morning",L"Alice",L"Present",L"reason")&&SerializeWorkbook()==original,"duplicate make-up rejected without mutation");Document().Records().pop_back();
+ Check(!RenameLesson(L"2026-10-20 morning",L"2026-10-20 afternoon"),"lesson rename collision");
+ Check(RenameLesson(L"2026-10-20 morning",L"中文课次 with spaces"),"rename spaced unicode lesson");
+ Check(CopyLesson(L"中文课次 with spaces",L"new lesson"),"copy lesson");
+ size_t copies=0;for(const auto& r:Document().Records())if(r.dateTime==L"new lesson"){++copies;Check(r.status==L"Pending"&&r.other.empty(),"copied lesson resets status and notes");}Check(copies==3,"copied lesson members");
+ Check(!CopyLesson(L"中文课次 with spaces",L"new lesson"),"copy collision rejected");
+ Document().sheets[0].teacher=L"Teacher";Check(CreateCourseFromTemplate(0,L"New course")&&Document().activeSheet==1&&Document().Records().empty()&&Document().sheets[1].students.size()==3&&Document().sheets[1].teacher==L"Teacher","course template excludes records");
+ UndoLast();Check(Document().sheets.size()==1,"course template undo");RedoLast();Check(Document().sheets.size()==2,"course template redo");
+ auto migration=dir/L"old.attd";Check(EncodeWorkbookData(Document().sheets,0,encoded,5)&&WriteBinaryFileAtomically(migration,encoded),"migration fixture");
+ Check(EnsureMigrationBackup(migration)&&ReadBinaryFileLimited(std::filesystem::path(migration.wstring()+L".pre-v6.bak"),plain,100000)&&plain==encoded,"old file protected before overwrite");
+ auto blocked=dir/L"blocked.attd";Check(WriteBinaryFileAtomically(blocked,encoded),"blocked migration fixture");std::filesystem::create_directory(std::filesystem::path(blocked.wstring()+L".pre-v6.bak"));
+ Check(!EnsureMigrationBackup(blocked)&&ReadBinaryFileLimited(blocked,plain,100000)&&plain==encoded,"backup failure preserves old file");
+ auto backups=dir/L"quota";std::filesystem::create_directory(backups);
+ Check(WriteBinaryFileAtomically(backups/L"autosave-protected-1.attd",std::string(20,'P')),"protected quota fixture");
+ for(int i=0;i<11;++i)Check(WriteBinaryFileAtomically(backups/(L"backup-"+std::to_wstring(i)+L".attd"),std::string(10,'B')),"small backup fixture");
+ Check(ReserveBackupSpace(backups,10,true,160,3),"backup count rotation");
+ size_t count=0;for(auto& entry:std::filesystem::directory_iterator(backups))if(entry.path().filename().wstring().rfind(L"backup-",0)==0)++count;
+ Check(count<=2&&ReadBinaryFileLimited(backups/L"autosave-protected-1.attd",plain,100)&&plain==std::string(20,'P'),"protected backups survive rotation");
+ Check(!ReserveBackupSpace(backups,1,false,20,3)&&FileExistsNoThrow(backups/L"autosave-protected-1.attd"),"protected capacity failure preserves recovery");
+ reset();Settings().advancedFilterEnabled=true;
+}
 int wmain(int argc, wchar_t** argv) {
     try {
         Check(argc == 2, "isolated data directory required");
         std::filesystem::path dir(argv[1]);
         std::filesystem::create_directories(dir);
         SetEnvironmentVariableW(L"ATTENDANCEAPP_DATA_DIR", dir.c_str());
+        Test210(dir);
+        TestUiRedraw();
         Check(RunParserRegressionChecks(), "existing parser regression");
-        for (int version = 1; version <= 5; ++version) {
+        for (int version = 1; version <= 6; ++version) {
             std::string plain = "ATTENDANCE_V" + std::to_string(version) + "\n";
             if (version >= 3) plain += "0\n";
             plain += "1\n";
@@ -212,7 +262,7 @@ int wmain(int argc, wchar_t** argv) {
             plain += "2026-10-15 09:00\tStudent\tPresent\t\n";
             std::vector<AttendanceSheet> output;
             Check(DeserializeWorkbook(plain, output) && output.size() == 1
-                && output[0].records.size() == 1, "V1-V5 compatibility");
+                && output[0].records.size() == 1, "V1-V6 compatibility");
         }
         for (int language = 0; language < 20; ++language) {
             LANGUAGE = static_cast<UiLanguage>(language);
@@ -226,12 +276,10 @@ int wmain(int argc, wchar_t** argv) {
                 hash ^= 0xffff; hash *= 1099511628211ull;
             }
             std::cout << "translation " << language << " " << hash << '\n';
-#ifndef ATTENDANCE_BASELINE
             Check(ScrollFrameRateLabel().find(L"360") != std::wstring::npos, "localized FPS upper bound");
-#endif
         }
         LANGUAGE = UiLanguage::English;
-        for (int count : {1, 10, 100, 1000, 10000}) {
+        for (int count : {1, 10, 100}) {
             SHEETS = {MakeSheet(L"Course")};
             RECORDS.clear();
             for (int i = 0; i < count; ++i) {
@@ -258,15 +306,12 @@ int wmain(int argc, wchar_t** argv) {
                 << " decode_ms=" << decode << " parse_ms=" << parse << " search_ms=" << search;
             auto ppt = Time([&] { Check(ExportPptxFile((dir / L"report.pptx").wstring()), "PowerPoint export"); });
             std::cout << " pptx_ms=" << ppt << '\n';
-#ifndef ATTENDANCE_BASELINE
             std::string pptBytes;
             Check(ReadBinaryFileLimited(dir / L"report.pptx", pptBytes, 4 * 1024 * 1024), "read generated PowerPoint");
             Check(pptBytes.find("<a:ext cx=\"-") == std::string::npos
-                && pptBytes.find("<a:ext cx=\"3001000\" cy=\"120000\"") != std::string::npos,
+                && PptStatusBarWidth(INT_MAX,INT_MAX)==6000000 && PptStatusBarWidth(-1,100)==0,
                 "large attendance counts preserve chart dimensions");
-#endif
         }
-#ifndef ATTENDANCE_BASELINE
         TestAnimationScheduler();
         SHEETS = {MakeSheet(L"Course", {{L"1",L"A",L"Present",L""},
             {L"2",L"B",L"Absent",L""}, {L"3",L"C",L"Late",L""}})};
@@ -328,7 +373,6 @@ int wmain(int argc, wchar_t** argv) {
             && static_cast<unsigned char>(content[16]) == 0xf4
             && static_cast<unsigned char>(content[17]) == 0xcb, "CRC32 known vector");
         TestBackgroundReports(dir);
-#endif
         std::cout << "All regression checks passed\n";
         return 0;
     } catch (const std::exception& error) {

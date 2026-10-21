@@ -1,3 +1,4 @@
+#include "ui/redraw.h"
 #include "ui/drawing.h"
 #include "settings/toggles.h"
 #include "ui/common.h"
@@ -36,6 +37,10 @@ bool DrawParticleToggleItem(const DRAWITEMSTRUCT* draw){
     if (!draw || draw->CtlType != ODT_BUTTON) return false;
     bool* value = FindSettingToggleValue(draw->CtlID);
     if (!value) return false;
+    BufferedPaint buffer(draw->hDC, draw->rcItem);
+    DRAWITEMSTRUCT buffered = *draw;
+    buffered.hDC = buffer.DC();
+    draw = &buffered;
 
     wchar_t text[160]{};
     GetWindowTextW(draw->hwndItem, text, 160);
@@ -88,6 +93,10 @@ bool DrawParticleToggleItem(const DRAWITEMSTRUCT* draw){
 
 bool DrawButtonItem(const DRAWITEMSTRUCT* draw){
     if (!draw || draw->CtlType != ODT_BUTTON) return false;
+    BufferedPaint buffer(draw->hDC, draw->rcItem);
+    DRAWITEMSTRUCT buffered = *draw;
+    buffered.hDC = buffer.DC();
+    draw = &buffered;
 
     wchar_t text[128]{};
     GetWindowTextW(draw->hwndItem, text, 128);
@@ -154,6 +163,10 @@ bool DrawButtonItem(const DRAWITEMSTRUCT* draw){
 
 bool DrawComboItem(const DRAWITEMSTRUCT* draw){
     if (!draw || draw->CtlType != ODT_COMBOBOX) return false;
+    BufferedPaint buffer(draw->hDC, draw->rcItem);
+    DRAWITEMSTRUCT buffered = *draw;
+    buffered.hDC = buffer.DC();
+    draw = &buffered;
 
     RECT rc = draw->rcItem;
     bool comboEdit = (draw->itemState & ODS_COMBOBOXEDIT) != 0;
@@ -325,8 +338,12 @@ LRESULT CALLBACK HeaderPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         return DefSubclassProc(hwnd, msg, wParam, lParam);
     case WM_PAINT: {
         PAINTSTRUCT ps{};
-        HDC hdc = BeginPaint(hwnd, &ps);
+        HDC target = BeginPaint(hwnd, &ps);
+        RECT paintRect{}; GetClientRect(hwnd, &paintRect);
+        BufferedPaint buffer(target, paintRect);
+        HDC hdc = buffer.DC();
         PaintHeaderControl(hwnd, hdc);
+        buffer.Commit();
         EndPaint(hwnd, &ps);
         return 0;
     }
@@ -347,7 +364,10 @@ LRESULT CALLBACK StatsPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return DefSubclassProc(hwnd, msg, wParam, lParam);
     case WM_PAINT: {
         PAINTSTRUCT ps{};
-        HDC hdc = BeginPaint(hwnd, &ps);
+        HDC target = BeginPaint(hwnd, &ps);
+        RECT paintRect{}; GetClientRect(hwnd, &paintRect);
+        BufferedPaint buffer(target, paintRect);
+        HDC hdc = buffer.DC();
 
         RECT rc{};
         GetClientRect(hwnd, &rc);
@@ -411,7 +431,8 @@ LRESULT CALLBACK StatsPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             SetTextColor(hdc, Ui().COLOR_TEXT);
             DrawTextW(hdc, value.c_str(), -1, &valueRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
             SelectObject(hdc, oldFont);
-            EndPaint(hwnd, &ps);
+            buffer.Commit();
+        EndPaint(hwnd, &ps);
             return 0;
         }
 
@@ -425,6 +446,7 @@ LRESULT CALLBACK StatsPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         UINT align = GetDlgCtrlID(hwnd) == IDC_STATS ? DT_RIGHT : DT_LEFT;
         DrawTextW(hdc, text, -1, &rc, align | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         SelectObject(hdc, oldFont);
+        buffer.Commit();
         EndPaint(hwnd, &ps);
         return 0;
     }

@@ -1,3 +1,5 @@
+#include "storage/backup_policy.h"
+#include "ui/choice.h"
 #include "app/recovery.h"
 #include "core/text.h"
 #include "ui/dialogs.h"
@@ -34,7 +36,8 @@ std::wstring TimestampForFileName(){
     GetLocalTime(&st);
     wchar_t buffer[32]{};
     swprintf_s(buffer, L"%04d%02d%02d-%02d%02d%02d", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
-    return buffer;
+    static std::atomic_uint64_t sequence{0};
+    return std::wstring(buffer)+L"-"+std::to_wstring(st.wMilliseconds)+L"-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(sequence++);
 }
 
 std::vector<std::filesystem::path> ListBackupFiles(){
@@ -51,39 +54,17 @@ std::vector<std::filesystem::path> ListBackupFiles(){
         }
         iterator.increment(ec);
     }
-    std::sort(files.begin(), files.end(), std::greater<std::filesystem::path>());
+    std::sort(files.begin(),files.end(),[](const auto& a,const auto& b){std::error_code ea,eb;auto ta=std::filesystem::last_write_time(a,ea),tb=std::filesystem::last_write_time(b,eb);return !ea&&!eb?ta>tb:a>b;});
     return files;
 }
 
 void ShowBackupManager(){
     auto files = ListBackupFiles();
-    std::wstringstream ss;
-    ss << Tr(L"Backup manager", L"\u5907\u4efd\u7ba1\u7406\u4e2d\u5fc3") << L"\n\n";
-    if (files.empty()) {
-        ss << Tr(L"No backup file was found.", L"\u672a\u627e\u5230\u5907\u4efd\u6587\u4ef6\u3002") << L"\n";
-        ShowMessage(ss.str(), Tr(L"Backup manager", L"\u5907\u4efd\u7ba1\u7406\u4e2d\u5fc3"));
-        return;
-    }
-    size_t displayedCount = std::min<size_t>(files.size(), 15);
-    for (int i = 0; i < static_cast<int>(displayedCount); ++i) {
-        ss << (i + 1) << L". " << files[i].filename().wstring() << L"\n";
-    }
-    std::wstring choice;
-    if (!PromptText(Tr(L"Backup manager", L"\u5907\u4efd\u7ba1\u7406\u4e2d\u5fc3"), ss.str() + L"\n" + Tr(L"Enter backup number to restore, or leave blank to cancel:", L"\u8f93\u5165\u8981\u6062\u590d\u7684\u5907\u4efd\u7f16\u53f7\uff0c\u7559\u7a7a\u53d6\u6d88\uff1a"), choice)) return;
-    choice = TrimWide(choice);
-    if (choice.empty()) return;
-    size_t parsedLength = 0;
-    unsigned long long selectedNumber = 0;
-    try {
-        selectedNumber = std::stoull(choice, &parsedLength, 10);
-    } catch (...) {
-        return;
-    }
-    if (parsedLength != choice.size() || selectedNumber == 0
-        || selectedNumber > displayedCount) return;
-    size_t index = static_cast<size_t>(selectedNumber - 1);
-    if (!ConfirmDiscardUnsaved(Tr(L"Restore backup", L"\u6062\u590d\u5907\u4efd"))) return;
-    LoadAttendanceFile(files[index].wstring(), true, AttendanceLoadIntent::RestoreBackup);
+    if(files.empty()){ShowMessage(Tr(L"No backup file was found.",L"未找到备份文件。"));return;}
+    std::vector<std::wstring> names;for(const auto& file:files)names.push_back(file.filename().wstring());
+    int index=ChooseItem(Tr(L"Backup manager",L"备份管理器"),names);if(index<0)return;
+    if(!ConfirmDiscardUnsaved(Tr(L"Restore backup",L"恢复备份")))return;
+    LoadAttendanceFile(files[index].wstring(),true,AttendanceLoadIntent::RestoreBackup);
 }
 
 std::filesystem::path RecentFileRecordPath(){
@@ -130,6 +111,8 @@ bool ArchiveExistingAutosaveForReplacement(){
     auto protectedPath = directory /
         (L"autosave-protected-" + TimestampForFileName() + L"-"
             + std::to_wstring(GetTickCount64()) + L".attd");
+    std::error_code ec;auto size=std::filesystem::file_size(original,ec);
+    if(ec||!ReserveBackupSpace(directory,size,false))return false;
     return MoveFileExW(original.c_str(), protectedPath.c_str(), MOVEFILE_WRITE_THROUGH) != FALSE;
 }
 
@@ -143,7 +126,10 @@ void BackupNow(){
     auto path = LatestBackupPath();
     if (path.empty()) return;
     std::string payload;
-    if (!EncodeCurrentWorkbook(payload) || !WriteBinaryFileAtomically(path, payload)) {
+    if (!EncodeCurrentWorkbook(payload)) return;
+    auto capacityDir=BackupDirectoryPath();
+    if(capacityDir.empty()||!ReserveBackupSpace(capacityDir,payload.size(),true)){ShowMessage(Tr(L"Backup storage is full. Export or clean ordinary backups; the existing recovery file is preserved.",L"备份空间已满，请导出或清理普通备份；现有恢复文件已保留。"));return;}
+    if (!WriteBinaryFileAtomically(path, payload)) {
         ShowMessage(Tr(L"Could not save the file.", L"\u65e0\u6cd5\u4fdd\u5b58\u6587\u4ef6\u3002"));
         return;
     }
@@ -200,6 +186,8 @@ bool PreserveIgnoredAutosave(){
     auto protectedPath = directory /
         (L"autosave-protected-" + TimestampForFileName() + L"-"
             + std::to_wstring(GetTickCount64()) + L".attd");
+    std::error_code ec;auto size=std::filesystem::file_size(original,ec);
+    if(ec||!ReserveBackupSpace(directory,size,false)){ShowMessage(Tr(L"Backup storage is full. Export or clean ordinary backups; the existing recovery file is preserved.",L"备份空间已满，请导出或清理普通备份；现有恢复文件已保留。"));return false;}
     if (!CopyFileW(original.c_str(), protectedPath.c_str(), TRUE)) return false;
     Document().allowAutosaveOverwrite = true;
     return true;

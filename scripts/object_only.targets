@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!-- CMake's Visual Studio OBJECT target still invokes LIB by default.
+       Dependents explicitly link the .obj files, so suppress only that archive task.
+       Imported solely by AttendanceRuntime through ForceImportAfterCppTargets. -->
+  <Target Name="Lib" />
+</Project>

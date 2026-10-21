@@ -1,3 +1,4 @@
+#include "core/status.h"
 #include "storage/workbook_codec.h"
 #include "core/encoding.h"
 #include "model/workbook.h"
@@ -152,20 +153,19 @@ bool DeserializeRecords(const std::string& plainText, std::vector<AttendanceReco
     return true;
 }
 
-std::string SerializeWorkbook(){
-    SyncActiveSheet();
+std::string SerializeWorkbookData(const std::vector<AttendanceSheet>& sheets,int active,int version){
     std::string text;
     size_t estimate = 64;
-    for (const auto& sheet : Document().sheets) estimate += sheet.records.size() * 64 + sheet.students.size() * 24;
+    for (const auto& sheet : sheets) estimate += sheet.records.size() * 64 + sheet.students.size() * 24;
     text.reserve(std::min(estimate, MAX_ATTD_DECODED_BYTES));
-    text += "ATTENDANCE_V5\n";
-    text += std::to_string(Document().activeSheet) + '\n';
-    text += std::to_string(Document().sheets.size()) + '\n';
+    text += version==5?"ATTENDANCE_V5\n":"ATTENDANCE_V6\n";
+    text += std::to_string(active) + '\n';
+    text += std::to_string(sheets.size()) + '\n';
     auto append = [&](const std::wstring& value, char separator = '\n') {
         text += Escape(WideToUtf8(value));
         text += separator;
     };
-    for (const auto& sheet : Document().sheets) {
+    for (const auto& sheet : sheets) {
         append(sheet.name);
         append(sheet.teacher);
         append(sheet.location);
@@ -185,6 +185,8 @@ std::string SerializeWorkbook(){
     return text;
 }
 
+std::string SerializeWorkbook(){SyncActiveSheet();return SerializeWorkbookData(Document().sheets,Document().activeSheet);}
+
 bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceSheet>& output){
     if (plainText.size() > MAX_ATTD_DECODED_BYTES) return false;
     ReadOnlyBuffer buffer(plainText);
@@ -199,10 +201,10 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
         Document().loadedActiveSheet = 0;
         return true;
     }
-    if (header != "ATTENDANCE_V2" && header != "ATTENDANCE_V3" && header != "ATTENDANCE_V4" && header != "ATTENDANCE_V5") return false;
+    if (header != "ATTENDANCE_V2" && header != "ATTENDANCE_V3" && header != "ATTENDANCE_V4" && header != "ATTENDANCE_V5" && header != "ATTENDANCE_V6") return false;
 
     std::string countLine;
-    if (header == "ATTENDANCE_V3" || header == "ATTENDANCE_V4" || header == "ATTENDANCE_V5") {
+    if (header == "ATTENDANCE_V3" || header == "ATTENDANCE_V4" || header == "ATTENDANCE_V5" || header == "ATTENDANCE_V6") {
         std::string activeLine;
         if (!std::getline(ss, activeLine)
             || !ParseNonNegativeIntLineStrict(activeLine, loadedActiveSheet)) return false;
@@ -224,7 +226,7 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
         AttendanceSheet sheet;
         if (!DecodeEscapedUtf8Field(nameLine, MAX_METADATA_FIELD_BYTES, sheet.name)) return false;
         if (sheet.name.empty()) sheet.name = L"Course";
-        if (header == "ATTENDANCE_V4" || header == "ATTENDANCE_V5") {
+        if (header == "ATTENDANCE_V4" || header == "ATTENDANCE_V5" || header == "ATTENDANCE_V6") {
             std::string teacherLine;
             std::string locationLine;
             std::string notesLine;
@@ -391,4 +393,17 @@ bool EncodeCurrentWorkbook(std::string& encoded){
     return encoded.size() <= MAX_ATTD_FILE_BYTES;
 }
 
+
+bool EncodeWorkbookData(const std::vector<AttendanceSheet>& sheets,int active,std::string& output,int version){
+ output.clear();if(sheets.empty()||active<0||static_cast<size_t>(active)>=sheets.size()||(version!=5&&version!=6)||ValidateWorkbookModel(sheets)!=WorkbookValidationIssue::None)return false;
+ auto plain=SerializeWorkbookData(sheets,active,version);if(plain.size()>MAX_ATTD_DECODED_BYTES)return false;
+ output=EncodeAttd(std::move(plain));return output.size()<=MAX_ATTD_FILE_BYTES;
+}
+bool EncodeV5Compatible(std::string& output){
+ auto sheets=Document().sheets;
+ for(auto& sheet:sheets)for(auto& r:sheet.records)if(r.status==L"Leave"||r.status==L"Pending"){
+  r.other=L"[2.1.0 status: "+r.status+L"] "+r.other;r.status=L"Other";
+ }
+ return EncodeWorkbookData(sheets,Document().activeSheet,output,5);
+}
 } // namespace attendance

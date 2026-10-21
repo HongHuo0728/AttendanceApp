@@ -10,6 +10,7 @@ void PaintAppBackground(HWND hwnd, HDC hdc);
 void PaintAppBackgroundSlice(HWND child, HDC hdc);
 BOOL CALLBACK ApplyFontToChild(HWND child, LPARAM);
 void RecreateFonts();
+void ApplyNativeControlTheme(HWND window);
 void ApplyThemedControls(HWND root);
 void BeginThemeTransition(UiTheme targetTheme);
 void UpdateThemeTransitionFrame();

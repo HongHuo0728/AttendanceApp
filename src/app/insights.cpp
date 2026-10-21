@@ -1,3 +1,5 @@
+#include "core/status.h"
+#include "ui/choice.h"
 #include "app/insights.h"
 #include "model/workbook.h"
 #include "ui/common.h"
@@ -20,37 +22,12 @@ namespace attendance {
 
 void ShowStatisticsSummary(){
     SyncActiveSheet();
-    int present = 0;
-    int absent = 0;
-    int late = 0;
-    int other = 0;
-    CountStatuses(present, absent, late, other);
-    int totalInRange = present + absent + late + other;
-    std::unordered_map<std::wstring, int> issueCounts;
-    for (const auto& record : Document().Records()) {
-        if (!RecordMatchesStatsRange(record)) continue;
-        if (record.status != L"Absent" && record.status != L"Late") continue;
-        ++issueCounts[record.name];
-    }
-    std::vector<std::pair<std::wstring, int>> studentIssues(issueCounts.begin(), issueCounts.end());
-    std::sort(studentIssues.begin(), studentIssues.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
-
-    std::wstringstream ss;
-    ss << Tr(L"Statistics summary", L"\u7edf\u8ba1\u6458\u8981") << L"\n\n";
-    ss << Tr(L"Courses", L"\u8bfe\u7a0b") << L": " << Document().sheets[Document().activeSheet].name << L"\n";
-    ss << Tr(L"Range", L"\u8303\u56f4") << L": " << StatsRangeName(Document().statsRange) << L"\n";
-    ss << Tr(L"Total", L"\u603b\u6570") << L": " << totalInRange
-       << L"    " << Tr(L"Present", L"\u51fa\u5e2d") << L": " << present << L"\n";
-    ss << Tr(L"Absent", L"\u7f3a\u5e2d") << L": " << absent << L"\n";
-    ss << Tr(L"Late", L"\u8fdf\u5230") << L": " << late << L"\n";
-    ss << Tr(L"Other", L"\u5176\u4ed6") << L": " << other << L"\n";
-    if (!studentIssues.empty()) {
-        ss << L"\n" << Tr(L"Top absent/late students", L"\u7f3a\u5e2d/\u8fdf\u5230\u6700\u591a\u5b66\u751f") << L":\n";
-        for (int i = 0; i < (int)std::min<size_t>(5, studentIssues.size()); ++i) {
-            ss << L"- " << studentIssues[i].first << L": " << studentIssues[i].second << L"\n";
-        }
-    }
-    ShowMessage(ss.str(), Tr(L"Statistics summary", L"\u7edf\u8ba1\u6458\u8981"));
+    auto stats=CountRecords(Document().Records());std::wstringstream ss;
+    ss<<Document().sheets[Document().activeSheet].name<<L"\n"<<StatsRangeName(Document().statsRange)<<L"\n";
+    const int values[]={stats.present,stats.absent,stats.late,stats.other,stats.leave,stats.pending};
+    for(size_t i=0;i<StatusKeys.size();++i)ss<<StatusDisplayText(StatusKeys[i])<<L": "<<values[i]<<L"\n";
+    ss<<Tr(L"Total",L"总数")<<L": "<<stats.total<<L"\n"<<Tr(L"Attendance",L"出勤率")<<L": "<<AttendanceRateText(stats);
+    ShowMessage(ss.str(),Tr(L"Statistics summary",L"统计摘要"));
 }
 
 void CreateTodayLessonFromRoster(){
@@ -73,7 +50,7 @@ void CreateTodayLessonFromRoster(){
     }
     for (const auto& student : students) {
         if (recordedStudents.insert(student).second) {
-            additions.push_back({lesson, student, L"Absent", L""});
+            additions.push_back({lesson, student, L"Pending", L""});
         }
     }
     if (!additions.empty()) {
@@ -84,7 +61,8 @@ void CreateTodayLessonFromRoster(){
         RefreshList();
     }
     SetText(Ui().dateEdit, lesson);
-    ApplyFilterText(L"date:" + LowerText(lesson));
+    Document().lessonFilter=lesson;
+    ApplyFilterText(L"");
     std::wstringstream ss;
     ss << Tr(L"Lesson records created.", L"\u8bfe\u6b21\u8bb0\u5f55\u5df2\u521b\u5efa\u3002")
        << L" (" << additions.size() << L")";
@@ -97,17 +75,9 @@ void SwitchLessonFilter(){
         ShowMessage(Tr(L"No lessons were found.", L"\u672a\u627e\u5230\u8bfe\u6b21\u3002"));
         return;
     }
-    std::wstringstream list;
-    for (int i = 0; i < (int)std::min<size_t>(lessons.size(), 20); ++i) {
-        list << (i + 1) << L". " << lessons[i] << L"\n";
-    }
-    std::wstring choice;
-    if (!PromptText(Tr(L"Switch lesson", L"\u5207\u6362\u8bfe\u6b21"), list.str() + L"\n" + Tr(L"Enter lesson number:", L"\u8f93\u5165\u8bfe\u6b21\u7f16\u53f7\uff1a"), choice)) return;
-    int index = 0;
-    try { index = std::stoi(choice) - 1; } catch (...) { return; }
-    if (index < 0 || index >= (int)lessons.size()) return;
-    SetText(Ui().dateEdit, lessons[index]);
-    ApplyFilterText(L"date:" + LowerText(lessons[index]));
+    int index=ChooseItem(Tr(L"Switch lesson",L"切换课次"),lessons);
+    if(index<0)return;
+    SetText(Ui().dateEdit,lessons[index]);Document().lessonFilter=lessons[index];ApplyFilterText(L"");
 }
 
 void ShowStudentProfile(){
@@ -119,35 +89,16 @@ void ShowStudentProfile(){
     name = TrimWide(name);
     if (name.empty()) return;
 
-    int total = 0, present = 0, absent = 0, late = 0, other = 0;
-    std::vector<std::wstring> history;
-    for (const auto& sheet : Document().sheets) {
-        for (const auto& record : sheet.records) {
-            if (!ContainsText(record.name, LowerText(name))) continue;
-            ++total;
-            if (record.status == L"Present") ++present;
-            else if (record.status == L"Absent") ++absent;
-            else if (record.status == L"Late") ++late;
-            else ++other;
-            if (history.size() < 12) {
-                history.push_back(sheet.name + L" | " + record.dateTime + L" | " + Tr(record.status.c_str(), record.status.c_str()));
-            }
-        }
-    }
-    double rate = total ? present * 100.0 / total : 0.0;
-    std::wstringstream ss;
-    ss << Tr(L"Student profile", L"\u5b66\u751f\u6863\u6848") << L": " << name << L"\n\n"
-       << Tr(L"Total", L"\u603b\u6570") << L": " << total << L"\n"
-       << Tr(L"Present", L"\u51fa\u5e2d") << L": " << present << L"\n"
-       << Tr(L"Absent", L"\u7f3a\u5e2d") << L": " << absent << L"\n"
-       << Tr(L"Late", L"\u8fdf\u5230") << L": " << late << L"\n"
-       << Tr(L"Other", L"\u5176\u4ed6") << L": " << other << L"\n"
-       << Tr(L"Attendance", L"\u51fa\u52e4\u7387") << L": " << std::fixed << std::setprecision(1) << rate << L"%\n";
-    if (!history.empty()) {
-        ss << L"\n" << Tr(L"Recent history", L"\u6700\u8fd1\u8bb0\u5f55") << L":\n";
-        for (const auto& line : history) ss << L"- " << line << L"\n";
-    }
-    ShowMessage(ss.str(), Tr(L"Student profile", L"\u5b66\u751f\u6863\u6848"));
+    std::vector<AttendanceRecord> history;
+    for(const auto& r:Document().Records())if(r.name==name)history.push_back(r);
+    std::sort(history.begin(),history.end(),[](const auto& a,const auto& b){return a.dateTime>b.dateTime;});
+    PptStats stats;for(const auto& r:history)if(RecordMatchesStatsRange(r))AccumulateStatus(stats,r.status);
+    std::wstringstream ss;ss<<name<<L" | "<<Document().sheets[Document().activeSheet].name<<L"\n"<<StatsRangeName(Document().statsRange)<<L"\n";
+    const int values[]={stats.present,stats.absent,stats.late,stats.other,stats.leave,stats.pending};
+    for(size_t i=0;i<StatusKeys.size();++i)ss<<StatusDisplayText(StatusKeys[i])<<L": "<<values[i]<<L"\n";
+    ss<<Tr(L"Attendance",L"出勤率")<<L": "<<AttendanceRateText(stats)<<L"\n\n"<<Tr(L"Recent history",L"近期记录")<<L"\n";
+    size_t shown=0;for(const auto& r:history){if(!RecordMatchesStatsRange(r))continue;if(shown++==12)break;ss<<r.dateTime<<L" | "<<StatusDisplayText(r.status)<<L"\n";}
+    ShowMessage(ss.str(),Tr(L"Student profile",L"学生档案"));
 }
 
 void ShowAdvancedFilterHelp(){
@@ -181,12 +132,10 @@ void ShowRiskStudents(){
         return;
     }
     std::map<std::wstring, std::pair<int, int>> stats;
-    for (const auto& sheet : Document().sheets) {
-        for (const auto& record : sheet.records) {
-            auto& entry = stats[record.name];
-            ++entry.first;
-            if (record.status == L"Absent" || record.status == L"Late") ++entry.second;
-        }
+    for (const auto& record : Document().Records()) {
+        if(!RecordMatchesStatsRange(record)||record.status==L"Leave"||record.status==L"Pending")continue;
+        auto& entry=stats[record.name];++entry.first;
+        if(record.status==L"Absent"||record.status==L"Late")++entry.second;
     }
     std::vector<std::pair<std::wstring, std::pair<int, int>>> risky;
     for (const auto& item : stats) {

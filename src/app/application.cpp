@@ -1,3 +1,4 @@
+#include "version.h"
 #include "app/application.h"
 #include "reports/jobs.h"
 #include "ui/title_bar.h"
@@ -44,10 +45,12 @@ int RunApplication(
     wc.hbrBackground = nullptr;
     RegisterClassW(&wc);
 
+    // Buffer individual controls. Whole-window composition leaves native main
+    // controls blank on some Windows configurations (verified on the test host).
     HWND hwnd = CreateWindowExW(
         0,
         className,
-        L"AttendanceApp 2.0.4 (Ultra Optimization)",
+        ATTENDANCE_TITLE,
         WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_HSCROLL | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT, 1600, 900,
         nullptr, nullptr, instance, nullptr
@@ -61,7 +64,7 @@ int RunApplication(
     SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)LoadIconW(instance, MAKEINTRESOURCEW(IDI_APP_ICON)));
     ApplyGlassTitleBar(hwnd);
     ShowWindow(hwnd, showCmd);
-    UpdateWindow(hwnd);
+    RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE | RDW_UPDATENOW);
     // Accessibility annotations are applied once more after creation so the
     // native providers can observe fully initialized child windows.
     ApplyMainLanguage();
@@ -95,8 +98,8 @@ int RunApplication(
                 HWND notes = GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_NOTES);
                 bool editingNotes = GetFocus() == notes;
                 bool globalKey = msg.wParam == VK_ESCAPE;
-                bool rollCallKey = msg.wParam == L'1' || msg.wParam == L'2' || msg.wParam == L'3' || msg.wParam == L'4'
-                    || msg.wParam == VK_NUMPAD1 || msg.wParam == VK_NUMPAD2 || msg.wParam == VK_NUMPAD3 || msg.wParam == VK_NUMPAD4
+                bool rollCallKey = msg.wParam == L'1' || msg.wParam == L'2' || msg.wParam == L'3' || msg.wParam == L'4' || msg.wParam == L'5' || msg.wParam == L'6'
+                    || msg.wParam == VK_NUMPAD1 || msg.wParam == VK_NUMPAD2 || msg.wParam == VK_NUMPAD3 || msg.wParam == VK_NUMPAD4 || msg.wParam == VK_NUMPAD5 || msg.wParam == VK_NUMPAD6
                     || msg.wParam == VK_LEFT || msg.wParam == VK_RIGHT;
                 if (globalKey || (!editingNotes && rollCallKey)) {
                     SendMessageW(Ui().quickRollCallWindow, WM_KEYDOWN, msg.wParam, msg.lParam);

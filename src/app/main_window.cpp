@@ -80,6 +80,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam){
         MakeControl(L"STATIC", L"Search", 0, IDC_FILTER_LABEL);
         Ui().filterEdit = MakeControl(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, IDC_FILTER);
 
+        MakeButton(L"Leave", IDC_LEAVE);
+        MakeButton(L"Pending", IDC_PENDING);
         MakeButton(L"Present", IDC_PRESENT);
         MakeButton(L"Absent", IDC_ABSENT);
         MakeButton(L"Late", IDC_LATE);
@@ -164,6 +166,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam){
             return 0;
         }
         switch (LOWORD(wParam)) {
+        case IDC_LEAVE: AddOrUpdateRecord(L"Leave"); return 0;
+        case IDC_PENDING: AddOrUpdateRecord(L"Pending"); return 0;
         case IDC_PRESENT: AddOrUpdateRecord(L"Present"); return 0;
         case IDC_ABSENT: AddOrUpdateRecord(L"Absent"); return 0;
         case IDC_LATE: AddOrUpdateRecord(L"Late"); return 0;
@@ -182,6 +186,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam){
             SetText(Ui().filterEdit, L"");
             KillTimer(hwnd, 2);
             Document().filterText.clear();
+            Document().lessonFilter.clear();
             RefreshList();
             return 0;
         case IDC_NEW:
@@ -197,6 +202,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam){
             Document().sheets.push_back(MakeSheet(sheetName));
             Document().activeSheet = (int)Document().sheets.size() - 1;
             Document().Records().clear();
+            Document().visibleRows.clear();
+            Document().lessonFilter.clear();
             RefreshCourseCombo();
             RefreshList();
             SetText(Ui().dateEdit, CurrentDateTimeText());
@@ -339,7 +346,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam){
                 ShowSettingsWindow();
                 return reinterpret_cast<LRESULT>(Ui().settingsWindow);
             } else if (wParam == 2) {
-                ResetAdvancedPersonalizationValues();
+                ResetAppearanceValues();
                 BeginThemeTransition(UiTheme::Dark);
                 ApplyVisualSettings(true);
             } else {

@@ -1,3 +1,4 @@
+#include "ui/redraw.h"
 #include "ui/common.h"
 #include "core/constants.h"
 
@@ -14,6 +15,8 @@ std::wstring GetText(HWND hwnd){
 }
 
 void SetText(HWND hwnd, const std::wstring& text){
+    if (!hwnd || GetText(hwnd) == text) return;
+    RedrawScope redraw(hwnd);
     SetWindowTextW(hwnd, text.c_str());
 }
 

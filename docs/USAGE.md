@@ -1,120 +1,79 @@
-# Usage Guide
+# AttendanceApp 2.1.0 usage
 
-## Basic Attendance
+## Getting started
 
-1. Open `AttendanceApp.exe`.
-2. Select the course/class from the top course selector.
-3. Enter date/time and name.
-4. Click `Present`, `Absent`, `Late`, or `Other`.
-5. Save with `Save .attd`.
+1. Launch AttendanceApp.exe and select a course, or use Courses to create one.
+2. Import examples/sample_roster.csv through Tools, or add roster members manually.
+3. Create a lesson through Tools. Choose a unique label, preferably starting with YYYY-MM-DD, such as 2026-10-20 09:00 Math.
+4. Use Quick roll call or select/edit records in the main window.
+5. Save the workbook with Save .attd or Ctrl+S.
 
-## Courses / Classes
+Roster import and lesson creation produce Pending records. Existing historical Absent records are never inferred to be Pending. Course-local student identity is the exact name; this release does not introduce student IDs or merge people across courses. Avoid using the same name for different students in one roster.
 
-- Use the top course selector to switch courses.
-- Use `Courses` -> `Add course/class` to create a course.
-- Use `Courses` -> `Rename current course/class` to rename it.
-- Use `Courses` -> `Delete current course/class` to delete it.
-- Use `Tools` -> `Course details` to set teacher/owner, location, and notes.
+## Status and notes
 
-## Tools
+| Status | Meaning | Included in attendance denominator | Counts as an absence/late issue |
+| --- | --- | --- | --- |
+| Present | Attended | Yes; numerator | No |
+| Absent | Confirmed absence | Yes | Yes |
+| Late | Arrived late | Yes | Yes |
+| Other | Other recorded outcome; note required | Yes | No |
+| Leave | Approved leave; reason required | No | No |
+| Pending | Not yet marked | No | No |
 
-- `Import student roster (CSV)`: imports student names into the current course.
-- `Add student to roster`: adds one student name to the current course roster.
-- `Remove student from roster`: removes one student name from the current course roster.
-- `Create records from roster`: creates Absent attendance records for roster students at the current date/time.
-- `Create today's lesson`: creates a dated lesson for every roster student.
-- `Switch lesson`: filters the table to an existing lesson/date.
-- `Quick roll call`: opens a focused roster-by-roster attendance window for the lesson currently entered in Date/Time.
-- `Lesson completion check`: compares the current date/lesson with the roster and reports missing or duplicate records before attendance is finalized.
-- `Student profile`: summarizes one student's total, present, absent, late, and recent records.
-- `Advanced filter`: opens syntax help and edits the table filter.
-- `Report template`: chooses the Simple, Teacher, Parent, or Complete report layout.
-- `Print / export PDF`: creates a printable HTML report and opens it in the browser.
-- `Export PowerPoint (.pptx)`: creates a pure-black presentation with summary cards, status charts, and attendance trend charts.
-- `Statistics chart`: opens a graphical status chart.
-- `Statistics summary`: shows course and student attendance summary information.
-- `Statistics range`: switches statistics and presentation export summaries between all records, this week, and this month.
-- `Risk students`: lists roster students with repeated absences/lateness or high issue rates.
-- `Undo` / `Redo`: restores recent changes.
-- `Keyboard shortcuts`: shows available shortcuts.
-- `Shortcut center`: edits key bindings such as `save=Ctrl+S` and `command=Ctrl+K`.
-- `Command palette`: runs common commands from a typed prompt, including `rollcall` or `点名` for Quick roll call and `review` for the lesson completion check.
-- `Backup now`: writes the latest backup to AppData.
-- `Backup manager`: restores from timestamped backup history.
-- `Restore latest backup`: restores the latest AppData backup.
-- `Open recent file`: opens the last saved or imported `.attd` file.
-- `Set default save folder`: chooses the initial folder for save/export dialogs.
-- `Export database mirror`: writes a tab-separated database mirror to AppData.
-- `Open autosave`: opens the autosaved `.attd` file.
+Notes can be stored for every status. Other and Leave cannot be submitted without a nonblank note. The rate is Present divided by eligible records; no eligible records displays No data. Alerts require at least three absence/late issues or an issue rate of 20% or more.
 
-## Quick Roll Call
+The six main status buttons add a record or replace the selected record using the editor fields. Update Selected edits the selected record's date/name/notes without changing its status. Double-click loads a row into the editor. Use Ctrl/Shift to select multiple rows.
 
-1. Select the course and enter the target lesson/date in the main Date/Time field.
-2. Open `Tools` -> `Quick roll call`, or press `Ctrl+K` and enter `rollcall` or `点名`.
-3. Mark the current student with `Present`, `Absent`, `Late`, or `Other`. `Other` requires a note.
-4. Use `Previous` to revisit the preceding student or `Skip` to leave the current record unchanged and continue.
-5. Select `Finish` to apply the session. If students remain unchecked, confirm whether to keep the partial results.
+## Quick roll call
 
-Number keys `1` through `4` select Present, Absent, Late, and Other. Left Arrow moves to the previous student; Right Arrow skips forward. The window shows the existing unique record when one is available. Duplicate records for the same student and lesson must be resolved before the session can start.
+Enter the lesson in Date/Time, then choose Tools > Quick roll call. Keys 1-6 choose Present, Absent, Late, Other, Leave and Pending. Left Arrow goes back; Right Arrow skips. Number keys remain normal input while editing notes. Review and Pending counts are checked at Finish; partial results require confirmation. Cancel, Escape or closing the window discards the session. Finish applies one undo step. Resolve duplicate student/lesson records before starting.
 
-All applied changes from one Quick roll call session form a single undo step. `Ctrl+Z` therefore restores the entire session at once. `Cancel`, `Escape`, or closing the window discards the working copy and leaves the workbook unchanged.
+## Batch changes and make-up attendance
 
-## Settings
+Tools > Batch edit selected lets you retain or change status, then keep, replace or append notes. Confirm the course and number of selected records. The entire operation validates before applying and is one undo step.
 
-All settings apply immediately when you change a selection or switch. `Apply` saves the current choices, while `Reset All Settings` restores the program defaults.
+Tools > Make-up attendance selects an existing lesson and a student from the roster/lesson, chooses a status and requires a reason. An existing unique record is corrected; a missing roster member receives a record. Duplicate records block the correction. Reasons append to existing notes. This is a correction workflow, not an immutable audit log.
 
-- `Language`: switches the entire interface to the selected language.
-- `Interface Font`: lists every font installed on this PC. Selecting a font previews it across the interface immediately.
-- `Animation level`: chooses the amount of interface motion. Use `Off` on a low-performance PC, `Standard` for the balanced default, or `Advanced` for the fullest transition effects.
-- `Particle density`: controls how many particles appear after key actions. `Low` is the lightest option; `High` is the most decorative.
-- `Report template`: chooses the information density used by exported reports. `Simple` is concise, `Teacher` emphasizes course details, `Parent` is easier to share with families, and `Complete` includes the full summary.
-- `Enable particle effects`: turns the click particle burst on or off. Disable it when you prefer a quieter interface or need the smallest rendering load.
-- `Enable risk student reminders`: allows the Tools menu to surface students with repeated absence or lateness.
-- `Prompt for autosave recovery`: checks for a recoverable autosave when the program starts, so unsaved work can be restored.
-- `Enable Ctrl+K command palette`: enables the quick command entry box. Use it for actions such as `save`, `backup`, `stats`, `lesson`, `rollcall`, `点名`, or `review`.
-- `Enable advanced filter syntax`: enables terms such as `name:`, `status:`, `from:`, `to:`, `thisweek`, and `thismonth` in the search field.
-- `Enable smooth dropdown scrolling`: adds responsive animated scrolling to combo-box dropdowns and custom popup menus. New wheel or touchpad input immediately updates the current movement, so controls remain usable while scrolling.
+Scope: Present and bulk deletion by status affect the current course's visible filter/lesson scope. Their confirmation shows the course and affected count. Clear all records remains an explicitly named whole-course operation.
 
-### Personalization
+## Lessons and templates
 
-All personalization controls are available immediately in Settings. No experimental switch or confirmation is required. Existing preferences are preserved when upgrading.
+- Switch lesson opens a searchable list without a 20-item limit. It matches the complete lesson label independently of the advanced-filter preference.
+- Clear Filter clears both text and lesson filters. Switching course clears the lesson filter.
+- Rename lesson updates every record with that exact label. Existing target labels are rejected.
+- Copy lesson retains its unique members, resets all copied states to Pending and clears notes. It never merges into an existing target lesson.
+- Course from template copies a chosen course's roster, teacher, location and course notes into a new course. Attendance history is excluded; duplicate course names are rejected. No template files are generated.
+- Rename/copy/template operations support undo and redo.
 
-- `Theme`: switches between the default pure-black interface and the pure-white light interface with a synchronized transition across the window and its controls.
-- `Accent tone`: selects Neutral, Muted sage, or Muted cyan accents while keeping text contrast restrained.
-- `Text size`: selects Small, Standard, or Large interface text.
-- `Interface density`: changes control spacing between Compact, Comfortable, and Spacious.
-- `Autosave interval`: turns timed autosave off or runs it every 30 seconds, 1 minute, or 5 minutes.
-- `Dropdown scroll frame rate (60-360)`: sets the target update limit for dropdown scrolling. The default is 60 FPS. The display refresh rate and hardware determine the visible result. Particle counts are unchanged.
-- `Show statistics cards`: shows or hides the four summary cards above the record editor.
-- `Show bottom usage hint`: shows or hides the usage hint at the lower-left window edge.
-- `Show table grid lines`: shows or hides separators in the attendance list.
+Use date-leading labels for date-based reports. Free-text labels can still identify lessons, but cannot reliably participate in calendar period filtering or chronological sorting.
 
-Individual switches still control particles, smooth scrolling, and other effects. `Reset All Settings` restores default preferences, including the pure-black theme and 60 FPS scroll target.
+## Search, statistics and student profiles
 
-## Search / Filter
+Text search checks date, name, status and notes. With advanced syntax enabled, name:Alice, status:Absent, from:2026-10-01, to:2026-10-31, thisweek and thismonth are available. Multiple conditions narrow the result. The separate exact lesson filter applies in addition to the text filter.
 
-Use the search box above the table to filter the current course by date/time, name, status, or notes. `Clear Filter` restores the full table. Editing, double-clicking, and deleting still target the real record even when the table is filtered.
+This week means Monday through the following Sunday in local calendar dates; This month means the local calendar month. Summary cards and exports use the selected statistics period. Student profiles use an exact name within the current course and display up to 12 records in descending date-label order. Risk summaries use the current course and statistics period.
 
-When advanced filters are enabled in Settings, the filter box also accepts tokens such as:
+## Save, compatibility and reports
 
-```text
-name:Alice status:Absent
-date:2026-07-09
-from:2026-07-01 to:2026-07-31
-course:Math thisweek
-```
+Normal save writes V6, preserving all six statuses. Opening V1-V5 does not rewrite the file. A successful first overwrite requires an adjacent .pre-v6.bak safety copy. Save uses a file dialog; the default save folder can be selected through Tools.
 
-## Roster Import Behavior
+Tools > Export V5 compatible file creates a separate copy for older programs. Leave/Pending become Other with notes beginning [2.1.0 status: ...]. Old versions calculate these as Other; original semantics and rates are not preserved. Reimporting the downgraded file does not automatically reconstruct the new statuses.
 
-Imported roster names are added to the current course with `Absent` as the initial status. This is intended for a roll-call workflow where each student starts unmarked/absent and is changed to `Present`, `Late`, or `Other` during attendance.
+CSV, printable HTML/PDF and PowerPoint capture the current course and statistics period. PowerPoint contains a six-status summary, bars and recent date groups; report templates retain their metadata/roster emphasis. Print/PDF opens HTML in the browser. The database mirror exports all courses to attendance.attddb as tab-separated text. Export workers use immutable snapshots; accepted writes finish during shutdown.
 
-## Shortcuts
+## Recovery and backup
 
-- `F11`: fullscreen
-- `Ctrl+S`: save `.attd`
-- `Ctrl+O`: import `.attd`
-- `Ctrl+Z`: undo
-- `Ctrl+Y`: redo
-- `Ctrl+K`: command palette
+Autosave intervals are Off, 30 seconds, 1 minute or 5 minutes. Startup can restore, inspect, ignore or delete an existing autosave. Ignored recovery data is protected before replacement. A failed final autosave warns before exit.
 
-Open `Tools` -> `Shortcut center` to edit these bindings. Supported shortcut values are `Ctrl+letter`, `Ctrl+number`, or `F1` through `F24`.
+Backup now maintains backup-latest.attd and timestamped history. Ordinary history is limited to 10 copies; ordinary plus protected history has a 128 MiB budget. Oldest ordinary copies rotate first. Protected recovery copies are never removed automatically. If they prevent a new protected copy, the original recovery file remains in place and the operation reports failure. Export or intentionally manage old protected files before retrying.
+
+## Settings and distribution
+
+Settings opens one unified form; there is no separate Advanced personalization section. Labels appear above values, with two columns when space permits and one on narrow displays. Scroll to reach all options and the Reset / Apply / Close actions. Tab follows the visible form order and scrolls the focused control into view. Reopening an already visible Settings window raises it without resetting its scroll position. Settings apply immediately and Apply saves them. Language, font, black/white themes, text scale, spacing, animation/particles, autosave, statistics cards, grid lines, shortcuts and smooth scrolling are available without an experimental gate. The legacy advanced_personalization key remains readable for compatibility. Dropdown scheduling supports 60-360 FPS, default 60.
+
+Default shortcuts: Ctrl+S Save, Ctrl+O Import, Ctrl+Z Undo, Ctrl+Y Redo, Ctrl+K command palette, F11 fullscreen. Tools > Shortcut center changes them.
+
+To register .attd double-click opening for the current Windows user, run register_attd_filetype.bat after placing the program in its intended location. It discovers an adjacent release executable or the project build output and uses the embedded file icon. Registration changes that user's file association; moving the executable later requires registering again.
+
+Each recipient uses their own AppData and workbook files. Concurrent shared editing and synchronization are outside this release.

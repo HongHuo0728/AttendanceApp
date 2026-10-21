@@ -1,3 +1,4 @@
+#include "ui/redraw.h"
 #include "ui/combobox.h"
 #include "animation/scheduler.h"
 #include "ui/controls.h"
@@ -362,7 +363,7 @@ LRESULT CALLBACK ComboListScrollProc(
         AcknowledgeAnimationTick(hwnd);
         AdvanceComboListScroll(hwnd, state, AnimationNowMs());
         RedrawWindow(hwnd, nullptr, nullptr,
-            RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+            RDW_INVALIDATE | RDW_NOERASE);
         return 0;
     }
     case WM_VSCROLL: {
@@ -407,7 +408,7 @@ void StopSmoothScrollingNow(){
             SendMessageW(list, LB_SETTOPINDEX,
                 (int)std::floor(state.currentPx / itemHeight), 0);
             RedrawWindow(list, nullptr, nullptr,
-                RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+                RDW_INVALIDATE | RDW_NOERASE);
         }
     }
 }
@@ -423,17 +424,21 @@ LRESULT CALLBACK ComboPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return DefSubclassProc(hwnd, msg, wParam, lParam);
     case WM_PAINT: {
         PAINTSTRUCT ps{};
-        HDC hdc = BeginPaint(hwnd, &ps);
-        PaintComboClosed(hwnd, hdc);
+        HDC target = BeginPaint(hwnd, &ps);
+        RECT rect{}; GetClientRect(hwnd, &rect);
+        BufferedPaint buffer(target, rect);
+        PaintComboClosed(hwnd, buffer.DC());
+        buffer.Commit();
         EndPaint(hwnd, &ps);
         return 0;
     }
     case WM_ERASEBKGND:
         return 1;
     case CB_SETCURSEL: {
+        if (SendMessageW(hwnd, CB_GETCURSEL, 0, 0) == static_cast<LRESULT>(wParam)) return wParam;
         LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
         if (!Ui().languageUpdateActive) {
-            RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+            RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_NOERASE);
         }
         return result;
     }
@@ -450,8 +455,8 @@ LRESULT CALLBACK ComboPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         RedrawAnimatedControl(hwnd);
         COMBOBOXINFO info{};
         info.cbSize = sizeof(info);
-        if (GetComboBoxInfo(hwnd, &info) && info.hwndList) {
-            RedrawWindow(info.hwndList, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+        if (GetComboBoxInfo(hwnd, &info) && info.hwndList && IsWindowVisible(info.hwndList)) {
+            RedrawWindow(info.hwndList, nullptr, nullptr, RDW_INVALIDATE | RDW_NOERASE);
         }
         return 0;
     }
@@ -465,12 +470,11 @@ void ApplyComboDropDownTheme(HWND combo){
     info.cbSize = sizeof(info);
     if (!GetComboBoxInfo(combo, &info)) return;
 
-    const wchar_t* themeName = IsRenderedPaletteDark() ? L"DarkMode_Explorer" : L"Explorer";
-    SetWindowTheme(combo, themeName, nullptr);
-    if (info.hwndItem) SetWindowTheme(info.hwndItem, themeName, nullptr);
+    ApplyNativeControlTheme(combo);
+    if (info.hwndItem) ApplyNativeControlTheme(info.hwndItem);
     if (info.hwndList) {
         EnableComboListSmoothScroll(combo, info.hwndList);
-        SetWindowTheme(info.hwndList, themeName, nullptr);
+        ApplyNativeControlTheme(info.hwndList);
         InvalidateRect(info.hwndList, nullptr, FALSE);
         RedrawWindow(info.hwndList, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_NOERASE);
     }

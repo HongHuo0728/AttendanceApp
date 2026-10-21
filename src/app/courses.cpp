@@ -29,6 +29,7 @@ void SwitchCourse(int index){
     SyncActiveSheet();
     Document().activeSheet = index;
     Document().visibleRows.clear();
+    Document().lessonFilter.clear();
     RefreshCourseCombo();
     RefreshList();
 }
@@ -44,6 +45,7 @@ void AddCourse(){
     Document().sheets.push_back(MakeSheet(name));
     Document().activeSheet = (int)Document().sheets.size() - 1;
     Document().visibleRows.clear();
+    Document().lessonFilter.clear();
     Document().Records().clear();
     RefreshCourseCombo();
     RefreshList();
@@ -77,6 +79,7 @@ void DeleteCurrentCourse(){
     Document().sheets.erase(Document().sheets.begin() + Document().activeSheet);
     Document().activeSheet = std::max(0, Document().activeSheet - 1);
     Document().visibleRows.clear();
+    Document().lessonFilter.clear();
     RefreshCourseCombo();
     RefreshList();
 }
@@ -134,7 +137,7 @@ void ImportRosterCsv(){
             ShowMessage(Tr(L"The roster file is too large or contains invalid data.", L"\u540d\u55ae\u6a94\u6848\u904e\u5927\u6216\u5305\u542b\u7121\u6548\u8cc7\u6599\u3002"));
             return;
         }
-        imported.push_back({importDateTime, name, L"Absent", L""});
+        imported.push_back({importDateTime, name, L"Pending", L""});
     }
     if (!imported.empty()) {
         SyncActiveSheet();
@@ -163,7 +166,7 @@ void ImportRosterCsv(){
     std::wstringstream ss;
     ss << Tr(L"Imported", L"\u5df2\u5bfc\u5165") << L" " << imported.size() << L" " << Tr(L"students into the current course.", L"\u540d\u5b66\u751f\u5230\u5f53\u524d\u8bfe\u7a0b\u3002");
     if (!imported.empty()) {
-        ss << L"\n" << Tr(L"Imported roster entries start as Absent until marked.", L"\u5bfc\u5165\u7684\u540d\u5355\u8bb0\u5f55\u5728\u70b9\u540d\u524d\u9ed8\u8ba4\u4e3a\u7f3a\u5e2d\u3002");
+        ss << L"\n" << Tr(L"Imported roster entries start as Pending until marked.",L"导入名单的记录在点名前为未点名。");
     }
     ShowMessage(ss.str());
 }
@@ -221,7 +224,7 @@ void CreateRecordsFromRoster(){
     }
     for (const auto& student : students) {
         if (recordedStudents.insert(student).second) {
-            additions.push_back({dateTime, student, L"Absent", L""});
+            additions.push_back({dateTime, student, L"Pending", L""});
         }
     }
     if (!additions.empty()) {

@@ -164,9 +164,10 @@ std::wstring Tr(const wchar_t* english, const wchar_t* chinese){
             }
         }
     }
-    // Every user-visible call site supplies a Chinese fallback. Keep non-English
-    // modes readable while a legacy string is being promoted into a language pack.
-    return chinese && *chinese ? std::wstring(chinese) : key;
+    // Missing legacy translations use English outside Simplified Chinese.
+    // A German (or other language) interface must not fall back to Chinese.
+    return Settings().language == UiLanguage::ChineseSimplified && chinese && *chinese
+        ? std::wstring(chinese) : key;
 }
 
 std::wstring ParticleEffectsLabel(){
@@ -326,18 +327,12 @@ UiLanguage LanguageFromString(const std::string& value){
 }
 
 std::wstring StatusDisplayText(const std::wstring& status){
-    static UiLanguage cachedLanguage = static_cast<UiLanguage>(-1);
-    static std::array<std::wstring, 4> labels;
-    if (cachedLanguage != Settings().language) {
-        labels = {Tr(L"Present", L"\u51fa\u5e2d"), Tr(L"Absent", L"\u7f3a\u5e2d"),
-            Tr(L"Late", L"\u8fdf\u5230"), Tr(L"Other", L"\u5176\u4ed6")};
-        cachedLanguage = Settings().language;
-    }
-    if (status == L"Present") return labels[0];
-    if (status == L"Absent") return labels[1];
-    if (status == L"Late") return labels[2];
-    if (status == L"Other") return labels[3];
-    return status;
+ if(status==L"Present")return Tr(L"Present",L"出席");
+ if(status==L"Absent")return Tr(L"Absent",L"缺席");
+ if(status==L"Late")return Tr(L"Late",L"迟到");
+ if(status==L"Other")return Tr(L"Other",L"其他");
+ if(status==L"Leave")return Tr(L"Leave",L"请假");
+ if(status==L"Pending")return Tr(L"Pending",L"未点名");
+ return status;
 }
-
 } // namespace attendance

@@ -4,6 +4,10 @@
 
 namespace attendance {
 
+inline constexpr int IDC_LEAVE = 1023;
+inline constexpr int IDC_PENDING = 1024;
+inline constexpr int IDC_QUICK_LEAVE = 7018;
+inline constexpr int IDC_QUICK_PENDING = 7019;
 inline constexpr int IDC_DATE = 1001;
 inline constexpr int IDC_NAME = 1002;
 inline constexpr int IDC_OTHER = 1003;
@@ -93,8 +97,6 @@ inline constexpr int IDC_SETTINGS_COMMAND_PALETTE = 4018;
 inline constexpr int IDC_SETTINGS_REPORT_LABEL = 4019;
 inline constexpr int IDC_SETTINGS_REPORT_TEMPLATE = 4020;
 inline constexpr int IDC_SETTINGS_ADVANCED_FILTER = 4021;
-inline constexpr int IDC_SETTINGS_EXPERIMENTAL = 4022;
-inline constexpr int IDC_SETTINGS_ADVANCED_TITLE = 4023;
 inline constexpr int IDC_SETTINGS_ACCENT_LABEL = 4024;
 inline constexpr int IDC_SETTINGS_ACCENT = 4025;
 inline constexpr int IDC_SETTINGS_TEXT_SCALE_LABEL = 4026;

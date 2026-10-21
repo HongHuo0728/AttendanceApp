@@ -1,3 +1,5 @@
+#include "ui/redraw.h"
+#include "core/status.h"
 #include "ui/table.h"
 #include "ui/common.h"
 #include "animation/scheduler.h"
@@ -11,15 +13,6 @@
 
 namespace attendance {
 
-void StartListTransition();
-void SetStaticTextClean(HWND hwnd, const std::wstring& text);
-
-void StartListTransition(){
-    if (!Ui().list) return;
-    RestartAnimation(Ui().list, AnimChannel::ListReveal, 1.0, 260);
-    RedrawWindow(Ui().list, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_NOERASE);
-}
-
 LRESULT HandleListCustomDraw(LPARAM lParam){
     auto* draw = reinterpret_cast<NMLVCUSTOMDRAW*>(lParam);
     if (!draw) return CDRF_DODEFAULT;
@@ -30,82 +23,33 @@ LRESULT HandleListCustomDraw(LPARAM lParam){
     if (draw->nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
         int item = (int)draw->nmcd.dwItemSpec;
         bool selected = (ListView_GetItemState(Ui().list, item, LVIS_SELECTED) & LVIS_SELECTED) != 0;
-        double reveal = GetAnimationValue(Ui().list, AnimChannel::ListReveal, 1.0);
-        int visibleOffset = std::max(0, item - ListView_GetTopIndex(Ui().list));
-        double rowProgress = reveal >= 1.0 ? 1.0
-            : std::clamp(reveal * 1.25 - visibleOffset * 0.035, 0.0, 1.0);
-
         COLORREF rowBase = selected
             ? Ui().COLOR_SELECTED
             : (item % 2 == 0 ? Ui().COLOR_PANEL : Ui().COLOR_ROW_ALT);
-        draw->clrTextBk = BlendColor(Ui().COLOR_BG, rowBase, rowProgress);
-        draw->clrText = BlendColor(Ui().COLOR_MUTED, Ui().COLOR_TEXT, rowProgress);
+        draw->clrTextBk = rowBase;
+        draw->clrText = Ui().COLOR_TEXT;
         return CDRF_NEWFONT;
     }
     return CDRF_DODEFAULT;
 }
 
 void SetStaticTextClean(HWND hwnd, const std::wstring& text){
-    if (!hwnd) return;
-    if (!Ui().languageUpdateActive) {
-        HWND parent = GetParent(hwnd);
-        RECT rc{};
-        if (parent && GetWindowRect(hwnd, &rc)) {
-            MapWindowPoints(nullptr, parent, reinterpret_cast<POINT*>(&rc), 2);
-            RedrawWindow(parent, &rc, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
-        }
-    }
-    SetWindowTextW(hwnd, text.c_str());
-    InvalidateRect(hwnd, nullptr, FALSE);
-    if (!Ui().languageUpdateActive) UpdateWindow(hwnd);
+    SetText(hwnd, text);
 }
 
 void UpdateStats(){
-    int present = 0;
-    int absent = 0;
-    int late = 0;
-    int other = 0;
-    int totalInRange = 0;
-    for (const auto& record : Document().Records()) {
-        if (!RecordMatchesStatsRange(record)) continue;
-        ++totalInRange;
-        if (record.status == L"Present") ++present;
-        else if (record.status == L"Absent") ++absent;
-        else if (record.status == L"Late") ++late;
-        else ++other;
-    }
-
-    double attendanceRate = totalInRange == 0 ? 0.0 : (present * 100.0 / totalInRange);
-    double issueRate = totalInRange == 0 ? 0.0 : ((absent + late) * 100.0 / totalInRange);
-    std::wstringstream ss;
-    ss << StatsRangeName(Document().statsRange) << L"  |  "
-       << Tr(L"Total", L"\u603b\u6570") << L" " << totalInRange
-       << L"  |  " << Tr(L"Attendance", L"\u51fa\u52e4\u7387") << L" " << std::fixed << std::setprecision(1) << attendanceRate << L"%"
-       << L"  |  " << Tr(L"Absent/Late", L"\u7f3a\u5e2d/\u8fdf\u5230") << L" " << std::fixed << std::setprecision(1) << issueRate << L"%"
-       << L"  |  " << Tr(L"Present", L"\u51fa\u5e2d") << L" " << present
-       << L"  " << Tr(L"Absent", L"\u7f3a\u5e2d") << L" " << absent
-       << L"  " << Tr(L"Late", L"\u8fdf\u5230") << L" " << late
-       << L"  " << Tr(L"Other", L"\u5176\u4ed6") << L" " << other;
-    if (!Document().filterText.empty()) {
-        ss << L"  |  " << Tr(L"Showing", L"\u663e\u793a") << L" " << Document().visibleRows.size() << L"/" << Document().Records().size();
-    }
-    SetStaticTextClean(GetDlgItem(Ui().hwnd, IDC_STATS), ss.str());
-
-    std::wstringstream totalCard;
-    totalCard << StatsRangeName(Document().statsRange) << L"\n" << totalInRange;
-    SetStaticTextClean(GetDlgItem(Ui().hwnd, IDC_STAT_TOTAL), totalCard.str());
-
-    std::wstringstream attendanceCard;
-    attendanceCard << Tr(L"Attendance", L"\u51fa\u52e4\u7387") << L"\n" << std::fixed << std::setprecision(1) << attendanceRate << L"%";
-    SetStaticTextClean(GetDlgItem(Ui().hwnd, IDC_STAT_ATTENDANCE), attendanceCard.str());
-
-    std::wstringstream issuesCard;
-    issuesCard << Tr(L"Absent/Late", L"\u7f3a\u5e2d/\u8fdf\u5230") << L"\n" << std::fixed << std::setprecision(1) << issueRate << L"%";
-    SetStaticTextClean(GetDlgItem(Ui().hwnd, IDC_STAT_ISSUES), issuesCard.str());
-
-    std::wstringstream visibleCard;
-    visibleCard << Tr(L"Showing", L"\u663e\u793a") << L"\n" << Document().visibleRows.size() << L" / " << Document().Records().size();
-    SetStaticTextClean(GetDlgItem(Ui().hwnd, IDC_STAT_VISIBLE), visibleCard.str());
+    if(!Ui().hwnd)return;
+    auto stats=CountRecords(Document().Records());
+    std::wostringstream details;details<<StatsRangeName(Document().statsRange)<<L" | ";
+    const int counts[]={stats.present,stats.absent,stats.late,stats.other,stats.leave,stats.pending};
+    for(size_t i=0;i<StatusKeys.size();++i)details<<StatusDisplayText(StatusKeys[i])<<L" "<<counts[i]<<L"  ";
+    SetStaticTextClean(GetDlgItem(Ui().hwnd,IDC_STATS),details.str());
+    SetStaticTextClean(GetDlgItem(Ui().hwnd,IDC_STAT_TOTAL),StatsRangeName(Document().statsRange)+L"\n"+std::to_wstring(stats.total));
+    SetStaticTextClean(GetDlgItem(Ui().hwnd,IDC_STAT_ATTENDANCE),Tr(L"Attendance",L"出勤率")+L"\n"+AttendanceRateText(stats));
+    std::wostringstream issues;issues<<Tr(L"Absent/Late",L"缺席/迟到")<<L"\n";
+    if(stats.Eligible()>0)issues<<std::fixed<<std::setprecision(1)<<(stats.absent+stats.late)*100.0/stats.Eligible()<<L"%";else issues<<Tr(L"No data",L"暂无数据");
+    SetStaticTextClean(GetDlgItem(Ui().hwnd,IDC_STAT_ISSUES),issues.str());
+    SetStaticTextClean(GetDlgItem(Ui().hwnd,IDC_STAT_VISIBLE),Tr(L"Showing",L"显示")+L"\n"+std::to_wstring(Document().visibleRows.size())+L" / "+std::to_wstring(Document().Records().size()));
 }
 
 void RefreshList(){
@@ -121,6 +65,7 @@ void RefreshList(){
     int focusedVisible = ListView_GetNextItem(Ui().list, -1, LVNI_FOCUSED);
     if (focusedVisible >= 0) focusedRecord = VisibleToRecordIndex(focusedVisible);
     int topRecord = VisibleToRecordIndex(ListView_GetTopIndex(Ui().list));
+    RedrawScope redraw(Ui().list);
     Document().visibleRows.clear();
     for (int i = 0; i < (int)Document().Records().size(); ++i) {
         if (!RecordMatchesFilter(Document().Records()[i])) continue;
@@ -142,12 +87,13 @@ void RefreshList(){
         if (newTop >= 0) ListView_EnsureVisible(Ui().list, newTop, FALSE);
     }
     UpdateStats();
-    StartListTransition();
+    InvalidateRect(Ui().list, nullptr, FALSE);
 }
 
 void RefreshCourseCombo(){
     if (!Ui().courseCombo) return;
     EnsureSheets();
+    RedrawScope redraw(Ui().courseCombo);
     SendMessageW(Ui().courseCombo, CB_RESETCONTENT, 0, 0);
     for (const auto& sheet : Document().sheets) {
         const std::wstring displayName = sheet.name == L"Default Course"
@@ -157,7 +103,7 @@ void RefreshCourseCombo(){
     }
     SendMessageW(Ui().courseCombo, CB_SETCURSEL, Document().activeSheet, 0);
     if (!Ui().languageUpdateActive) {
-        RedrawWindow(Ui().courseCombo, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+        RedrawWindow(Ui().courseCombo, nullptr, nullptr, RDW_INVALIDATE | RDW_NOERASE);
     }
 }
 

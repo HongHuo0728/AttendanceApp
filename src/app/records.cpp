@@ -1,3 +1,6 @@
+#include "core/status.h"
+#include "model/operations.h"
+#include "core/text.h"
 #include "app/records.h"
 #include "model/workbook.h"
 #include "ui/common.h"
@@ -23,7 +26,7 @@ void ClearAllRecords();
 void AddOrUpdateRecord(const std::wstring& status){
     std::wstring dateTime = GetText(Ui().dateEdit);
     std::wstring name = GetText(Ui().nameEdit);
-    std::wstring other = status == L"Other" ? GetText(Ui().otherEdit) : L"";
+    std::wstring other = GetText(Ui().otherEdit);
 
     if (dateTime.empty()) {
         ShowMessage(Tr(L"Please enter a date and time.", L"\u8bf7\u8f93\u5165\u65e5\u671f\u548c\u65f6\u95f4\u3002"));
@@ -33,8 +36,8 @@ void AddOrUpdateRecord(const std::wstring& status){
         ShowMessage(Tr(L"Please enter a name.", L"\u8bf7\u8f93\u5165\u59d3\u540d\u3002"));
         return;
     }
-    if (status == L"Other" && other.empty()) {
-        ShowMessage(Tr(L"Please fill the Other field.", L"\u8bf7\u586b\u5199\u5176\u4ed6\u5b57\u6bb5\u3002"));
+    if (!ValidStatusNote(status, other)) {
+        ShowMessage(Tr(L"A note is required for Other and Leave.",L"其他和请假必须填写备注。"));
         return;
     }
     if (!ValidateInputField(dateTime, MAX_RECORD_FIELD_BYTES)
@@ -94,11 +97,12 @@ void UpdateSelectedRecord(){
         || !ValidateInputField(name, MAX_RECORD_FIELD_BYTES)
         || !ValidateInputField(other, MAX_RECORD_FIELD_BYTES)) return;
 
+    if(!ValidStatusNote(Document().Records()[selected].status,other)) {ShowMessage(Tr(L"A note is required for Other and Leave.",L"其他和请假必须填写备注。"));return;}
     PushUndo();
     MarkDirty();
     Document().Records()[selected].dateTime = dateTime;
     Document().Records()[selected].name = name;
-    Document().Records()[selected].other = Document().Records()[selected].status == L"Other" ? other : L"";
+    Document().Records()[selected].other = other;
     RefreshList();
     int visibleIndex = RecordToVisibleIndex(selected);
     if (visibleIndex >= 0) {
@@ -107,20 +111,10 @@ void UpdateSelectedRecord(){
 }
 
 void MarkAllPresent(){
-    if (Document().Records().empty()) {
-        ShowMessage(Tr(L"There are no records to mark.", L"\u6ca1\u6709\u53ef\u6807\u8bb0\u7684\u8bb0\u5f55\u3002"));
-        return;
-    }
-    std::wstring allPresentMsg = Tr(L"Mark every record as Present?", L"\u5c06\u6240\u6709\u8bb0\u5f55\u6807\u8bb0\u4e3a\u51fa\u5e2d\uff1f");
-    std::wstring allPresentTitle = Tr(L"All Present", L"\u5168\u5458\u51fa\u5e2d");
-    if (ThemedMessageBox(Ui().hwnd, allPresentMsg, allPresentTitle, true) == IDYES) {
-        PushUndo();
-        MarkDirty();
-        for (auto& record : Document().Records()) {
-            record.status = L"Present";
-            record.other.clear();
-        }
-        RefreshList();
+    const auto rows=CurrentScopeRows();if(rows.empty())return;
+    const auto message=Document().sheets[Document().activeSheet].name+L"\n"+std::to_wstring(rows.size())+L" "+Tr(L"records in current scope",L"条当前范围记录");
+    if(ThemedMessageBox(Ui().hwnd,message,Tr(L"Mark current scope Present?",L"将当前范围设为出席？"),true)==IDYES){
+        ChangeRecords(rows,L"Present",L"",NoteMode::Preserve);RefreshList();
     }
 }
 
@@ -175,7 +169,7 @@ void DeleteSelectedRecords(){
 
 void DeleteRecordsByStatus(const std::wstring& status){
     std::vector<int> rows;
-    for (int i = 0; i < (int)Document().Records().size(); ++i) {
+    for (int i : CurrentScopeRows()) {
         if (Document().Records()[i].status == status) rows.push_back(i);
     }
 
@@ -185,7 +179,7 @@ void DeleteRecordsByStatus(const std::wstring& status){
     }
 
     std::wstringstream ss;
-    ss << Tr(L"Delete all", L"\u5220\u9664\u6240\u6709") << L" " << StatusDisplayText(status) << L" "
+    ss << Document().sheets[Document().activeSheet].name << L"\n" << Tr(L"Current scope",L"当前范围") << L"\n" << Tr(L"Delete all", L"\u5220\u9664\u6240\u6709") << L" " << StatusDisplayText(status) << L" "
        << Tr(L"records?", L"\u8bb0\u5f55\uff1f") << L" (" << rows.size() << L")";
     std::wstring batchTitle = Tr(L"Batch Delete", L"\u6279\u91cf\u5220\u9664");
     if (ThemedMessageBox(Ui().hwnd, ss.str(), batchTitle, true) == IDYES) {

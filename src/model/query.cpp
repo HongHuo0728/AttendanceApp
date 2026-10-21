@@ -1,3 +1,4 @@
+#include "core/status.h"
 #include "model/query.h"
 #include "core/text.h"
 #include "localization/strings.h"
@@ -67,6 +68,15 @@ bool DateWithinRecentDays(const std::wstring& date, int days){
     return delta >= 0 && delta <= (int64_t)std::max(1, days) * dayTicks;
 }
 
+bool DateWithinCalendarWeek(const std::wstring& date, const std::wstring& today) {
+ FILETIME record{},reference{};
+ if(!DateKeyToFileTime(date,record)||!DateKeyToFileTime(today,reference))return false;
+ SYSTEMTIME st{};FileTimeToSystemTime(&reference,&st);
+ constexpr int64_t day=864000000000LL;
+ const auto start=FileTimeTicks(reference)-((st.wDayOfWeek+6)%7)*day;
+ return FileTimeTicks(record)>=start && FileTimeTicks(record)<start+7*day;
+}
+
 bool DateWithinCurrentMonth(const std::wstring& date){
     FILETIME ignored{};
     if (!DateKeyToFileTime(date, ignored)) return false;
@@ -77,7 +87,7 @@ bool DateWithinCurrentMonth(const std::wstring& date){
 bool RecordMatchesStatsRange(const AttendanceRecord& record){
     if (Document().statsRange == StatsRange::All) return true;
     std::wstring date = RecordDateKey(record);
-    if (Document().statsRange == StatsRange::ThisWeek) return DateWithinRecentDays(date, 7);
+    if (Document().statsRange == StatsRange::ThisWeek) return DateWithinCalendarWeek(date, TodayDateKey());
     if (Document().statsRange == StatsRange::ThisMonth) return DateWithinCurrentMonth(date);
     return true;
 }
@@ -91,6 +101,7 @@ std::vector<std::wstring> SplitWords(const std::wstring& text){
 }
 
 bool RecordMatchesFilter(const AttendanceRecord& record){
+    if (!Document().lessonFilter.empty() && record.dateTime != Document().lessonFilter) return false;
     if (Document().filterText.empty()) return true;
     const std::wstring displayStatus = StatusDisplayText(record.status);
     if (!Settings().advancedFilterEnabled) {
@@ -137,7 +148,7 @@ bool RecordMatchesFilter(const AttendanceRecord& record){
 
     if (std::find(freeTerms.begin(), freeTerms.end(), L"thisweek") != freeTerms.end()
         || std::find(freeTerms.begin(), freeTerms.end(), L"week") != freeTerms.end()) {
-        if (!DateWithinRecentDays(RecordDateKey(record), 7)) return false;
+        if (!DateWithinCalendarWeek(RecordDateKey(record), TodayDateKey())) return false;
     }
     if (std::find(freeTerms.begin(), freeTerms.end(), L"thismonth") != freeTerms.end()
         || std::find(freeTerms.begin(), freeTerms.end(), L"month") != freeTerms.end()) {
@@ -195,11 +206,7 @@ PptStats CountRecords(const std::vector<AttendanceRecord>& records){
     PptStats stats{};
     for (const auto& r : records) {
         if (!RecordMatchesStatsRange(r)) continue;
-        ++stats.total;
-        if (r.status == L"Present") ++stats.present;
-        else if (r.status == L"Absent") ++stats.absent;
-        else if (r.status == L"Late") ++stats.late;
-        else ++stats.other;
+        AccumulateStatus(stats, r.status);
     }
     return stats;
 }
@@ -217,15 +224,5 @@ std::vector<std::wstring> CurrentLessonKeys(){
     return lessons;
 }
 
-void CountStatuses(int& present, int& absent, int& late, int& other){
-    present = absent = late = other = 0;
-    for (const auto& r : Document().Records()) {
-        if (!RecordMatchesStatsRange(r)) continue;
-        if (r.status == L"Present") ++present;
-        else if (r.status == L"Absent") ++absent;
-        else if (r.status == L"Late") ++late;
-        else ++other;
-    }
-}
 
 } // namespace attendance

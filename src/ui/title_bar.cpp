@@ -70,10 +70,7 @@ void ApplyGlassTitleBar(HWND hwnd){
         blur.fEnable = TRUE;
         DwmEnableBlurBehindWindow(hwnd, &blur);
     }
-    SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
-        SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
-    RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_NOERASE);
+
 }
 
 BOOL CALLBACK RefreshAppTitleBarForWindow(HWND window, LPARAM configureBackdropValue){
@@ -83,8 +80,7 @@ BOOL CALLBACK RefreshAppTitleBarForWindow(HWND window, LPARAM configureBackdropV
         ApplyGlassTitleBar(window);
     } else {
         ApplyTitleBarThemeAttributes(window);
-        RedrawWindow(window, nullptr, nullptr,
-            RDW_INVALIDATE | RDW_FRAME | RDW_NOERASE | RDW_NOCHILDREN);
+
     }
     return TRUE;
 }

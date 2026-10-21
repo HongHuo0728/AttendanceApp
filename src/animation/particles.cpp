@@ -59,7 +59,7 @@ void TriggerButtonFeedback(HWND hwnd, POINT origin){
     int id = GetDlgCtrlID(hwnd);
     if (id == IDC_SETTINGS_PARTICLES || id == IDC_SETTINGS_RISK_ALERTS
         || id == IDC_SETTINGS_AUTOSAVE_PROMPT || id == IDC_SETTINGS_COMMAND_PALETTE
-        || id == IDC_SETTINGS_ADVANCED_FILTER || id == IDC_SETTINGS_EXPERIMENTAL
+        || id == IDC_SETTINGS_ADVANCED_FILTER
         || id == IDC_SETTINGS_SHOW_STATS || id == IDC_SETTINGS_SHOW_HINT
         || id == IDC_SETTINGS_TABLE_GRID) return;
     bool particlesEnabled = Settings().particlesEnabled && IsCoreParticleButton(id);

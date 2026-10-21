@@ -15,6 +15,8 @@ struct DocumentState {
     bool autosaveFailurePending = false;
     bool dirty = false;
     std::wstring filterText;
+    std::wstring lessonFilter;
+    std::wstring currentFile;
     StatsRange statsRange = StatsRange::All;
     uint64_t revision = 0;
     uint64_t autosavedRevision = UINT64_MAX;

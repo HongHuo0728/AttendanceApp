@@ -1,0 +1,39 @@
+#include "resource.h"
+
+IDI_APP_ICON ICON "@ATTENDANCE_SOURCE_DIR@/assets/AttendanceApp.ico"
+IDI_ATTD_ICON ICON "@ATTENDANCE_SOURCE_DIR@/assets/AttdFile.ico"
+1 24 "@ATTENDANCE_MANIFEST_PATH@"
+
+1 VERSIONINFO
+ FILEVERSION @ATTENDANCE_VERSION_COMMAS@,0
+ PRODUCTVERSION @ATTENDANCE_VERSION_COMMAS@,0
+ FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+ FILEFLAGS 0x1L
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "Comments", "Supported languages: English, Simplified Chinese, Maltese, Japanese, French, German, Russian, Traditional Chinese Taiwan, Spanish, Italian, Mongolian, Esperanto, Classical Chinese, Thai, Filipino, Turkish, Lithuanian, Norwegian, Vietnamese, Traditional Chinese Hong Kong Cantonese\0"
+            VALUE "CompanyName", "Attendance App\0"
+            VALUE "FileDescription", "Attendance App\0"
+            VALUE "FileVersion", "@ATTENDANCE_VERSION@\0"
+            VALUE "InternalName", "AttendanceApp\0"
+            VALUE "LegalCopyright", "MIT License\0"
+            VALUE "OriginalFilename", "AttendanceApp.exe\0"
+            VALUE "ProductName", "Attendance App\0"
+            VALUE "ProductVersion", "@ATTENDANCE_VERSION@\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

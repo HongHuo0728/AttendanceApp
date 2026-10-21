@@ -1,24 +1,22 @@
 @echo off
 setlocal
-
-set "ROOT=%~dp0"
-set "EXE=%ROOT%build\AttendanceApp.exe"
-set "ICON=%ROOT%assets\AttdFile.ico"
-
+set "EXE=%~dp0AttendanceApp.exe"
+if not exist "%EXE%" set "EXE=%~dp0build\Release\AttendanceApp.exe"
+if not exist "%EXE%" set "EXE=%~dp0build\AttendanceApp.exe"
 if not exist "%EXE%" (
-    echo AttendanceApp.exe was not found. Run build.bat first.
-    exit /b 1
+ echo AttendanceApp.exe not found. Build or extract the full release first.
+ exit /b 1
 )
-
-if not exist "%ICON%" (
-    echo AttdFile.ico was not found.
-    exit /b 1
+if /I "%~1"=="--check" (
+ echo Executable: "%EXE%"
+ echo Icon: embedded file icon, index 1
+ exit /b 0
 )
-
 reg add "HKCU\Software\Classes\.attd" /ve /d "AttendanceApp.attd" /f
+if errorlevel 1 exit /b 1
 reg add "HKCU\Software\Classes\AttendanceApp.attd" /ve /d "Attendance File" /f
-reg add "HKCU\Software\Classes\AttendanceApp.attd\DefaultIcon" /ve /d "\"%ICON%\"" /f
+reg add "HKCU\Software\Classes\AttendanceApp.attd\DefaultIcon" /ve /d "\"%EXE%\",1" /f
 reg add "HKCU\Software\Classes\AttendanceApp.attd\shell\open\command" /ve /d "\"%EXE%\" \"%%1\"" /f
-
+if errorlevel 1 exit /b 1
 ie4uinit.exe -show
-echo .attd file icon registration complete.
+echo File association registered for the current user.

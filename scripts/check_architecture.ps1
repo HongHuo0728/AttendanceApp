@@ -12,7 +12,7 @@ foreach ($file in $files) {
         ++$includeCount
         $include = $match.Groups[1].Value
         if ($include.EndsWith('.cpp')) { throw "Implementation include in $($file.FullName): $include" }
-        $target = @((Join-Path $file.DirectoryName $include), (Join-Path $sourceRoot $include), (Join-Path (Join-Path $root 'include') $include)) |
+        $target = @((Join-Path $file.DirectoryName $include), (Join-Path $sourceRoot $include), (Join-Path (Join-Path $root 'include') $include), (Join-Path (Join-Path $root 'build\generated') $include)) |
             Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
         if (-not $target) { throw "Missing local include in $($file.FullName): $include" }
         $dependencies += [IO.Path]::GetFullPath($target)

@@ -1,3 +1,4 @@
+#include "ui/redraw.h"
 #include "ui/theme.h"
 #include "animation/scheduler.h"
 #include "ui/title_bar.h"
@@ -164,7 +165,7 @@ void PaintAppBackgroundSlice(HWND child, HDC hdc){
 }
 
 BOOL CALLBACK ApplyFontToChild(HWND child, LPARAM){
-    SendMessageW(child, WM_SETFONT, (WPARAM)Ui().font, TRUE);
+    SendMessageW(child, WM_SETFONT, (WPARAM)Ui().font, FALSE);
     wchar_t className[32]{};
     GetClassNameW(child, className, 32);
     if (lstrcmpiW(className, L"ComboBox") == 0) {
@@ -215,7 +216,6 @@ void RecreateFonts(){
     }
     if (Ui().settingsWindow && IsWindow(Ui().settingsWindow)) {
         SendMessageW(GetDlgItem(Ui().settingsWindow, IDC_SETTINGS_TITLE), WM_SETFONT, (WPARAM)Ui().titleFont, TRUE);
-        SendMessageW(GetDlgItem(Ui().settingsWindow, IDC_SETTINGS_ADVANCED_TITLE), WM_SETFONT, (WPARAM)Ui().titleFont, TRUE);
     }
     if (Ui().quickRollCallWindow && IsWindow(Ui().quickRollCallWindow)) {
         SendMessageW(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_TITLE), WM_SETFONT, (WPARAM)Ui().titleFont, TRUE);
@@ -228,8 +228,17 @@ void RecreateFonts(){
     if (oldSmallFont) DeleteObject(oldSmallFont);
 }
 
+void ApplyNativeControlTheme(HWND window){
+    if (!window || !IsWindow(window)) return;
+    constexpr wchar_t key[] = L"AttendanceApp.NativeTheme";
+    const UINT_PTR desired = IsRenderedPaletteDark() ? 1 : 2;
+    if (reinterpret_cast<UINT_PTR>(GetPropW(window, key)) == desired) return;
+    if (SUCCEEDED(SetWindowTheme(window, desired == 1 ? L"DarkMode_Explorer" : L"Explorer", nullptr)))
+        SetPropW(window, key, reinterpret_cast<HANDLE>(desired));
+}
+
 BOOL CALLBACK ApplyThemeToChild(HWND child, LPARAM){
-    SetWindowTheme(child, IsRenderedPaletteDark() ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+    ApplyNativeControlTheme(child);
     wchar_t className[32]{};
     GetClassNameW(child, className, 32);
     if (lstrcmpiW(className, L"ComboBox") == 0) ApplyComboDropDownTheme(child);
@@ -239,7 +248,7 @@ BOOL CALLBACK ApplyThemeToChild(HWND child, LPARAM){
 
 void ApplyThemedControls(HWND root){
     if (!root) return;
-    SetWindowTheme(root, IsRenderedPaletteDark() ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+    ApplyNativeControlTheme(root);
     EnumChildWindows(root, ApplyThemeToChild, 0);
 }
 
@@ -286,8 +295,8 @@ void FinishThemeTransition(){
     ApplyThemedControls(Ui().settingsWindow);
     ApplyThemedControls(Ui().chartWindow);
     ApplyThemedControls(Ui().quickRollCallWindow);
-    RedrawThemeRoots(true);
-    RedrawThemePopups(true);
+    RedrawThemeRoots(false);
+    RedrawThemePopups(false);
 }
 
 void BeginThemeTransition(UiTheme targetTheme){
@@ -320,10 +329,9 @@ void UpdateThemeTransitionFrame(){
         ListView_SetTextBkColor(Ui().list, Ui().COLOR_PANEL);
         ListView_SetTextColor(Ui().list, Ui().COLOR_TEXT);
     }
-    // WM_PAINT is a low-priority message. Synchronously drawing each frame
-    // prevents Windows from coalescing the whole transition into its final frame.
-    RedrawThemeRoots(true);
-    RedrawThemePopups(true);
+    // Queue one complete frame. Forced child-by-child paints expose intermediate backgrounds.
+    RedrawThemeRoots(false);
+    RedrawThemePopups(false);
     if (progress >= 0.999) FinishThemeTransition();
 }
 
@@ -333,10 +341,10 @@ void ApplyDarkMode(HWND hwnd){
     if (hwnd == Ui().hwnd) ApplyGlassTitleBar(hwnd);
     ApplyThemedControls(hwnd);
     if (Ui().list) {
-        SetWindowTheme(Ui().list, IsRenderedPaletteDark() ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+        ApplyNativeControlTheme(Ui().list);
         HWND header = ListView_GetHeader(Ui().list);
         if (header) {
-            SetWindowTheme(header, IsRenderedPaletteDark() ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+            ApplyNativeControlTheme(header);
             InvalidateRect(header, nullptr, FALSE);
         }
         ListView_SetBkColor(Ui().list, Ui().COLOR_PANEL);

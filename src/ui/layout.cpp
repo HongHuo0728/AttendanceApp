@@ -1,3 +1,4 @@
+#include "ui/redraw.h"
 #include "ui/layout.h"
 #include "settings/state.h"
 #include "ui/state.h"
@@ -43,7 +44,7 @@ void ResizeLayout(HWND hwnd){
         return;
     }
 
-    SendMessageW(hwnd, WM_SETREDRAW, FALSE, 0);
+    RedrawScope redraw(hwnd);
 
     int layoutW = std::max(w, MIN_LAYOUT_W);
     int layoutH = std::max(h, MIN_LAYOUT_H);
@@ -128,15 +129,17 @@ void ResizeLayout(HWND hwnd){
     moveHwnd(Ui().otherEdit, composerX + dateW + nameW + 32, composerY, otherW, editorH);
 
     int primaryGap = compact ? 8 : spacious ? 18 : 12;
-    int primaryW = std::clamp((layoutW - pad * 2 - primaryGap * 5) / 6, 128, 168);
-    int primaryTotalW = primaryW * 6 + primaryGap * 5;
+    int primaryW = std::clamp((layoutW - pad * 2 - primaryGap * 7) / 8, 100, 148);
+    int primaryTotalW = primaryW * 8 + primaryGap * 7;
     int primaryX = pad + (layoutW - pad * 2 - primaryTotalW) / 2;
     move(IDC_PRESENT, primaryX, dockY, primaryW, dockPrimaryH);
     move(IDC_ABSENT, primaryX + (primaryW + primaryGap), dockY, primaryW, dockPrimaryH);
     move(IDC_LATE, primaryX + (primaryW + primaryGap) * 2, dockY, primaryW, dockPrimaryH);
     move(IDC_OTHER_STATUS, primaryX + (primaryW + primaryGap) * 3, dockY, primaryW, dockPrimaryH);
-    move(IDC_SAVE, primaryX + (primaryW + primaryGap) * 4, dockY, primaryW, dockPrimaryH);
-    move(IDC_EXPORT_CSV, primaryX + (primaryW + primaryGap) * 5, dockY, primaryW, dockPrimaryH);
+    move(IDC_LEAVE, primaryX + (primaryW + primaryGap) * 4, dockY, primaryW, dockPrimaryH);
+    move(IDC_PENDING, primaryX + (primaryW + primaryGap) * 5, dockY, primaryW, dockPrimaryH);
+    move(IDC_SAVE, primaryX + (primaryW + primaryGap) * 6, dockY, primaryW, dockPrimaryH);
+    move(IDC_EXPORT_CSV, primaryX + (primaryW + primaryGap) * 7, dockY, primaryW, dockPrimaryH);
 
     int drawerGap = compact ? 6 : spacious ? 14 : 10;
     int drawerW = std::clamp((layoutW - pad * 2 - drawerGap * 7) / 8, 112, 148);
@@ -179,10 +182,6 @@ void ResizeLayout(HWND hwnd){
     si.nPos = Ui().scrollY;
     SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
 
-    SendMessageW(hwnd, WM_SETREDRAW, TRUE, 0);
-    UINT redrawFlags = RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE;
-    if (!Ui().liveResizing) redrawFlags |= RDW_UPDATENOW;
-    RedrawWindow(hwnd, nullptr, nullptr, redrawFlags);
     inLayout = false;
 }
 

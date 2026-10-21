@@ -6,6 +6,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+. (Join-Path $PSScriptRoot 'storage.ps1')
 $root = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($Executable)) {
     $Executable = Join-Path $root 'build\Release\AttendanceApp.exe'
@@ -266,7 +267,11 @@ function Invoke-ToolsMenuCycle {
     Start-Sleep -Milliseconds 30
 }
 
-$testData = Join-Path $root 'build\runtime-smoke-appdata\AttendanceApp'
+$testRoot=Assert-ManagedPath (Join-Path $root 'build\runtime-smoke-work')
+$ownership=Join-Path $testRoot '.attendance-test-root'
+if(Test-Path -LiteralPath $testRoot){if(-not (Test-Path -LiteralPath $ownership -PathType Leaf)){throw 'Unowned smoke-test directory.'};Remove-ManagedTree $testRoot}
+[void][IO.Directory]::CreateDirectory($testRoot);[IO.File]::WriteAllText($ownership,'AttendanceApp optional GUI smoke')
+$testData = Join-Path $testRoot 'AttendanceApp'
 [System.IO.Directory]::CreateDirectory($testData) | Out-Null
 $testSettings = @'
 language=zh-HK
@@ -428,7 +433,7 @@ try {
     Start-Sleep -Milliseconds 260
     $themeReturn = Get-ClientPixelRed $main
     if ($themeDisableHalf -le 16 -or $themeDisableHalf -ge 240 -or $themeReturn -gt 16) {
-        throw "Disabling advanced personalization did not animate back to dark: $themeDisableHalf, $themeReturn."
+        throw "Resetting appearance did not animate back to dark: $themeDisableHalf, $themeReturn."
     }
     Start-Sleep -Milliseconds 120
     $returnTitleBar = Assert-AppTitleBarMaterial $main 3 'Main window after returning to dark' 1
@@ -506,7 +511,7 @@ try {
         LocalizedSearchRows = 1
         ThemeTransitionSamples = ($themeSamples -join ', ')
         TitleBarTransitionSamples = ($titleBarSamples -join ', ')
-        AdvancedDisableMidpoint = $themeDisableHalf
+        AppearanceResetMidpoint = $themeDisableHalf
         ThemeReturnSample = $themeReturn
         GdiObjectsBefore = $gdiBefore
         GdiObjectsAfter = $gdiAfter
@@ -533,4 +538,5 @@ finally {
         }
     }
     $process.Dispose()
+    try {Assert-TestBudget (Get-TreeSnapshot $testRoot)} finally {Remove-ManagedTree $testRoot}
 }

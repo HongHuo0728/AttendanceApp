@@ -274,6 +274,9 @@ struct PptStats {
     int late = 0;
     int other = 0;
     int total = 0;
+    int leave = 0;
+    int pending = 0;
+    int Eligible() const { return total - leave - pending; }
 };
 
 enum class AutosaveResult { Skipped, Saved, Failed };

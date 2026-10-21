@@ -43,6 +43,7 @@ void RestoreSnapshot(const std::string& snapshot){
     if (!DeserializeWorkbook(snapshot, sheets)) return;
     Document().sheets = std::move(sheets);
     Document().visibleRows.clear();
+    Document().lessonFilter.clear();
     Document().activeSheet = std::clamp(Document().loadedActiveSheet, 0, (int)Document().sheets.size() - 1);
     MarkDirty();
     RefreshCourseCombo();

@@ -1,3 +1,4 @@
+#include "app/workflows.h"
 #include "app/commands.h"
 #include "core/text.h"
 #include "settings/shortcuts.h"
@@ -119,6 +120,12 @@ void ShowToolsMenu(HWND button){
     std::wstring recent = Tr(L"Open recent file", L"\u6253\u5f00\u6700\u8fd1\u6587\u4ef6");
     std::wstring saveDir = Tr(L"Set default save folder", L"\u8bbe\u7f6e\u9ed8\u8ba4\u4fdd\u5b58\u6587\u4ef6\u5939");
     int command = ShowThemedPopupMenu(button, {
+        {3050, Tr(L"Batch edit selected",L"批量编辑选中记录"), false},
+        {3051, Tr(L"Make-up attendance",L"补签"), false},
+        {3052, Tr(L"Rename lesson",L"重命名课次"), false},
+        {3053, Tr(L"Copy lesson",L"复制课次"), false},
+        {3054, Tr(L"Course from template",L"从课程模板创建"), false},
+        {3055, Tr(L"Export V5 compatible file",L"导出 V5 兼容文件"), false},
         {IDM_IMPORT_ROSTER, roster, false},
         {IDM_STUDENTS_ADD, addStudent, false},
         {IDM_STUDENTS_REMOVE, removeStudent, false},
@@ -155,6 +162,12 @@ void ShowToolsMenu(HWND button){
         {IDM_OPEN_AUTOSAVE, autosave, false}
     });
     switch (command) {
+    case 3050: BatchEditRecords(); break;
+    case 3051: MakeUpAttendance(); break;
+    case 3052: ManageLesson(false); break;
+    case 3053: ManageLesson(true); break;
+    case 3054: CourseFromTemplate(); break;
+    case 3055: ExportV5Compatible(); break;
     case IDM_IMPORT_ROSTER: ImportRosterCsv(); break;
     case IDM_STUDENTS_ADD: AddStudentToRoster(); break;
     case IDM_STUDENTS_REMOVE: RemoveStudentFromRoster(); break;

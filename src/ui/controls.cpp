@@ -1,3 +1,4 @@
+#include "ui/settings_window.h"
 #include "ui/controls.h"
 #include "ui/common.h"
 #include "animation/scheduler.h"
@@ -97,7 +98,13 @@ void EnableMouseWheelForward(HWND hwnd){
 }
 
 void RedrawAnimatedControl(HWND hwnd){
-    RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_NOERASE);
+    wchar_t className[32]{};
+    GetClassNameW(hwnd, className, 32);
+    if (lstrcmpiW(className, L"Edit") == 0) {
+        DrawAnimatedEditFrame(hwnd); // Animate the border without erasing native edit text.
+    } else {
+        InvalidateRect(hwnd, nullptr, FALSE);
+    }
 }
 
 void DrawAnimatedEditFrame(HWND hwnd){
@@ -154,6 +161,7 @@ LRESULT CALLBACK InteractiveControlProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         StartAnimation(hwnd, AnimChannel::Press, 0.0, 180);
         return DefSubclassProc(hwnd, msg, wParam, lParam);
     case WM_SETFOCUS:
+        EnsureSettingsControlVisible(hwnd);
         StartAnimation(hwnd, AnimChannel::Hover, 1.0, 150);
         return DefSubclassProc(hwnd, msg, wParam, lParam);
     case WM_KILLFOCUS:
@@ -174,9 +182,11 @@ LRESULT CALLBACK InteractiveControlProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
 
 void EnableInteractiveAnimation(HWND hwnd){
     if (!hwnd) return;
-    SetWindowSubclass(hwnd, InteractiveControlProc, 7, 0);
     wchar_t className[32]{};
     GetClassNameW(hwnd, className, 32);
+    if (lstrcmpiW(className, L"Button") != 0 && lstrcmpiW(className, L"Edit") != 0
+        && lstrcmpiW(className, L"ComboBox") != 0) return;
+    SetWindowSubclass(hwnd, InteractiveControlProc, 7, 0);
     if (lstrcmpiW(className, L"Button") == 0
         && (GetWindowLongPtrW(hwnd, GWL_STYLE) & BS_OWNERDRAW) != 0) {
         ButtonEffectState& state = Animations().buttonEffects[hwnd];
@@ -185,7 +195,7 @@ void EnableInteractiveAnimation(HWND hwnd){
 }
 
 HWND MakeControl(const wchar_t* cls, const wchar_t* text, DWORD style, int id){
-    DWORD finalStyle = WS_CHILD | WS_VISIBLE | style;
+    DWORD finalStyle = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | style;
     if (lstrcmpiW(cls, L"EDIT") == 0) finalStyle |= WS_BORDER | ES_LEFT | ES_MULTILINE | ES_AUTOHSCROLL | ES_NOHIDESEL;
     HWND hwnd = CreateWindowExW(
         0, cls, text,
@@ -213,7 +223,7 @@ HWND MakeButton(const wchar_t* text, int id){
 }
 
 HWND MakeSettingsControl(HWND parent, const wchar_t* cls, const wchar_t* text, DWORD style, int id){
-    DWORD finalStyle = WS_CHILD | WS_VISIBLE | style;
+    DWORD finalStyle = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | style;
     if (lstrcmpiW(cls, L"EDIT") == 0) {
         finalStyle |= WS_BORDER | ES_LEFT | ES_AUTOHSCROLL | ES_NOHIDESEL;
         if ((style & ES_NUMBER) == 0) finalStyle |= ES_MULTILINE;

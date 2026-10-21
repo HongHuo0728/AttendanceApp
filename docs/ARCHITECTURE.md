@@ -1,39 +1,46 @@
-# Architecture
+# Architecture: AttendanceApp 2.1.0
 
-AttendanceApp 2.0.4 (Ultra Optimization) uses independently compiled C++17 modules, linked into `AttendanceRuntime`. `src/main.cpp` delegates to the application entry point. No implementation file includes another implementation file.
+The application is a C++17 / Win32 executable backed by independently compiled object modules in AttendanceRuntime. main.cpp delegates to the application entry point. Implementations do not include other .cpp files.
 
-| Directory | Responsibility |
+| Module | Responsibility |
 | --- | --- |
-| app | Entry point, message routing, commands, document operations |
-| core | Platform declarations, shared types, text, encoding, constants |
-| model | Canonical workbook, queries, history |
-| storage | Bounded file reads, atomic writes, V1-V5 parsing and V5 encoding |
-| settings | Preferences, validation, keyboard bindings, background font cache |
-| ui | Windows, controls, menus, tables, themes, layout |
-| animation | Scheduling, particles, and shared animation state |
-| localization | Existing 20-language translations and display labels |
-| reports | CSV, HTML/PDF, PowerPoint, database mirror, ZIP packaging |
-| tests | In-application parser checks |
-| ../tests | Standalone regression, localization equivalence and performance tests |
+| app | Window routing, documents, recovery and user workflows |
+| core | Platform declarations, text/encoding/CSV and six-state vocabulary |
+| model | Canonical workbook, filtering, statistics, transactional operations and undo |
+| storage | Atomic bounded I/O, V1-V6 codec and backup retention policy |
+| settings | Preferences, shortcuts, background font cache |
+| ui | Native controls, searchable modal picker, roll call, layout and themes |
+| animation | Scheduling, particles and shared animation state |
+| localization | Editable catalog and independent Hong Kong vocabulary |
+| reports | Immutable snapshots, bounded worker, CSV/HTML/PPTX/database exports |
+| tests | In-application parser checks; standalone tests are in the root tests directory |
 
-Document, UI, preferences, font-cache, and animation state each have one owner. Function-local state initialization avoids cross-translation-unit static initialization order dependencies. `Document().Records()` refers directly to the active sheet's records; there is no second mutable record vector to synchronize.
+## Data and operations
 
-The UI thread owns document and window state. Background font enumeration publishes under its mutex; animation state uses its own mutex, atomic shutdown/FPS values, and coalesced posted messages. Workers do not directly draw controls. Existing theme and particle rendering behavior is retained.
+The UI thread owns workbook/window/preferences state. The active course owns its record vector; no second mutable record collection is synchronized. Each record retains date/lesson label, student name, status key and note. Core status helpers centralize the six categories, required-note rule, eligible denominator and rate display. Unknown legacy status strings are preserved and count as Other.
 
-Report jobs have one lazy worker and a maximum of two outstanding snapshots. CSV, HTML and database tasks own immutable copies of the data and localized labels. PowerPoint jobs own already-built XML entries before ZIP packaging. Workers never access live document, preference or window state; completion messages are delivered on the UI thread. Shutdown finishes accepted writes, joins the worker and suppresses orphan completion dialogs.
+The exact lesson filter is separate from advanced text search. Model operations validate a candidate workbook before committing, add one history snapshot and mark the document dirty. Lesson and course operations therefore share validation and undo with the UI. Whole-workbook history remains bounded by count and bytes. Names identify students only within a course.
 
-`localization/catalog.json` is the editable source for the five general translation tables. `node scripts/generate_catalog.mjs` regenerates the checked-in `catalog_data.h`; `--check` verifies it without rewriting. The header uses fixed string-pool offsets to reduce PE data and relocations. Node is only needed to regenerate translations, not for a normal C++ build. Hong Kong's independent dictionary remains in `include/zh_hk_strings.h`.
+Normal serialization is V6. Its structure matches V5, while its header identifies the new status semantics. V5 downgrade uses a copied workbook and does not mutate live state. Old-format overwrite protection happens during saving, not opening. Existing physical data limits are retained.
 
-The deprecated `advanced_personalization` key is accepted for compatibility but does not gate settings. Writers emit `1` so older versions that understand this key can retain personalized choices. Numeric versions remain `2.0.4`; the display title includes `(Ultra Optimization)`.
+## Workers and reports
 
-## Building and Testing
+Font enumeration publishes a synchronized cache. Animation workers coalesce posted messages and never draw native controls directly. The lazy report worker accepts at most two outstanding snapshots and returns completion on the UI thread. CSV/HTML/database generation and report file writes run on that worker; PPTX XML assembly and snapshot capture remain synchronous. Shutdown finishes accepted writes before joining workers.
 
-Run `build.bat` for the Release executable and `AttendanceTests.exe`. The non-CMake fallback compiles each source to a uniquely named object, including modules with the same basename.
+Report labels are captured with the data. CSV/HTML/PPTX use the statistics period; the database mirror intentionally includes the full workbook. PowerPoint chart arithmetic uses 64-bit products and is tested with synthetic counts without large files.
 
-The application is in `build/Release`, test executables are in `build/tests/Release`, and the internal link library is in `build/lib/Release`. Only the application executable is needed for the application release; the static library is a build artifact.
+## Painting and settings
 
-Run `ctest --test-dir build -C Release --output-on-failure` for isolated regression tests. Run `scripts/verify_release.ps1 -SkipBuild`, `scripts/analyze_native.bat`, and `scripts/runtime_smoke_test.ps1` for release, static, and desktop runtime checks.
+ui/redraw owns UI-thread redraw transactions and buffered control frames. RedrawScope preserves a hidden window's visibility and counts nested scopes per HWND, so an inner layout cannot resume an outer update. Changed text is scheduled once; unchanged text is ignored. It deliberately never sends WM_SETREDRAW(TRUE) to an initially hidden window, as documented by [Microsoft's WM_SETREDRAW contract](https://learn.microsoft.com/en-us/windows/win32/gdi/wm-setredraw).
 
-The optional `AttendanceBaseline` target is available only when the local pre-refactor snapshot exists. It is not required for users to build the app. It runs the same benchmark and localization inputs against the original implementation.
+Settings composes its child painting. The main window uses per-control buffers because whole-window WS_EX_COMPOSITED caused missing native controls on the validation host. First showing either window explicitly repaints its complete child tree after hidden initialization. The application and test executable share the Common Controls v6 manifest, which enables native list-view double buffering. Owner-drawn buttons, toggles, statistics, headers and closed combos complete background/text/effect painting in a temporary buffer before presenting it. Native edit hover animation draws the border without invalidating the text client. Routine table changes preserve content instead of restarting a whole-list reveal. Theme ticks queue painting and update DWM caption attributes without forcing frame/client reconstruction; native light/dark theme calls are cached per HWND.
 
-Run `scripts/check_architecture.ps1` to verify local includes and the header dependency graph. See [the 2.0.4 audit](V2.0.4_AUDIT.md) for measured results, confirmed fixes and verification limits.
+Settings is a single row-major responsive form with labels above values, deferred layout positioning, one heading, shared actions, keyboard order and focus scrolling. Hidden prewarming finishes creation/theme/layout before the explicit ShowSettingsWindow call. There is no basic/advanced expansion state. Appearance preferences retain their existing persistence keys.
+
+## Build and localization
+
+VERSION is the numeric version source. CMake and the direct MSVC generator derive version.h, resource metadata and the application manifest in build/generated. Existing resource entry files are retained as compatibility entry points; the .in templates are authoritative. All targets use the static MSVC runtime. Normal builds exclude tests; opted-in tests reuse AttendanceRuntime objects and the same build directory. Visual Studio receives an object-target-only MSBuild import that disables the otherwise redundant Lib task; dependents link the explicit object files.
+
+catalog.json is the editable translation source. Node regenerates catalog_data.h; --check performs no rewrite. Hong Kong vocabulary is also maintained in the independent zh_hk_strings.h dictionary. New feature phrases and the unified-settings appearance options are supplied for all 20 languages; missing legacy phrases use English outside Simplified Chinese; linguistic/visual review coverage is recorded separately from mechanical key coverage.
+
+See [Testing and storage](TESTING_AND_STORAGE.md) for generated-file ownership, budgets and cleanup, and [the 2.1.0 audit](V2.1.0_AUDIT.md) for actual validation.

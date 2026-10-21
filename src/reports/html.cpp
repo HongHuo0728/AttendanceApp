@@ -1,3 +1,5 @@
+#include "model/query.h"
+#include "core/status.h"
 #include "reports/html.h"
 #include "localization/strings.h"
 #include "storage/files.h"
@@ -19,6 +21,7 @@ struct HtmlReport {
     ReportTemplate reportTemplate = ReportTemplate::Complete;
     ReportLabels columns, statuses;
     std::array<std::wstring, 8> titles;
+    std::wstring summary;
 };
 
 bool WriteHtmlReport(const std::wstring& path, const HtmlReport& report) {
@@ -46,6 +49,7 @@ bool WriteHtmlReport(const std::wstring& path, const HtmlReport& report) {
         if (showRosterSummary && !sheet.students.empty()) {
             file << "<p><strong>" << HtmlCell(title[7]) << ":</strong> " << sheet.students.size() << "</p>";
         }
+        file << "<p>" << HtmlCell(report.summary) << "</p>";
         file << "<table><tr><th>" << HtmlCell(report.columns[0]) << "</th><th>"
              << HtmlCell(report.columns[1]) << "</th><th>" << HtmlCell(report.columns[2]) << "</th>";
         if (showOtherColumn) file << "<th>" << HtmlCell(report.columns[3]) << "</th>";
@@ -67,11 +71,16 @@ std::function<bool()> PrepareHtmlExport(const std::wstring& path) {
     SyncActiveSheet();
     HtmlReport report;
     report.sheet = Document().sheets[Document().activeSheet];
+    report.sheet.records.erase(std::remove_if(report.sheet.records.begin(),report.sheet.records.end(),[](const auto& r){return !RecordMatchesStatsRange(r);}),report.sheet.records.end());
+    auto stats=CountRecords(report.sheet.records);
+    report.summary=StatsRangeName(Document().statsRange)+L" | "+Tr(L"Attendance",L"出勤率")+L": "+AttendanceRateText(stats);
+    const int counts[]={stats.present,stats.absent,stats.late,stats.other,stats.leave,stats.pending};
+    for(size_t i=0;i<StatusKeys.size();++i)report.summary+=L" | "+StatusDisplayText(StatusKeys[i])+L": "+std::to_wstring(counts[i]);
     report.reportTemplate = Settings().reportTemplate;
     report.columns = {Tr(L"Date/Time", L"\u65e5\u671f\u65f6\u95f4"), Tr(L"Name", L"\u59d3\u540d"),
         Tr(L"Status", L"\u72b6\u6001"), Tr(L"Other", L"\u5176\u4ed6")};
     report.statuses = {StatusDisplayText(L"Present"), StatusDisplayText(L"Absent"),
-        StatusDisplayText(L"Late"), StatusDisplayText(L"Other")};
+        StatusDisplayText(L"Late"), StatusDisplayText(L"Other"), StatusDisplayText(L"Leave"), StatusDisplayText(L"Pending")};
     report.titles = {Tr(L"Attendance", L"\u51fa\u52e4\u7387"),
         Tr(L"Print / Save as PDF", L"\u6253\u5370 / \u53e6\u5b58\u4e3a PDF"),
         Tr(L"Report template", L"\u62a5\u544a\u6a21\u677f"), ReportTemplateName(report.reportTemplate),

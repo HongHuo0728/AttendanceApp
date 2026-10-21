@@ -1,3 +1,4 @@
+#include "core/status.h"
 #include "ui/statistics.h"
 #include "animation/scheduler.h"
 #include "ui/title_bar.h"
@@ -17,12 +18,11 @@ void PaintStatsChart(HWND hwnd, HDC hdc){
     GetClientRect(hwnd, &rc);
     FillRect(hdc, &rc, Ui().bgBrush);
 
-    int present, absent, late, other;
-    CountStatuses(present, absent, late, other);
-    int values[] = {present, absent, late, other};
-    const wchar_t* labels[] = {L"Present", L"Absent", L"Late", L"Other"};
-    COLORREF colors[] = {RGB(126, 154, 142), RGB(170, 112, 112), RGB(164, 146, 104), RGB(126, 126, 126)};
-    int maxValue = std::max(1, std::max(std::max(present, absent), std::max(late, other)));
+    auto stats=CountRecords(Document().Records());
+    int values[]={stats.present,stats.absent,stats.late,stats.other,stats.leave,stats.pending};
+    const wchar_t* labels[] = {L"Present", L"Absent", L"Late", L"Other", L"Leave", L"Pending"};
+    COLORREF colors[] = {RGB(126, 154, 142), RGB(170, 112, 112), RGB(164, 146, 104), RGB(126, 126, 126), RGB(110,140,180),RGB(100,100,120)};
+    int maxValue = std::max(1, *std::max_element(std::begin(values),std::end(values)));
     double reveal = GetAnimationValue(hwnd, AnimChannel::Reveal, 1.0);
 
     SetBkMode(hdc, TRANSPARENT);
@@ -36,7 +36,7 @@ void PaintStatsChart(HWND hwnd, HDC hdc){
     int barX = 150;
     int y = 86;
     int barMaxW = std::max(120, (int)(rc.right - barX - 90));
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 6; ++i) {
         std::wstring label = Tr(labels[i], labels[i]);
         TextOutW(hdc, labelX, y + 6, label.c_str(), (int)label.size());
         RECT barBg{barX, y, barX + barMaxW, y + 30};
