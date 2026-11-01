@@ -1,3 +1,5 @@
+#include "ui/popup_exit.h"
+#include "ui/feedback.h"
 #include "app/main_window.h"
 #include "model/workbook.h"
 #include "ui/common.h"
@@ -145,8 +147,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam){
         ScrollMainWindow(hwnd, SB_HORZ, 0, GET_WHEEL_DELTA_WPARAM(wParam));
         return 0;
     case WM_COMMAND: {
+        if(Document().loading && LOWORD(wParam)!=IDC_SETTINGS)return 0;
         if (HIWORD(wParam) == CBN_DROPDOWN) {
-            StartAnimation((HWND)lParam, AnimChannel::ComboOpen, 1.0, 340);
+            RestartAnimation((HWND)lParam, AnimChannel::ComboOpen, 1.0, 240);
             ApplyComboDropDownTheme((HWND)lParam);
             return 0;
         }
@@ -368,6 +371,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam){
     case WM_APP_ANIMATION_DONE:
         return 0;
     case WM_CLOSE:
+        if(Document().saving||Document().loading){
+            ShowMessage(Tr(L"A file operation is still running. Please wait before closing.",L"文件操作尚未结束，请稍后关闭。"));return 0;
+        }
         if (Document().dirty && AutoSaveNow() == AutosaveResult::Failed) {
             std::wstring warning = Tr(
                 L"Autosave failed. Closing now may lose unsaved attendance data. Close anyway?",
@@ -381,6 +387,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam){
         return 0;
     case WM_DESTROY:
         StopReportJobs();
+        StopOperationFeedback();
+        StopPopupExit();
         KillTimer(hwnd, 1);
         KillTimer(hwnd, 2);
         RemoveAnimationState(hwnd);

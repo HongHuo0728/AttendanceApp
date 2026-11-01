@@ -1,3 +1,4 @@
+#include "ui/feedback.h"
 #include "reports/database.h"
 #include "localization/strings.h"
 #include "storage/files.h"
@@ -32,12 +33,10 @@ std::function<bool()> PrepareDatabaseExport(const std::filesystem::path& path) {
 
 void ExportDatabaseMirror() {
     auto path = AppDataFilePath(L"attendance.attddb");
-    auto complete = [path](bool exported) {
-        if (!exported) {
-            ShowMessage(Tr(L"Could not write the database file.", L"\u65e0\u6cd5\u5199\u5165\u6570\u636e\u5e93\u6587\u4ef6\u3002"));
-            return;
-        }
-        ShowMessage(Tr(L"Database mirror exported to:", L"\u6570\u636e\u5e93\u955c\u50cf\u5df2\u5bfc\u51fa\u5230\uff1a") + L"\n" + path.wstring());
+    auto operation=BeginOperation(nullptr,L"Database");
+    auto complete = [operation,path](bool exported) {
+        FinishOperation(operation,exported?OperationPhase::Success:OperationPhase::Failure,
+            exported?Tr(L"Completed successfully.",L"操作已完成。"):Tr(L"Operation failed. Existing files were preserved.",L"操作失败，已保留原文件。"));
     };
     if (!QueuePreparedReport(Ui().hwnd, [path] { return PrepareDatabaseExport(path); }, complete)) complete(false);
 }

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.1.1 LTS - 2026-11-01
+
+- Remove Apply and keep Reset All Settings / Close in a fixed settings footer. Add continuous content scrolling and a fresh, reversible cached-window entrance on each opening.
+- Unify cubic Bezier popup motion with clipped paper-style reveal, bounded item staggering and non-interactive native dropdown exit decoration.
+- Standardize rounded surfaces, spacing, measured/wrapped action labels, touch targets and stable-width numeric drawing while keeping existing themes and preferences.
+- Add truthful delayed loading and completion feedback for file and report operations; successful buttons draw a check and optional bounded particles.
+- Write settings defaults atomically before applying reset, and provide inline persistence failure/retry feedback.
+- Move document file work and report assembly to immutable background snapshots. Preserve newer edits when an older revision finishes saving.
+- Keep worker parsing independent of the current active course, refresh advanced-filter results immediately, and validate task callbacks against their original window.
+- Complete 14 maintenance messages across 20 languages. Retain V6 and existing settings keys.
+- Detect copied CMake caches pointing at another source directory and regenerate the current project's configuration.
+
+Current verification and limitations are recorded in [the 2.1.1 audit](docs/V2.1.1_AUDIT.md).
+
 ## 2.1.0 - 2026-10-21
 
 - Follow-up UI fix: removed the separate Advanced personalization section; Settings is one responsive form with matching tab order and automatic focus scrolling.

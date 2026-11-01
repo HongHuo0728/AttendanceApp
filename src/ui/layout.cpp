@@ -1,3 +1,5 @@
+#include "ui/common.h"
+#include "ui/motion.h"
 #include "ui/redraw.h"
 #include "ui/layout.h"
 #include "settings/state.h"
@@ -75,10 +77,27 @@ void ResizeLayout(HWND hwnd){
     moveHwnd(Ui().courseCombo, courseX, titleY + 6, courseW, 430);
     move(IDC_COURSE_OPTIONS, courseX + courseW + 12, titleY + 6, courseBtnW, 38);
 
-    int statsY = compact ? 90 : spacious ? 120 : 104;
+    int titleWidth=std::max(200,courseX-pad-24);
+    int titleHeight=WrappedTextHeight(GetDlgItem(hwnd,IDC_TITLE),titleWidth)+4;
+    int subtitleWidth=std::min(720,layoutW-pad*2);
+    int subtitleHeight=WrappedTextHeight(GetDlgItem(hwnd,IDC_SUBTITLE),subtitleWidth)+4;
+    move(IDC_TITLE,pad,titleY,titleWidth,titleHeight);
+    move(IDC_SUBTITLE,pad,titleY+titleHeight+8,subtitleWidth,subtitleHeight);
+    int statsY = std::max(compact?90:spacious?120:104,titleY+titleHeight+subtitleHeight+32);
     int statsGap = compact ? 12 : spacious ? 22 : 16;
     int statsH = Settings().showStatsCards ? (compact ? 78 : spacious ? 108 : 92) : 0;
     int statW = std::max(180, (layoutW - pad * 2 - statsGap * 3) / 4);
+    if(Settings().showStatsCards){
+        HDC dc=GetDC(hwnd);
+        if(dc){HGDIOBJ old=SelectObject(dc,Ui().smallFont?Ui().smallFont:Ui().font);
+            for(int id:{IDC_STAT_TOTAL,IDC_STAT_ATTENDANCE,IDC_STAT_ISSUES,IDC_STAT_VISIBLE}){
+                auto text=GetText(GetDlgItem(hwnd,id));text=text.substr(0,text.find(L'\n'));
+                RECT label{0,0,std::max(1,statW-36),0};DrawTextW(dc,text.c_str(),-1,&label,DT_CALCRECT|DT_WORDBREAK|DT_NOPREFIX);
+                statsH=std::max(statsH,(int)label.bottom+52);
+            }
+            SelectObject(dc,old);ReleaseDC(hwnd,dc);
+        }
+    }
     int statX = pad;
     move(IDC_STAT_TOTAL, statX, statsY, statW, statsH);
     move(IDC_STAT_ATTENDANCE, statX + (statW + statsGap), statsY, statW, statsH);
@@ -102,6 +121,12 @@ void ResizeLayout(HWND hwnd){
         : Settings().layoutDensity == LayoutDensity::Spacious ? 64 : 56;
     int drawerH = Settings().layoutDensity == LayoutDensity::Compact ? 36
         : Settings().layoutDensity == LayoutDensity::Spacious ? 44 : 40;
+    int primaryCell=std::clamp((layoutW-pad*2-(compact?8:spacious?18:12)*7)/8,100,148);
+    int drawerCell=std::clamp((layoutW-pad*2-(compact?6:spacious?14:10)*7)/8,112,148);
+    for(int id:{IDC_PRESENT,IDC_ABSENT,IDC_LATE,IDC_OTHER_STATUS,IDC_LEAVE,IDC_PENDING,IDC_SAVE,IDC_EXPORT_CSV})
+        dockPrimaryH=std::max(dockPrimaryH,WrappedTextHeight(GetDlgItem(hwnd,id),primaryCell-24)+16);
+    for(int id:{IDC_ADD_UPDATE,IDC_EDIT_SELECTED,IDC_ALL_PRESENT,IDC_NEW,IDC_IMPORT,IDC_DELETE,IDC_TOOLS,IDC_SETTINGS})
+        drawerH=std::max(drawerH,WrappedTextHeight(GetDlgItem(hwnd,id),drawerCell-24)+16);
     int bottomPad = compact ? 22 : spacious ? 36 : 28;
     int dockGap = compact ? 10 : spacious ? 22 : 16;
     int composerGap = compact ? 54 : spacious ? 82 : 66;
@@ -116,16 +141,17 @@ void ResizeLayout(HWND hwnd){
 
     int composerW = std::min(1060, layoutW - pad * 2);
     int composerX = pad + (layoutW - pad * 2 - composerW) / 2;
-    int labelY = composerY - (compact ? 16 : spacious ? 22 : 18);
+    int labelH=MeasuredTextHeight(GetDlgItem(hwnd,2001))+4;
+    int labelY=composerY-labelH-8;
     int dateW = std::max(210, composerW / 4);
     int nameW = std::max(240, composerW / 4);
     int otherW = composerW - dateW - nameW - 32;
-    move(2001, composerX, labelY, dateW, 18);
+    move(2001, composerX, labelY, dateW, labelH);
     int editorH = compact ? 34 : spacious ? 46 : 38;
     moveHwnd(Ui().dateEdit, composerX, composerY, dateW, editorH);
-    move(2002, composerX + dateW + 16, labelY, nameW, 18);
+    move(2002, composerX + dateW + 16, labelY, nameW, labelH);
     moveHwnd(Ui().nameEdit, composerX + dateW + 16, composerY, nameW, editorH);
-    move(2003, composerX + dateW + nameW + 32, labelY, otherW, 18);
+    move(2003, composerX + dateW + nameW + 32, labelY, otherW, labelH);
     moveHwnd(Ui().otherEdit, composerX + dateW + nameW + 32, composerY, otherW, editorH);
 
     int primaryGap = compact ? 8 : spacious ? 18 : 12;

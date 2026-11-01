@@ -4,7 +4,7 @@
 
 Files contain ATTD1: followed by Base64 of XOR-obfuscated UTF-8 workbook text. This is obfuscation, not strong encryption. Use appropriate external disk/file protection for sensitive information.
 
-2.1.0 writes ATTENDANCE_V6. V1-V5 remain readable. The V6 body keeps the V5 layout:
+The 2.1 LTS series (including 2.1.1) writes ATTENDANCE_V6. V1-V5 remain readable. The V6 body keeps the V5 layout:
 
 ~~~text
 ATTENDANCE_V6
@@ -38,3 +38,5 @@ Leave and Pending are excluded from the attendance denominator and absence/late 
 - The active file and existing V6 files cannot be overwritten by the downgrade action. Normal V6 saves use atomic sibling-file replacement.
 
 Current limits: encoded workbook 64 MiB, decoded text 48 MiB, 512 courses, 100,000 roster members per course / 250,000 total, and 250,000 records per course / 500,000 total. Test fixtures are intentionally much smaller; these production limits were not reduced.
+
+The 2.1.1 decoder also exposes a pure parsing path returning the active-course index for background reads. Parsing alone does not replace the current workbook. No V6 field layout or status semantics changed in this maintenance release.

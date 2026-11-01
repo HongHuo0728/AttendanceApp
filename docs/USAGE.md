@@ -1,4 +1,4 @@
-# AttendanceApp 2.1.0 usage
+# AttendanceApp 2.1.1 LTS usage
 
 ## Getting started
 
@@ -70,7 +70,15 @@ Backup now maintains backup-latest.attd and timestamped history. Ordinary histor
 
 ## Settings and distribution
 
-Settings opens one unified form; there is no separate Advanced personalization section. Labels appear above values, with two columns when space permits and one on narrow displays. Scroll to reach all options and the Reset / Apply / Close actions. Tab follows the visible form order and scrolls the focused control into view. Reopening an already visible Settings window raises it without resetting its scroll position. Settings apply immediately and Apply saves them. Language, font, black/white themes, text scale, spacing, animation/particles, autosave, statistics cards, grid lines, shortcuts and smooth scrolling are available without an experimental gate. The legacy advanced_personalization key remains readable for compatibility. Dropdown scheduling supports 60-360 FPS, default 60.
+Settings has one form with fixed title and bottom actions. Reset All Settings and Close are always available; only the options scroll. There is no Apply button. Choices take effect and save immediately. The scroll-frame-rate field is committed on Enter, when focus leaves it, or when closing Settings; accepted values remain 60-360 FPS. A persistent inline warning with Retry appears if settings cannot be saved; changes then remain active only for the current session.
+
+Tab follows the form order and brings focused options into view. Reopening Settings resets the scroll position and restarts its entrance animation. Reopening during a close reverses the current animation. Animation Off disables motion, Standard shortens it, and Advanced uses complete transitions. Disabling smooth scrolling makes scroll operations immediate; disabling particles removes decorative completion particles. These choices do not remove static working, success or failure feedback.
+
+Reset All Settings asks for confirmation and writes the defaults atomically before changing the live preferences. It resets language, theme, font, density, shortcuts and the default save location as well as the visible options. It does not delete attendance files, autosave files or backups. A failed reset preserves the previous settings.
+
+Save, export, backup and reset show non-modal task feedback. Visible action buttons provide completion feedback after successful work; menu commands use a separate notice. Slow operations show a spinner after 150 ms. Failed and cancelled operations never show a success check. A successfully saved workbook can still produce a warning if old recovery data could not be cleaned up.
+
+Import temporarily disables document-changing controls until validated data can replace the workbook; a failed import keeps the existing data. Save uses a captured revision: edits made during a save remain unsaved after that older snapshot finishes. Wait for document file operations to finish before closing. Reports capture course, language and statistics period at the time they are requested.
 
 Default shortcuts: Ctrl+S Save, Ctrl+O Import, Ctrl+Z Undo, Ctrl+Y Redo, Ctrl+K command palette, F11 fullscreen. Tools > Shortcut center changes them.
 

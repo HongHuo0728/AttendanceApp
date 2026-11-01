@@ -14,6 +14,8 @@ struct DocumentState {
     bool allowAutosaveOverwrite = true;
     bool autosaveFailurePending = false;
     bool dirty = false;
+    bool loading = false, saving = false;
+    uint64_t generation = 0;
     std::wstring filterText;
     std::wstring lessonFilter;
     std::wstring currentFile;

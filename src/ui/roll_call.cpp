@@ -1,3 +1,4 @@
+#include "ui/motion.h"
 #include "core/status.h"
 #include "ui/roll_call.h"
 #include "model/workbook.h"
@@ -249,6 +250,7 @@ LRESULT CALLBACK QuickRollCallProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             Tr(L"Keys 1-6: Present, Absent, Late, Other, Leave, Pending; arrows: Previous / Skip",L"数字键1至6选择六种状态，方向键上一位或跳过").c_str(),
             SS_CENTER | SS_NOPREFIX | SS_ENDELLIPSIS, IDC_QUICK_HINT);
 
+        EnableStableDigits(GetDlgItem(hwnd,IDC_QUICK_PROGRESS));
         SendMessageW(GetDlgItem(hwnd, IDC_QUICK_TITLE), WM_SETFONT, (WPARAM)Ui().titleFont, TRUE);
         SendMessageW(GetDlgItem(hwnd, IDC_QUICK_STUDENT), WM_SETFONT, (WPARAM)Ui().titleFont, TRUE);
         SendMessageW(GetDlgItem(hwnd, IDC_QUICK_HINT), WM_SETFONT, (WPARAM)Ui().smallFont, TRUE);

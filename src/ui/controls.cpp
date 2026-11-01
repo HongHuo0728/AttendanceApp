@@ -1,3 +1,4 @@
+#include "ui/motion.h"
 #include "ui/settings_window.h"
 #include "ui/controls.h"
 #include "ui/common.h"
@@ -204,6 +205,7 @@ HWND MakeControl(const wchar_t* cls, const wchar_t* text, DWORD style, int id){
         Ui().hwnd, (HMENU)(intptr_t)id, GetModuleHandleW(nullptr), nullptr
     );
     SendMessageW(hwnd, WM_SETFONT, (WPARAM)Ui().font, TRUE);
+    if(id==IDC_TITLE||id==IDC_SUBTITLE||id==IDC_SETTINGS_TITLE)EnableBalancedTitle(hwnd);
     if (lstrcmpiW(cls, L"EDIT") == 0) {
         SendMessageW(hwnd, EM_SETLIMITTEXT, MAX_RECORD_FIELD_BYTES / sizeof(wchar_t), 0);
     }
@@ -235,6 +237,7 @@ HWND MakeSettingsControl(HWND parent, const wchar_t* cls, const wchar_t* text, D
         parent, (HMENU)(intptr_t)id, GetModuleHandleW(nullptr), nullptr
     );
     SendMessageW(hwnd, WM_SETFONT, (WPARAM)Ui().font, TRUE);
+    if(id==IDC_TITLE||id==IDC_SUBTITLE||id==IDC_SETTINGS_TITLE)EnableBalancedTitle(hwnd);
     if (lstrcmpiW(cls, L"EDIT") == 0) {
         SendMessageW(hwnd, EM_SETLIMITTEXT, MAX_RECORD_FIELD_BYTES / sizeof(wchar_t), 0);
     }

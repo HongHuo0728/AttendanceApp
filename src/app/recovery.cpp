@@ -1,3 +1,7 @@
+#include "ui/state.h"
+#include <memory>
+#include "reports/jobs.h"
+#include "ui/feedback.h"
 #include "storage/backup_policy.h"
 #include "ui/choice.h"
 #include "app/recovery.h"
@@ -117,32 +121,28 @@ bool ArchiveExistingAutosaveForReplacement(){
 }
 
 void BackupNow(){
+    if(Document().loading||Document().saving)return;
     SyncActiveSheet();
-    WorkbookValidationIssue issue = ValidateWorkbookModel(Document().sheets);
-    if (issue != WorkbookValidationIssue::None) {
-        ShowWorkbookValidationError(issue);
-        return;
-    }
-    auto path = LatestBackupPath();
-    if (path.empty()) return;
-    std::string payload;
-    if (!EncodeCurrentWorkbook(payload)) return;
-    auto capacityDir=BackupDirectoryPath();
-    if(capacityDir.empty()||!ReserveBackupSpace(capacityDir,payload.size(),true)){ShowMessage(Tr(L"Backup storage is full. Export or clean ordinary backups; the existing recovery file is preserved.",L"备份空间已满，请导出或清理普通备份；现有恢复文件已保留。"));return;}
-    if (!WriteBinaryFileAtomically(path, payload)) {
-        ShowMessage(Tr(L"Could not save the file.", L"\u65e0\u6cd5\u4fdd\u5b58\u6587\u4ef6\u3002"));
-        return;
-    }
-
-    auto backupDir = BackupDirectoryPath();
-    std::filesystem::path timestamped;
-    if (!backupDir.empty()) {
-        timestamped = backupDir / (L"backup-" + TimestampForFileName() + L".attd");
-        if (!WriteBinaryFileAtomically(timestamped, payload)) timestamped.clear();
-    }
-    std::wstring message = Tr(L"Backup created:", L"\u5907\u4efd\u5df2\u521b\u5efa\uff1a") + L"\n" + path.wstring();
-    if (!timestamped.empty()) message += L"\n" + timestamped.wstring();
-    ShowMessage(message);
+    auto issue=ValidateWorkbookModel(Document().sheets);
+    if(issue!=WorkbookValidationIssue::None){ShowWorkbookValidationError(issue);return;}
+    auto path=LatestBackupPath(),directory=BackupDirectoryPath();if(path.empty()||directory.empty())return;
+    auto history=directory/(L"backup-"+TimestampForFileName()+L".attd");
+    auto sheets=std::make_shared<const std::vector<AttendanceSheet>>(Document().sheets);int active=Document().activeSheet;
+    Document().saving=true;
+    auto operation=BeginOperation(nullptr,Tr(L"Backup now",L"立即备份"));
+    auto historyWritten=std::make_shared<bool>(false);
+    auto complete=[operation,historyWritten](bool saved){
+        Document().saving=false;
+        FinishOperation(operation,saved?(*historyWritten?OperationPhase::Success:OperationPhase::Warning):OperationPhase::Failure,
+            !saved?Tr(L"Operation failed. Existing files were preserved.",L"操作失败，已保留原文件。"):
+            *historyWritten?Tr(L"Completed successfully.",L"操作已完成。"):
+            Tr(L"Latest backup saved; history copy failed.",L"最新备份已保存，历史副本创建失败。"));
+    };
+    if(!QueueReport(Ui().hwnd,[path,directory,history,sheets,active,historyWritten]{
+        std::string payload;
+        if(!EncodeWorkbookData(*sheets,active,payload)||!ReserveBackupSpace(directory,payload.size(),true)||!WriteBinaryFileAtomically(path,payload))return false;
+        *historyWritten=WriteBinaryFileAtomically(history,payload);return true;
+    },complete))complete(false);
 }
 
 void RestoreLatestBackup(){
@@ -194,7 +194,7 @@ bool PreserveIgnoredAutosave(){
 }
 
 AutosaveResult AutoSaveNow(){
-    if (!Document().dirty || Document().autosavedRevision == Document().revision) return AutosaveResult::Skipped;
+    if (Document().loading || !Document().dirty || Document().autosavedRevision == Document().revision) return AutosaveResult::Skipped;
     if (!PreserveIgnoredAutosave()) {
         Document().autosaveFailurePending = true;
         return AutosaveResult::Failed;

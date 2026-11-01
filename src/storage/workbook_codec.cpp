@@ -187,7 +187,13 @@ std::string SerializeWorkbookData(const std::vector<AttendanceSheet>& sheets,int
 
 std::string SerializeWorkbook(){SyncActiveSheet();return SerializeWorkbookData(Document().sheets,Document().activeSheet);}
 
-bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceSheet>& output){
+bool DeserializeWorkbook(const std::string& text,std::vector<AttendanceSheet>& output){
+    int active=0;
+    if(!DeserializeWorkbookData(text,output,active))return false;
+    Document().loadedActiveSheet=active;return true;
+}
+
+bool DeserializeWorkbookData(const std::string& plainText, std::vector<AttendanceSheet>& output, int& active){
     if (plainText.size() > MAX_ATTD_DECODED_BYTES) return false;
     ReadOnlyBuffer buffer(plainText);
     std::istream ss(&buffer);
@@ -198,7 +204,7 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
         std::vector<AttendanceRecord> records;
         if (!DeserializeRecords(plainText, records)) return false;
         output = {MakeSheet(L"Default Course", std::move(records))};
-        Document().loadedActiveSheet = 0;
+        active = 0;
         return true;
     }
     if (header != "ATTENDANCE_V2" && header != "ATTENDANCE_V3" && header != "ATTENDANCE_V4" && header != "ATTENDANCE_V5" && header != "ATTENDANCE_V6") return false;
@@ -282,7 +288,7 @@ bool DeserializeWorkbook(const std::string& plainText, std::vector<AttendanceShe
     if (sheets.empty()) sheets.push_back(MakeSheet(L"Default Course"));
     if (loadedActiveSheet < 0 || loadedActiveSheet >= static_cast<int>(sheets.size())) return false;
     output = std::move(sheets);
-    Document().loadedActiveSheet = loadedActiveSheet;
+    active = loadedActiveSheet;
     return true;
 }
 

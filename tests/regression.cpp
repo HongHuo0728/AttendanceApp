@@ -116,6 +116,36 @@ void TestBackgroundReports(const std::filesystem::path& dir) {
         ++completed;
     }), "queue failing report");
     Check(pumpUntil(5) && resultsValid, "report failure reaches UI without success");
+    HWND retired=CreateWindowExW(0,wc.lpszClassName,L"",0,0,0,0,0,HWND_MESSAGE,nullptr,wc.hInstance,nullptr);
+    if(!retired)throw std::runtime_error("retired report owner fixture creation failed");
+    int retiredCallbacks=0;
+    Check(QueueReport(retired,[]{return true;},[&](bool){++retiredCallbacks;}),"queue retired owner");
+    DestroyWindow(retired);
+    Check(QueueReport(hwnd,[]{return true;},[&](bool success){resultsValid=resultsValid&&success;++completed;}),"queue surviving owner");
+    Check(pumpUntil(6) && retiredCallbacks==0 && resultsValid,"completion targets its original living window only");
+    HWND previousMain=Ui().hwnd;Ui().hwnd=hwnd;
+    auto pumpLoad=[&]{
+        auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+        while(Document().loading && std::chrono::steady_clock::now()<deadline){
+            MsgWaitForMultipleObjects(0,nullptr,FALSE,10,QS_ALLINPUT);MSG message{};
+            while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE))DispatchMessageW(&message);
+            DispatchReportCompletions();
+        }
+        return !Document().loading;
+    };
+    std::string importBytes;std::vector<AttendanceSheet> importSheets={MakeSheet(L"Import one"),MakeSheet(L"Import two")};
+    Check(EncodeWorkbookData(importSheets,1,importBytes) && WriteBinaryFileAtomically(dir/L"async-import.attd",importBytes),"asynchronous import fixture");
+    Check(BeginLoadAttendanceFile((dir/L"async-import.attd").wstring(),AttendanceLoadIntent::OpenFile) && Document().loading,"import sets a busy state before file work");
+    Check(pumpLoad() && Document().sheets.size()==2 && Document().activeSheet==1 && !Document().dirty,"worker import commits one complete validated workbook");
+    auto before=SerializeWorkbook();
+    Check(WriteBinaryFileAtomically(dir/L"invalid-import.attd","invalid"),"corrupt import fixture");
+    Check(BeginLoadAttendanceFile((dir/L"invalid-import.attd").wstring(),AttendanceLoadIntent::OpenFile),"queue invalid import");
+    Check(pumpLoad() && SerializeWorkbook()==before,"failed asynchronous import retains current workbook");
+    for(int task=0;task<2;++task)Check(QueueReport(hwnd,[]{Sleep(200);return true;},[&](bool){++completed;}),"fill queue for import rejection");
+    auto busyBefore=SerializeWorkbook();
+    Check(!BeginLoadAttendanceFile((dir/L"async-import.attd").wstring(),AttendanceLoadIntent::OpenFile) && !Document().loading && SerializeWorkbook()==busyBefore,"full queue restores import state without changing data");
+    Check(pumpUntil(8),"queued operations finish after import rejection");
+    StopOperationFeedback();Ui().hwnd=previousMain;
     int shutdownCallbacks = 0;
     Check(QueueReport(hwnd, [dir] { return WriteBinaryFileAtomically(dir / L"exit-report.txt", "complete"); },
         [&](bool) { ++shutdownCallbacks; }), "queue report before shutdown");
@@ -243,6 +273,36 @@ void Test210(const std::filesystem::path& dir){
  Check(!ReserveBackupSpace(backups,1,false,20,3)&&FileExistsNoThrow(backups/L"autosave-protected-1.attd"),"protected capacity failure preserves recovery");
  reset();Settings().advancedFilterEnabled=true;
 }
+void Test211(const std::filesystem::path& dir){
+    auto original=CaptureSettings();SettingsSnapshot custom=original;
+    custom.theme=UiTheme::Light;custom.autosaveIntervalSeconds=300;custom.scrollAnimationFps=240;
+    Check(WriteSettingsSnapshot(custom),"persist settings fixture");ApplySettingsSnapshot(custom);
+    auto path=SettingsFilePath(),kept=dir/L"settings-kept.ini";
+    std::filesystem::rename(path,kept);std::filesystem::create_directory(path);
+    Check(!ResetSettings() && Settings().theme==UiTheme::Light && Settings().scrollAnimationFps==240,"reset failure preserves live preferences");
+    std::filesystem::remove(path);std::filesystem::rename(kept,path);
+    Check(ResetSettings(),"atomic reset succeeds");
+    Settings().theme=UiTheme::Light;LoadSettings();
+    Check(Settings().theme==UiTheme::Dark && Settings().autosaveIntervalSeconds==30 && Settings().scrollAnimationFps==60,"reset persists across settings reload");
+    Document()=DocumentState{};Document().sheets={MakeSheet(L"One"),MakeSheet(L"Two")};
+    Document().loadedActiveSheet=91;std::vector<AttendanceSheet> decoded;int active=-1;
+    Check(DeserializeWorkbookData(SerializeWorkbookData(Document().sheets,1),decoded,active) && active==1 && Document().loadedActiveSheet==91,"worker decoder does not mutate document selection");
+    Document().dirty=true;Document().revision=12;Document().generation=3;
+    Check(FinishSavedSnapshot((dir/L"saved.attd").wstring(),3,11) && Document().dirty,"older saved snapshot keeps newer changes dirty");
+    auto current=Document().currentFile;
+    Check(!FinishSavedSnapshot((dir/L"wrong.attd").wstring(),2,12) && Document().currentFile==current,"late save cannot relabel a different document");
+    RECT middle=PaperViewport(240,300,.5,false),up=PaperViewport(240,300,.5,true);
+    Check(middle.bottom==150 && up.top==150 && up.bottom==300,"paper viewport follows opening direction");
+    Check(ItemEntrance(0,0)==0 && ItemEntrance(1,6)==1 && ItemEntrance(.2,0)>ItemEntrance(.2,3),"item motion has bounded staggered start and completion");
+    double previous=0;
+    for(int i=0;i<=100;++i){double value=CubicBezierEase(i/100.0,.22,1,.36,1);Check(value>=previous-1e-8 && value<=1,"paper easing stays monotonic without bounce");previous=value;}
+    auto operation=BeginOperation(nullptr,L"test");
+    FinishOperation(operation,OperationPhase::Failure,L"failed");
+    FinishOperation(operation,OperationPhase::Success,L"wrong");
+    Check(OperationStatus(operation)==OperationPhase::Failure,"failed task cannot later report success");StopOperationFeedback();
+    ApplySettingsSnapshot(original);
+}
+
 int wmain(int argc, wchar_t** argv) {
     try {
         Check(argc == 2, "isolated data directory required");
@@ -250,6 +310,7 @@ int wmain(int argc, wchar_t** argv) {
         std::filesystem::create_directories(dir);
         SetEnvironmentVariableW(L"ATTENDANCEAPP_DATA_DIR", dir.c_str());
         Test210(dir);
+        Test211(dir);
         TestUiRedraw();
         Check(RunParserRegressionChecks(), "existing parser regression");
         for (int version = 1; version <= 6; ++version) {

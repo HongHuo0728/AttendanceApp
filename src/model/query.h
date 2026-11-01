@@ -6,6 +6,7 @@ namespace attendance {
 
 std::wstring TodayDateKey();
 bool DateWithinCalendarWeek(const std::wstring& date, const std::wstring& today);
+bool RecordMatchesRangeAt(const AttendanceRecord& record,StatsRange range,const std::wstring& today);
 bool RecordMatchesStatsRange(const AttendanceRecord& record);
 bool RecordMatchesFilter(const AttendanceRecord& record);
 int VisibleToRecordIndex(int visibleIndex);

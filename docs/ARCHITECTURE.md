@@ -44,3 +44,14 @@ VERSION is the numeric version source. CMake and the direct MSVC generator deriv
 catalog.json is the editable translation source. Node regenerates catalog_data.h; --check performs no rewrite. Hong Kong vocabulary is also maintained in the independent zh_hk_strings.h dictionary. New feature phrases and the unified-settings appearance options are supplied for all 20 languages; missing legacy phrases use English outside Simplified Chinese; linguistic/visual review coverage is recorded separately from mechanical key coverage.
 
 See [Testing and storage](TESTING_AND_STORAGE.md) for generated-file ownership, budgets and cleanup, and [the 2.1.0 audit](V2.1.0_AUDIT.md) for actual validation.
+
+
+## 2.1.1 LTS maintenance
+
+Settings keeps native controls directly parented to the settings window. Content controls are clipped to a measured viewport, while the title, persistence warning and footer remain fixed. Layout uses actual translated text metrics. Cached hide/show and temporary-popup destruction have separate lifecycles.
+
+Shared motion helpers define cubic Bezier curves, rounded surfaces, paper clipping, 20 ms item staggering and stable-width numeric drawing. Native ComboBox/ListBox selection semantics are retained. A single bounded, input-transparent exit surface lets a native dropdown close decoratively after selection is already committed.
+
+Operation feedback has per-operation IDs and working/success/warning/failure/cancelled states. Working indicators appear after 150 ms; a success result alone enables the completion check. Windows and painting are handled on the UI thread.
+
+Document save/import and backup writes use the bounded worker queue. The UI owns document mutation and revision checks; workers own immutable payloads. The pure workbook decoder returns its active-course index instead of modifying Document. Background report rendering uses a scoped thread-local translation language and captured date/range/template values rather than the live settings. Each queued completion retains its original window and a window-generation token; retired windows do not receive callbacks.

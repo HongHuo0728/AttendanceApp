@@ -1,3 +1,4 @@
+#include "ui/feedback.h"
 #include "model/query.h"
 #include "core/status.h"
 #include "reports/html.h"
@@ -71,11 +72,7 @@ std::function<bool()> PrepareHtmlExport(const std::wstring& path) {
     SyncActiveSheet();
     HtmlReport report;
     report.sheet = Document().sheets[Document().activeSheet];
-    report.sheet.records.erase(std::remove_if(report.sheet.records.begin(),report.sheet.records.end(),[](const auto& r){return !RecordMatchesStatsRange(r);}),report.sheet.records.end());
-    auto stats=CountRecords(report.sheet.records);
-    report.summary=StatsRangeName(Document().statsRange)+L" | "+Tr(L"Attendance",L"出勤率")+L": "+AttendanceRateText(stats);
-    const int counts[]={stats.present,stats.absent,stats.late,stats.other,stats.leave,stats.pending};
-    for(size_t i=0;i<StatusKeys.size();++i)report.summary+=L" | "+StatusDisplayText(StatusKeys[i])+L": "+std::to_wstring(counts[i]);
+    auto range=Document().statsRange;auto today=TodayDateKey();auto language=Settings().language;
     report.reportTemplate = Settings().reportTemplate;
     report.columns = {Tr(L"Date/Time", L"\u65e5\u671f\u65f6\u95f4"), Tr(L"Name", L"\u59d3\u540d"),
         Tr(L"Status", L"\u72b6\u6001"), Tr(L"Other", L"\u5176\u4ed6")};
@@ -86,15 +83,25 @@ std::function<bool()> PrepareHtmlExport(const std::wstring& path) {
         Tr(L"Report template", L"\u62a5\u544a\u6a21\u677f"), ReportTemplateName(report.reportTemplate),
         Tr(L"Teacher/owner:", L"\u6559\u5e08/\u8d1f\u8d23\u4eba\uff1a"), Tr(L"Location:", L"\u5730\u70b9\uff1a"),
         Tr(L"Course notes:", L"\u8bfe\u7a0b\u5907\u6ce8\uff1a"), Tr(L"Manage students", L"\u7ba1\u7406\u5b66\u751f")};
-    return [path, report = std::move(report)] { return WriteHtmlReport(path, report); };
+    return [path,range,today,language,report=std::move(report)]() mutable {
+        TranslationScope translation(language);
+        report.sheet.records.erase(std::remove_if(report.sheet.records.begin(),report.sheet.records.end(),[&](const auto& record){return !RecordMatchesRangeAt(record,range,today);}),report.sheet.records.end());
+        PptStats stats;for(const auto& record:report.sheet.records)AccumulateStatus(stats,record.status);
+        report.summary=StatsRangeName(range)+L" | "+Tr(L"Attendance",L"出勤率")+L": "+AttendanceRateText(stats);
+        const int counts[]={stats.present,stats.absent,stats.late,stats.other,stats.leave,stats.pending};
+        for(size_t i=0;i<StatusKeys.size();++i)report.summary+=L" | "+StatusDisplayText(StatusKeys[i])+L": "+std::to_wstring(counts[i]);
+        return WriteHtmlReport(path,report);
+    };
 }
 
 void ExportPrintHtml() {
     std::wstring path = SaveHtmlFileDialog();
     if (path.empty()) return;
-    auto complete = [path](bool exported) {
-        if (exported) ShellExecuteW(Ui().hwnd, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-        else ShowMessage(Tr(L"Could not export the print file.", L"\u65e0\u6cd5\u5bfc\u51fa\u6253\u5370\u6587\u4ef6\u3002"));
+    auto operation=BeginOperation(nullptr,L"HTML/PDF");
+    auto complete = [operation,path](bool exported) {
+        FinishOperation(operation,exported?OperationPhase::Success:OperationPhase::Failure,
+            exported?Tr(L"Completed successfully.",L"操作已完成。"):Tr(L"Operation failed. Existing files were preserved.",L"操作失败，已保留原文件。"));
+        if(exported)ShellExecuteW(Ui().hwnd,L"open",path.c_str(),nullptr,nullptr,SW_SHOWNORMAL);
     };
     if (!QueuePreparedReport(Ui().hwnd, [path] { return PrepareHtmlExport(path); }, complete)) {
         complete(false);

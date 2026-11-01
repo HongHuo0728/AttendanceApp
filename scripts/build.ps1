@@ -5,6 +5,15 @@ $before=Get-TreeSnapshot $build;$peak=$before.Bytes
 try {
  if((Get-GeneratedBytes) -ge 512MB){& (Join-Path $PSScriptRoot 'clean.ps1') -Mode Intermediates -Execute}
  if(-not $Direct -and (Get-Command cmake.exe -ErrorAction SilentlyContinue)){
+  $cache=Join-Path $build 'CMakeCache.txt'
+  if(Test-Path -LiteralPath $cache){
+   $oldRoot=Get-Content -LiteralPath $cache|Where-Object {$_ -like 'CMAKE_HOME_DIRECTORY:INTERNAL=*'}|Select-Object -First 1
+   if($oldRoot -and [IO.Path]::GetFullPath($oldRoot.Substring($oldRoot.IndexOf('=')+1)) -ne $script:ProjectRoot){
+    Write-Output 'Project moved: removing the old generated CMake configuration.'
+    Remove-ManagedTree (Join-Path $build 'CMakeFiles')
+    Remove-Item -LiteralPath (Assert-ManagedPath $cache) -Force
+   }
+  }
   $testing=if($Tests){'ON'}else{'OFF'}
   $peak=[Math]::Max($peak,(Invoke-BoundedProcess cmake.exe @('-S',$script:ProjectRoot,'-B',$build,'-A','x64',('-DBUILD_TESTING='+$testing)) (Join-Path $build 'configure')))
   $target=if($Tests){'AttendanceApp','AttendanceTests'}else{,'AttendanceApp'}

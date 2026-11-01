@@ -84,12 +84,15 @@ bool DateWithinCurrentMonth(const std::wstring& date){
     return date.substr(0, 7) == today.substr(0, 7);
 }
 
+bool RecordMatchesRangeAt(const AttendanceRecord& record,StatsRange range,const std::wstring& today){
+    if(range==StatsRange::All)return true;
+    auto date=RecordDateKey(record);FILETIME checked{};
+    if(!DateKeyToFileTime(date,checked))return false;
+    if(range==StatsRange::ThisWeek)return DateWithinCalendarWeek(date,today);
+    return date.substr(0,7)==today.substr(0,7);
+}
 bool RecordMatchesStatsRange(const AttendanceRecord& record){
-    if (Document().statsRange == StatsRange::All) return true;
-    std::wstring date = RecordDateKey(record);
-    if (Document().statsRange == StatsRange::ThisWeek) return DateWithinCalendarWeek(date, TodayDateKey());
-    if (Document().statsRange == StatsRange::ThisMonth) return DateWithinCurrentMonth(date);
-    return true;
+    return RecordMatchesRangeAt(record,Document().statsRange,TodayDateKey());
 }
 
 std::vector<std::wstring> SplitWords(const std::wstring& text){

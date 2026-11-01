@@ -1,3 +1,5 @@
+#include "ui/feedback.h"
+#include "ui/motion.h"
 #include "ui/redraw.h"
 #include "ui/drawing.h"
 #include "settings/toggles.h"
@@ -86,7 +88,7 @@ bool DrawParticleToggleItem(const DRAWITEMSTRUCT* draw){
     SetBkMode(draw->hDC, TRANSPARENT);
     SetTextColor(draw->hDC, Ui().COLOR_TEXT);
     HGDIOBJ oldFont = SelectObject(draw->hDC, Ui().font);
-    DrawTextW(draw->hDC, text, -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    DrawTextW(draw->hDC, text, -1, &textRc, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
     SelectObject(draw->hDC, oldFont);
     return true;
 }
@@ -98,6 +100,7 @@ bool DrawButtonItem(const DRAWITEMSTRUCT* draw){
     buffered.hDC = buffer.DC();
     draw = &buffered;
 
+    if(DrawOperationButton(draw)) return true;
     wchar_t text[128]{};
     GetWindowTextW(draw->hwndItem, text, 128);
     bool pressedState = (draw->itemState & ODS_SELECTED) != 0;
@@ -110,7 +113,7 @@ bool DrawButtonItem(const DRAWITEMSTRUCT* draw){
     COLORREF buttonText = BlendColor(Ui().COLOR_MUTED, Ui().COLOR_TEXT, std::clamp(0.45 + hover * 0.55, 0.0, 1.0));
 
     bool isDanger = draw->CtlID == IDC_DELETE || draw->CtlID == IDC_SETTINGS_RESET;
-    bool isGreen = draw->CtlID == IDC_PRESENT || draw->CtlID == IDC_SAVE || draw->CtlID == IDC_ALL_PRESENT || draw->CtlID == IDC_SETTINGS_APPLY;
+    bool isGreen = draw->CtlID == IDC_PRESENT || draw->CtlID == IDC_SAVE || draw->CtlID == IDC_ALL_PRESENT;
     bool isBlue = draw->CtlID == IDC_IMPORT || draw->CtlID == IDC_NEW || draw->CtlID == IDC_EXPORT_CSV;
 
     if (isDanger) {
@@ -140,23 +143,20 @@ bool DrawButtonItem(const DRAWITEMSTRUCT* draw){
     HGDIOBJ oldBrush = SelectObject(draw->hDC, GetStockObject(DC_BRUSH));
     SetDCPenColor(draw->hDC, border);
     SetDCBrushColor(draw->hDC, fill);
-    RoundRect(draw->hDC, buttonRc.left, buttonRc.top, buttonRc.right, buttonRc.bottom, 6, 6);
+    RoundRect(draw->hDC, buttonRc.left, buttonRc.top, buttonRc.right, buttonRc.bottom, Visual::ControlRadius*2, Visual::ControlRadius*2);
     SelectObject(draw->hDC, oldBrush);
     SelectObject(draw->hDC, oldPen);
-
-    int r = std::max(buttonRc.left, buttonRc.right - 1);
-    int b = std::max(buttonRc.top, buttonRc.bottom - 1);
-    SetPixel(draw->hDC, buttonRc.left, buttonRc.top, border);
-    SetPixel(draw->hDC, r, buttonRc.top, border);
-    SetPixel(draw->hDC, buttonRc.left, b, border);
-    SetPixel(draw->hDC, r, b, border);
 
     DrawButtonEffects(draw, buttonRc, fill);
 
     SetBkMode(draw->hDC, TRANSPARENT);
     SetTextColor(draw->hDC, buttonText);
     HGDIOBJ oldFont = Ui().font ? SelectObject(draw->hDC, Ui().font) : nullptr;
-    DrawTextW(draw->hDC, text, -1, &buttonRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    RECT textRc=buttonRc;InflateRect(&textRc,-12,-6);
+    RECT measured{0,0,std::max(1,(int)(textRc.right-textRc.left)),0};
+    DrawTextW(draw->hDC,text,-1,&measured,DT_CALCRECT|DT_CENTER|DT_WORDBREAK|DT_NOPREFIX);
+    textRc.top=std::max(textRc.top,(textRc.top+textRc.bottom-(int)measured.bottom)/2);
+    DrawTextW(draw->hDC,text,-1,&textRc,DT_CENTER|DT_WORDBREAK|DT_NOPREFIX);
     if (oldFont) SelectObject(draw->hDC, oldFont);
     return true;
 }
@@ -176,7 +176,7 @@ bool DrawComboItem(const DRAWITEMSTRUCT* draw){
     }
     bool selected = (draw->itemState & ODS_SELECTED) != 0;
     double open = GetAnimationValue(draw->hwndItem, AnimChannel::ComboOpen, 1.0);
-    double itemProgress = ElasticOut(std::clamp((open - (double)std::min<UINT>(draw->itemID, 10) * 0.075) / 0.55, 0.0, 1.0));
+    double itemProgress = ItemEntrance(open,(int)draw->itemID);
     COLORREF rowFill = selected ? Ui().COLOR_SELECTED : Ui().COLOR_INPUT;
     COLORREF fill = BlendColor(Ui().COLOR_BG, rowFill, itemProgress);
     COLORREF textColor = BlendColor(Ui().COLOR_MUTED, Ui().COLOR_TEXT, itemProgress);
@@ -419,17 +419,19 @@ LRESULT CALLBACK StatsPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             labelRc.left += 18;
             labelRc.top += 14;
             labelRc.right -= 18;
-            labelRc.bottom = labelRc.top + 24;
-            SetTextColor(hdc, Ui().COLOR_MUTED);
-            DrawTextW(hdc, label.c_str(), -1, &labelRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            RECT measured{0,0,labelRc.right-labelRc.left,0};
+            DrawTextW(hdc,label.c_str(),-1,&measured,DT_CALCRECT|DT_WORDBREAK|DT_NOPREFIX);
+            labelRc.bottom=labelRc.top+measured.bottom;
+            SetTextColor(hdc,Ui().COLOR_MUTED);
+            DrawTextW(hdc,label.c_str(),-1,&labelRc,DT_LEFT|DT_WORDBREAK|DT_NOPREFIX);
 
             RECT valueRc = cardRc;
             valueRc.left += 18;
-            valueRc.top += 40;
+            valueRc.top=labelRc.bottom+8;
             valueRc.right -= 18;
             valueRc.bottom -= 10;
             SetTextColor(hdc, Ui().COLOR_TEXT);
-            DrawTextW(hdc, value.c_str(), -1, &valueRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            DrawStableDigits(hdc,value,valueRc,DT_LEFT);
             SelectObject(hdc, oldFont);
             buffer.Commit();
         EndPaint(hwnd, &ps);

@@ -45,14 +45,23 @@ Tests override ATTENDANCEAPP_DATA_DIR; real AppData is not read or changed. Star
 
 Every mode previews by default. Legacy targets only the explicitly listed old snapshots/caches. Intermediates removes reproducible compiler/library caches while retaining the application. All removes build and the listed legacy/cache directories. Execute is required for deletion. Paths must stay inside the project and every traversed component must be free of reparse points. Root source folders and real AppData are not targets.
 
-Historical snapshots were removed by explicit request. The local .git directory was empty; this project does not currently provide Git recovery for them. Repeated source-directory backup copies are not part of the new workflow.
+Historical snapshots were removed by explicit request. The local .git directory was empty at the original cleanup. The migrated LTS checkout now tracks the 2.1LTS branch; the deleted historical snapshots were not recreated. Repeated source-directory backup copies are not part of the new workflow.
 
 ## Native UI regression coverage
 
-The ordinary small regression executable also creates disposable off-screen Win32 fixtures and in-memory paint surfaces. It verifies the active native list control DLL is version 6 or later and checks Apply-time language refresh, hidden layout geometry, nested redraw ownership, hidden settings creation/language refresh, unchanged text, edit border invalidation, buffered pixel presentation, narrow/wide control bounds, bottom actions, tab order, focus scrolling and theme changes without combo rebuild/window moves. These checks run under the same isolated data root and create no screenshots, video or large output files. They verify messages/geometry and do not establish that every visible desktop frame is flicker-free. Actual Computer Use access and visual/DPI checks are recorded separately in the audit.
+The ordinary small regression executable also creates disposable off-screen Win32 fixtures and in-memory paint surfaces. It verifies the active native list control DLL is version 6 or later and checks immediate language refresh, hidden layout geometry, nested redraw ownership, hidden settings creation/language refresh, unchanged text, edit border invalidation, buffered pixel presentation, narrow/wide control bounds, fixed footer actions, 30 cached open/close cycles, all-language layout measurements, tab order, focus scrolling and theme changes without combo rebuild/window moves. These checks run under the same isolated data root and create no screenshots, video or large output files. They verify messages/geometry and do not establish that every visible desktop frame is flicker-free. Actual Computer Use access and visual/DPI checks are recorded separately in the audit.
 
 ## Validation and packaging
 
-verify_release.ps1 checks the current VERSION and executable metadata, built-in parser checks and local include architecture. check_localization.mjs checks 31 feature keys and 23 settings keys across all 20 languages, plus Hong Kong call-site keys; it requires Node only for development. package_release.ps1 creates a versioned ZIP containing the app, license, usage guide, small CSV example and optional association helper. It excludes object files, libraries, debug caches, tests and user data.
+verify_release.ps1 checks the current VERSION and executable metadata, built-in parser checks and local include architecture. check_localization.mjs checks 31 feature keys, 23 settings keys and 14 maintenance keys across all 20 languages, plus Hong Kong call-site keys; it requires Node only for development. package_release.ps1 creates a versioned ZIP containing the app, license, usage guide, small CSV example and optional association helper. It excludes object files, libraries, debug caches, tests and user data.
 
 Actual pass/fail results, before/after sizes and unavailable environments belong in [the current audit](V2.1.0_AUDIT.md), not inferred from historical results.
+
+
+## 2.1.1 validation
+
+The expanded suite checks atomic reset success and injected failure, scoped background decoding, captured-revision save completion, bounded cubic motion, all 20 settings languages with three text scales and three densities, hidden window lifecycle, and retired report owners. The all-language checks measure native geometry; they are not visual or linguistic acceptance. Windows scaling and frame-by-frame recording require separate desktop checks.
+
+Moving a source folder can leave a CMake cache pointing to its former location. The build wrapper removes only the current project's generated CMake configuration in that case, after the same path/link validation used by cleanup. It does not clean the former source folder.
+
+See [the 2.1.1 audit](V2.1.1_AUDIT.md) for results obtained for this version.

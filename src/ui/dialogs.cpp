@@ -156,6 +156,8 @@ LRESULT CALLBACK MessageDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         return 1;
     case WM_APP_ANIMATION_TICK:
         AcknowledgeAnimationTick(hwnd);
+        if(GetWindowLongPtrW(hwnd,GWL_EXSTYLE)&WS_EX_LAYERED)
+            SetLayeredWindowAttributes(hwnd,0,(BYTE)std::lround(255*(1-GetAnimationValue(hwnd,AnimChannel::Close,0))),LWA_ALPHA);
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     case WM_APP_ANIMATION_DONE:
@@ -338,6 +340,8 @@ LRESULT CALLBACK InputDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
     }
     case WM_APP_ANIMATION_TICK:
         AcknowledgeAnimationTick(hwnd);
+        if(GetWindowLongPtrW(hwnd,GWL_EXSTYLE)&WS_EX_LAYERED)
+            SetLayeredWindowAttributes(hwnd,0,(BYTE)std::lround(255*(1-GetAnimationValue(hwnd,AnimChannel::Close,0))),LWA_ALPHA);
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     case WM_APP_ANIMATION_DONE:

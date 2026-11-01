@@ -316,6 +316,7 @@ void BeginThemeTransition(UiTheme targetTheme){
         FinishThemeTransition();
         return;
     }
+    if(Settings().animationLevel==AnimationLevel::Off){FinishThemeTransition();return;}
     RestartAnimation(Ui().hwnd, AnimChannel::ThemeTransition, 1.0, 340);
 }
 

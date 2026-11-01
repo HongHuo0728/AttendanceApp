@@ -10,9 +10,11 @@ namespace {
 struct ReportJob {
     std::function<bool()> work;
     std::function<void(bool)> completion;
+    HWND owner=nullptr;UINT_PTR generation=0;
 };
 struct ReportResult {
     std::function<void(bool)> completion;
+    HWND owner=nullptr;UINT_PTR generation=0;
     bool success = false;
 };
 
@@ -32,7 +34,10 @@ public:
         if (stopping || outstanding >= 2) return false;
         try {
             if (!worker.joinable()) worker = std::thread([this] { Run(); });
-            owner = window;
+            job.owner=window;
+            auto token=(UINT_PTR)GetPropW(window,L"Attendance.ReportOwner");
+            if(!token){static UINT_PTR generation=0;token=++generation;if(!SetPropW(window,L"Attendance.ReportOwner",(HANDLE)token))return false;}
+            job.generation=token;
             pending.push_back(std::move(job));
             ++outstanding;
             wake.notify_one();
@@ -55,7 +60,7 @@ public:
         for (size_t i = 0; i < count; ++i) {
             {
                 std::lock_guard<std::mutex> lock(mutex);
-                if (stopping || !IsWindow(owner)) break;
+                if(stopping || !IsWindow(results[i].owner) || (UINT_PTR)GetPropW(results[i].owner,L"Attendance.ReportOwner")!=results[i].generation)continue;
             }
             results[i].completion(results[i].success);
         }
@@ -65,7 +70,6 @@ public:
         {
             std::lock_guard<std::mutex> lock(mutex);
             stopping = true;
-            owner = nullptr;
         }
         wake.notify_one();
         if (worker.joinable()) worker.join();
@@ -101,10 +105,10 @@ private:
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 if (!stopping && completedCount < completed.size()) {
-                    completed[completedCount++] = {std::move(job.completion), success};
+                    completed[completedCount++] = {std::move(job.completion), job.owner, job.generation, success};
                     ready.store(true, std::memory_order_release);
                     // The main loop also drains results if the posted-message queue is full.
-                    PostMessageW(owner, WM_APP_REPORT_READY, 0, 0);
+                    PostMessageW(job.owner, WM_APP_REPORT_READY, 0, 0);
                 }
             }
         }
@@ -117,7 +121,6 @@ private:
     size_t completedCount = 0;
     std::thread worker;
     std::atomic_bool ready{false};
-    HWND owner = nullptr;
     size_t outstanding = 0;
     bool stopping = false;
 };

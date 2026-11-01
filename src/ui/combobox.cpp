@@ -1,3 +1,5 @@
+#include "ui/popup_exit.h"
+#include "ui/motion.h"
 #include "ui/redraw.h"
 #include "ui/combobox.h"
 #include "animation/scheduler.h"
@@ -182,16 +184,13 @@ void PaintSmoothComboList(HWND list, HDC target, ComboListScrollState& state){
     int first = std::max(0, (int)std::floor(state.currentPx / itemHeight));
     int last = std::min(count - 1,
         (int)std::ceil((state.currentPx + height) / itemHeight));
-    double open = state.combo
-        ? GetAnimationValue(state.combo, AnimChannel::ComboOpen, 1.0) : 1.0;
 
     HGDIOBJ oldFont = Ui().font ? SelectObject(buffer, Ui().font) : nullptr;
     SetBkMode(buffer, TRANSPARENT);
     for (int index = first; index <= last; ++index) {
         int top = (int)std::lround(index * (double)itemHeight - state.currentPx);
         RECT itemRc{0, top, width, top + itemHeight};
-        double itemProgress = ElasticOut(std::clamp(
-            (open - (double)std::min(index - first, 10) * 0.075) / 0.55, 0.0, 1.0));
+        double itemProgress = ItemEntrance(GetAnimationValue(state.combo,AnimChannel::Items,1),index-first);
         COLORREF base = index == selected ? Ui().COLOR_SELECTED
             : index == state.hoverIndex ? Ui().COLOR_HOVER : Ui().COLOR_INPUT;
         SetDCBrushColor(buffer, BlendColor(Ui().COLOR_BG, base, itemProgress));
@@ -210,7 +209,7 @@ void PaintSmoothComboList(HWND list, HDC target, ComboListScrollState& state){
     HGDIOBJ oldPen = SelectObject(buffer, GetStockObject(DC_PEN));
     HGDIOBJ oldBrush = SelectObject(buffer, GetStockObject(HOLLOW_BRUSH));
     SetDCPenColor(buffer, Ui().COLOR_BORDER);
-    Rectangle(buffer, 0, 0, width, height);
+    RoundRect(buffer,0,0,width,height,Visual::PopupRadius*2,Visual::PopupRadius*2);
     SelectObject(buffer, oldBrush);
     SelectObject(buffer, oldPen);
 
@@ -246,7 +245,20 @@ LRESULT CALLBACK ComboListScrollProc(
         ReleaseComboListBuffer(state);
         InvalidateRect(hwnd, nullptr, FALSE);
         return DefSubclassProc(hwnd, msg, wParam, lParam);
+    case WM_SHOWWINDOW:
+        if(wParam){
+            StopPopupExit();
+            RECT listRect{},comboRect{};GetWindowRect(hwnd,&listRect);GetWindowRect(state.combo,&comboRect);
+            if(listRect.top<comboRect.top)SetPropW(hwnd,L"Attendance.PopupUp",(HANDLE)1);else RemovePropW(hwnd,L"Attendance.PopupUp");
+            RestartAnimation(state.combo,AnimChannel::ComboOpen,1,Visual::OpenMs);
+            RestartAnimation(state.combo,AnimChannel::Items,1,360);
+            ClipPaperWindow(hwnd,Settings().animationLevel==AnimationLevel::Off?1:0,GetPropW(hwnd,L"Attendance.PopupUp")!=nullptr);
+        }else if(state.bufferDc){
+            ShowPopupExit(hwnd,GetAncestor(state.combo,GA_ROOT),state.bufferDc,state.bufferWidth,state.bufferHeight,GetPropW(hwnd,L"Attendance.PopupUp")!=nullptr);
+        }
+        break;
     case WM_PAINT: {
+        ClipPaperWindow(hwnd,GetAnimationValue(state.combo,AnimChannel::ComboOpen,1),GetPropW(hwnd,L"Attendance.PopupUp")!=nullptr);
         PAINTSTRUCT ps{};
         HDC hdc = BeginPaint(hwnd, &ps);
         AdvanceComboListScroll(hwnd, state, AnimationNowMs());
@@ -261,7 +273,7 @@ LRESULT CALLBACK ComboListScrollProc(
         double pixelDelta = -(double)delta / WHEEL_DELTA
             * WheelScrollLineCount() * ComboListItemHeight(hwnd);
         AdvanceComboListScroll(hwnd, state, AnimationNowMs());
-        if (!Settings().smoothScrollingEnabled) {
+        if (!Settings().smoothScrollingEnabled || Settings().animationLevel==AnimationLevel::Off) {
             state.currentPx = std::clamp(state.currentPx + pixelDelta, 0.0, maximum);
             state.startPx = state.targetPx = state.currentPx;
             state.active = false;
@@ -301,7 +313,9 @@ LRESULT CALLBACK ComboListScrollProc(
         SetCapture(hwnd);
         return 0;
     case WM_LBUTTONUP: {
-        int index = ComboListIndexAtPoint(hwnd, state, GET_Y_LPARAM(lParam));
+        POINT point{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};RECT client{};GetClientRect(hwnd,&client);
+        RECT visible=PaperViewport(client.right,client.bottom,GetAnimationValue(state.combo,AnimChannel::ComboOpen,1),GetPropW(hwnd,L"Attendance.PopupUp")!=nullptr);
+        int index=PtInRect(&visible,point)?ComboListIndexAtPoint(hwnd,state,point.y):-1;
         ReleaseCapture();
         if (index >= 0) {
             PostMessageW(state.combo, WM_APP_COMMIT_COMBO_SELECTION,
@@ -347,7 +361,7 @@ LRESULT CALLBACK ComboListScrollProc(
                 state.targetPx, 0.0, ComboListMaxScrollPx(hwnd, state.combo));
             state.startPx = state.currentPx;
             state.startMs = AnimationNowMs();
-            state.durationMs = Settings().smoothScrollingEnabled ? 110 : 0;
+            state.durationMs = Settings().smoothScrollingEnabled && Settings().animationLevel!=AnimationLevel::Off ? 110 : 0;
             state.active = state.durationMs > 0
                 && std::abs(state.targetPx - state.startPx) >= 0.5;
             if (state.active) {
@@ -456,6 +470,7 @@ LRESULT CALLBACK ComboPaintProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         COMBOBOXINFO info{};
         info.cbSize = sizeof(info);
         if (GetComboBoxInfo(hwnd, &info) && info.hwndList && IsWindowVisible(info.hwndList)) {
+            ClipPaperWindow(info.hwndList,GetAnimationValue(hwnd,AnimChannel::ComboOpen,1),GetPropW(info.hwndList,L"Attendance.PopupUp")!=nullptr);
             RedrawWindow(info.hwndList, nullptr, nullptr, RDW_INVALIDATE | RDW_NOERASE);
         }
         return 0;

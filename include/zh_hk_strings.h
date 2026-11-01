@@ -10,6 +10,19 @@ struct HongKongTranslation {
 };
 
 inline constexpr HongKongTranslation kHongKongTranslations[] = {
+    {L"Retry", L"重試"},
+    {L"Settings not saved. Active for this session only.", L"設定未儲存，只會喺今次使用期間生效。"},
+    {L"Reset all settings? Attendance files will not be deleted.", L"重設所有設定？唔會刪除考勤檔案。"},
+    {L"Could not save the settings file. Existing settings were kept.", L"無法儲存設定檔，已保留原有設定。"},
+    {L"Settings reset successfully.", L"設定已重設。"},
+    {L"Loading fonts...", L"正在載入字型…"},
+    {L"Working...", L"正在處理…"},
+    {L"Completed successfully.", L"操作已完成。"},
+    {L"Operation failed. Existing files were preserved.", L"操作失敗，已保留原有檔案。"},
+    {L"File saved; recovery cleanup needs attention.", L"檔案已儲存，請檢查復原檔案清理。"},
+    {L"Import failed. Current attendance data was kept.", L"匯入失敗，已保留目前考勤資料。"},
+    {L"A file operation is still running. Please wait before closing.", L"檔案操作尚未完成，請稍後關閉。"},
+    {L"Latest backup saved; history copy failed.", L"最新備份已儲存，歷史副本建立失敗。"},
     {L"Leave", L"請假"},
     {L"Pending", L"未點名"},
     {L"Batch edit selected", L"批次編輯揀選記錄"},

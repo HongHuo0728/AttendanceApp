@@ -6,6 +6,11 @@
 #include "zh_hk_strings.h"
 
 namespace attendance {
+namespace { thread_local int reportLanguage=-1; }
+UiLanguage CurrentTranslationLanguage(){return reportLanguage<0?Settings().language:(UiLanguage)reportLanguage;}
+TranslationScope::TranslationScope(UiLanguage language):previous_(reportLanguage){reportLanguage=(int)language;}
+TranslationScope::~TranslationScope(){reportLanguage=previous_;}
+
 
 bool TranslateFeatureText(const std::wstring& key, std::wstring& out);
 bool TranslateAdditionalLanguage(const std::wstring& key, std::wstring& out);
@@ -37,7 +42,7 @@ const wchar_t* LanguageName(UiLanguage language){
 
 bool TranslateFeatureText(const std::wstring& key, std::wstring& out){
     const std::string lookupKey = WideToUtf8(key);
-    if (Settings().language == UiLanguage::English) return false;
+    if (CurrentTranslationLanguage() == UiLanguage::English) return false;
 
     
 
@@ -45,7 +50,7 @@ bool TranslateFeatureText(const std::wstring& key, std::wstring& out){
 
     for (const auto& entry : entries) {
         if (lookupKey != entry.key.get()) continue;
-        switch (Settings().language) {
+        switch (CurrentTranslationLanguage()) {
         case UiLanguage::ChineseSimplified: out = entry.zh.get(); break;
         case UiLanguage::Maltese: out = Utf8ToWide(entry.mt.get()); break;
         case UiLanguage::Japanese: out = entry.ja.get(); break;
@@ -74,12 +79,12 @@ bool TranslateFeatureText(const std::wstring& key, std::wstring& out){
 
 bool TranslateAdditionalLanguage(const std::wstring& key, std::wstring& out){
     const std::string lookupKey = WideToUtf8(key);
-    if (Settings().language == UiLanguage::Norwegian || Settings().language == UiLanguage::Vietnamese) {
+    if (CurrentTranslationLanguage() == UiLanguage::Norwegian || CurrentTranslationLanguage() == UiLanguage::Vietnamese) {
         
         const auto& entries = catalog::Legacy;
         for (const auto& entry : entries) {
             if (lookupKey == entry.key.get()) {
-                if (Settings().language == UiLanguage::Norwegian) out = Utf8ToWide(entry.no.get());
+                if (CurrentTranslationLanguage() == UiLanguage::Norwegian) out = Utf8ToWide(entry.no.get());
                 else out = Utf8ToWide(entry.vi.get());
                 return true;
             }
@@ -87,9 +92,9 @@ bool TranslateAdditionalLanguage(const std::wstring& key, std::wstring& out){
         return false;
     }
 
-    if (Settings().language < UiLanguage::Italian) return false;
+    if (CurrentTranslationLanguage() < UiLanguage::Italian) return false;
 
-    if (Settings().language == UiLanguage::ClassicalChinese) {
+    if (CurrentTranslationLanguage() == UiLanguage::ClassicalChinese) {
         
         const auto& classical = catalog::Classical;
 
@@ -107,7 +112,7 @@ bool TranslateAdditionalLanguage(const std::wstring& key, std::wstring& out){
 
     for (const auto& entry : entries) {
         if (lookupKey == entry.key.get()) {
-            switch (Settings().language) {
+            switch (CurrentTranslationLanguage()) {
             case UiLanguage::Italian: out = Utf8ToWide(entry.it.get()); return true;
             case UiLanguage::Mongolian: out = entry.mn.get(); return true;
             case UiLanguage::Esperanto: out = Utf8ToWide(entry.eo.get()); return true;
@@ -125,10 +130,10 @@ bool TranslateAdditionalLanguage(const std::wstring& key, std::wstring& out){
 
 std::wstring Tr(const wchar_t* english, const wchar_t* chinese){
     std::wstring key = english;
-    if (Settings().language == UiLanguage::English) return key;
+    if (CurrentTranslationLanguage() == UiLanguage::English) return key;
     const std::string lookupKey = WideToUtf8(english);
     std::wstring additional;
-    if (Settings().language == UiLanguage::ChineseTraditionalHongKong) {
+    if (CurrentTranslationLanguage() == UiLanguage::ChineseTraditionalHongKong) {
         if (attendance::localization::TranslateHongKong(key, additional)) return additional;
         std::wstring diagnostic = L"AttendanceApp missing zh-HK translation: " + key + L"\n";
         OutputDebugStringW(diagnostic.c_str());
@@ -151,7 +156,7 @@ std::wstring Tr(const wchar_t* english, const wchar_t* chinese){
     const auto& entries = catalog::Main;
     for (const auto& entry : entries) {
         if (lookupKey == entry.key.get()) {
-            switch (Settings().language) {
+            switch (CurrentTranslationLanguage()) {
             case UiLanguage::ChineseSimplified: return zh(entry.zh.get());
             case UiLanguage::Maltese: return mt(entry.mt.get());
             case UiLanguage::Japanese: return ja(entry.ja.get());
@@ -166,12 +171,12 @@ std::wstring Tr(const wchar_t* english, const wchar_t* chinese){
     }
     // Missing legacy translations use English outside Simplified Chinese.
     // A German (or other language) interface must not fall back to Chinese.
-    return Settings().language == UiLanguage::ChineseSimplified && chinese && *chinese
+    return CurrentTranslationLanguage() == UiLanguage::ChineseSimplified && chinese && *chinese
         ? std::wstring(chinese) : key;
 }
 
 std::wstring ParticleEffectsLabel(){
-    switch (Settings().language) {
+    switch (CurrentTranslationLanguage()) {
     case UiLanguage::ChineseSimplified: return L"\u542f\u7528\u7c92\u5b50\u7279\u6548";
     case UiLanguage::Maltese: return L"Ixg\u0127el effetti tal-parti\u010belli";
     case UiLanguage::Japanese: return L"\u30d1\u30fc\u30c6\u30a3\u30af\u30eb\u52b9\u679c\u3092\u6709\u52b9\u5316";
@@ -196,7 +201,7 @@ std::wstring ParticleEffectsLabel(){
 }
 
 std::wstring SmoothDropdownScrollingLabel(){
-    switch (Settings().language) {
+    switch (CurrentTranslationLanguage()) {
     case UiLanguage::ChineseSimplified: return L"\u542f\u7528\u4e0b\u62c9\u83dc\u5355\u5e73\u6ed1\u6eda\u52a8";
     case UiLanguage::Maltese: return L"Ippermetti skrolljar lixx fil-listi";
     case UiLanguage::Japanese: return L"\u30c9\u30ed\u30c3\u30d7\u30c0\u30a6\u30f3\u306e\u30b9\u30e0\u30fc\u30ba\u30b9\u30af\u30ed\u30fc\u30eb\u3092\u6709\u52b9\u306b\u3059\u308b";
@@ -221,7 +226,7 @@ std::wstring SmoothDropdownScrollingLabel(){
 }
 
 std::wstring ScrollFrameRateLabel(){
-    switch (Settings().language) {
+    switch (CurrentTranslationLanguage()) {
     case UiLanguage::ChineseSimplified: return L"\u4e0b\u62c9\u6eda\u52a8\u5e27\u7387\uff0860-360\uff09";
     case UiLanguage::Maltese: return L"Rata tal-frejms tal-iskrolljar (60-360)";
     case UiLanguage::Japanese: return L"\u30c9\u30ed\u30c3\u30d7\u30c0\u30a6\u30f3\u306e\u30b9\u30af\u30ed\u30fc\u30ebFPS\uff0860-360\uff09";

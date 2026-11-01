@@ -1,5 +1,7 @@
+#include "ui/feedback.h"
 #include <memory>
 #include "ui/layout.h"
+#include "ui/motion.h"
 #include "ui/redraw.h"
 #include "ui/settings_window.h"
 #include "settings/toggles.h"
@@ -39,6 +41,8 @@ void ApplyFontListToSettings(HWND hwnd){
     if (!hwnd || !IsWindow(hwnd)) return;
     HWND font = GetDlgItem(hwnd, IDC_SETTINGS_FONT);
     if (!font) return;
+    bool cacheReady=false;{std::lock_guard<std::mutex> lock(Fonts().fontEnumerationMutex);cacheReady=Fonts().fontCacheReady;}
+    SetText(GetDlgItem(hwnd,IDC_SETTINGS_FONT_LOADING),cacheReady?L"":Tr(L"Loading fonts...",L"正在加载字体…"));
     if (SendMessageW(font, CB_GETDROPPEDSTATE, 0, 0)) {
         Fonts().fontComboRefreshPending = true;
         return;
@@ -76,6 +80,8 @@ void ApplyFontListToSettings(HWND hwnd){
     InvalidateRect(font, nullptr, FALSE);
     Fonts().fontComboRefreshPending = false;
     Fonts().fontAppliedGeneration = generation;
+    bool ready=false;{std::lock_guard<std::mutex> lock(Fonts().fontEnumerationMutex);ready=Fonts().fontCacheReady;}
+    SetText(GetDlgItem(hwnd,IDC_SETTINGS_FONT_LOADING),ready?L"":Tr(L"Loading fonts...",L"正在加载字体…"));
 }
 
 void FillSettingsCombos(HWND hwnd, bool refillLanguageAndFont){
@@ -192,7 +198,7 @@ void ApplySettingsLanguage(HWND hwnd){
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_SHOW_STATS), Tr(L"Show statistics cards", L"\u663e\u793a\u7edf\u8ba1\u5361\u7247"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_SHOW_HINT), Tr(L"Show bottom usage hint", L"\u663e\u793a\u5e95\u90e8\u4f7f\u7528\u63d0\u793a"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_TABLE_GRID), Tr(L"Show table grid lines", L"\u663e\u793a\u8868\u683c\u7f51\u683c\u7ebf"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_APPLY), Tr(L"Apply", L"\u5e94\u7528"));
+
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_CLOSE), Tr(L"Close", L"\u5173\u95ed"));
     SetText(GetDlgItem(hwnd, IDC_SETTINGS_RESET), Tr(L"Reset All Settings", L"\u91cd\u7f6e\u6240\u6709\u8bbe\u7f6e"));
     SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE), Tr(L"Language", L"\u8bed\u8a00"));
@@ -211,6 +217,8 @@ void ApplySettingsLanguage(HWND hwnd){
             *binding.value ? BST_CHECKED : BST_UNCHECKED, 0);
     }
     FillSettingsCombos(hwnd, !Ui().languageUpdateActive);
+    SetText(GetDlgItem(hwnd, IDC_SETTINGS_RETRY), Tr(L"Retry", L"重试"));
+    SetSettingsSaveResult(!Ui().settingsSaveFailed);
 }
 
 void ApplyLanguageAtomically(HWND settingsWindow){
@@ -351,92 +359,174 @@ void ApplySettingsFromWindow(HWND hwnd){
         }
     }
     if (previousLanguage != Settings().language) ApplyLanguageAtomically(hwnd);
+    if(Settings().animationLevel==AnimationLevel::Off){
+        SettleAllAnimations();
+        Ui().settingsScrollStartMs=0;Ui().settingsScrollY=(int)Ui().settingsScrollTarget;
+        Ui().settingsScrollCurrent=Ui().settingsScrollTarget;
+        RemoveAnimationState(hwnd);SetLayeredWindowAttributes(hwnd,0,255,LWA_ALPHA);ResizeSettingsLayout(hwnd);
+    }
     SaveSettingsWithFeedback(hwnd);
 }
 
-void ResizeSettingsLayout(HWND hwnd){
-    if (!hwnd) return;
-    RedrawScope redraw(hwnd);
-    RECT client{}; GetClientRect(hwnd, &client);
-    const int width = std::max(1, (int)client.right);
-    const int height = std::max(1, (int)client.bottom);
-    const int pad = 24, gap = 24;
-    const int columns = width >= 800 ? 2 : 1;
-    const int fieldWidth = std::max(1, (width - pad * 2 - gap * (columns - 1)) / columns);
-    // Labels sit above values, allowing long translations and large fonts to use the full width.
-    const std::pair<int,int> fields[] = {
-        {IDC_SETTINGS_LANG_LABEL, IDC_SETTINGS_LANGUAGE},
-        {IDC_SETTINGS_FONT_LABEL, IDC_SETTINGS_FONT},
-        {IDC_SETTINGS_THEME_LABEL, IDC_SETTINGS_THEME},
-        {IDC_SETTINGS_ACCENT_LABEL, IDC_SETTINGS_ACCENT},
-        {IDC_SETTINGS_TEXT_SCALE_LABEL, IDC_SETTINGS_TEXT_SCALE},
-        {IDC_SETTINGS_DENSITY_LABEL, IDC_SETTINGS_DENSITY},
-        {IDC_SETTINGS_ANIMATION_LABEL, IDC_SETTINGS_ANIMATION_LEVEL},
-        {IDC_SETTINGS_PARTICLE_LABEL, IDC_SETTINGS_PARTICLE_LEVEL},
-        {IDC_SETTINGS_REPORT_LABEL, IDC_SETTINGS_REPORT_TEMPLATE},
-        {IDC_SETTINGS_AUTOSAVE_LABEL, IDC_SETTINGS_AUTOSAVE_INTERVAL},
-        {IDC_SETTINGS_SCROLL_FPS_LABEL, IDC_SETTINGS_SCROLL_FPS}
-    };
-    const int fieldRows = ((int)std::size(fields) + columns - 1) / columns;
-    const int toggles[] = {IDC_SETTINGS_PARTICLES, IDC_SETTINGS_SMOOTH_SCROLL,
-        IDC_SETTINGS_SHOW_STATS, IDC_SETTINGS_SHOW_HINT, IDC_SETTINGS_TABLE_GRID,
-        IDC_SETTINGS_RISK_ALERTS, IDC_SETTINGS_AUTOSAVE_PROMPT,
-        IDC_SETTINGS_COMMAND_PALETTE, IDC_SETTINGS_ADVANCED_FILTER};
-    const int toggleY = 78 + fieldRows * 84 + 12;
-    const int toggleRows = ((int)std::size(toggles) + columns - 1) / columns;
-    const int actionsY = toggleY + toggleRows * 42 + 18;
-    const int contentHeight = actionsY + 112;
-    Ui().settingsScrollY = std::clamp(Ui().settingsScrollY, 0, std::max(0, contentHeight - height));
-    struct Placement { HWND control; int x, y, width, height; };
-    std::vector<Placement> placements;
-    placements.reserve(48);
-    auto move = [&](int id, int x, int y, int w, int h) {
-        HWND control = GetDlgItem(hwnd, id);
-        if (!control) return;
-        placements.push_back({control, x, y - Ui().settingsScrollY, w, h});
-    };
-    move(IDC_SETTINGS_TITLE, pad, 22, width - pad * 2, 38);
-    for (int i = 0; i < (int)std::size(fields); ++i) {
-        int x = pad + (i % columns) * (fieldWidth + gap), y = 78 + (i / columns) * 84;
-        move(fields[i].first, x, y, fieldWidth, 28);
-        bool fps = fields[i].second == IDC_SETTINGS_SCROLL_FPS;
-        move(fields[i].second, x, y + 30, fps ? 100 : fieldWidth, fps ? 34 : 430);
-        if (fps) move(IDC_SETTINGS_SCROLL_FPS_UNIT, x + 112, y + 36, 52, 28);
+namespace {
+struct SettingsPlacement{int id,x,y,w,h,group;};
+struct SettingsLayoutCache{
+    HWND window=nullptr;HFONT font=nullptr;int width=0,height=0,contentEnd=0;
+    UiLanguage language=UiLanguage::English;TextScale scale=TextScale::Standard;
+    LayoutDensity density=LayoutDensity::Comfortable;bool failed=false;
+    std::vector<SettingsPlacement> placements;
+} settingsLayout;
+void PositionSettingsContent(HWND hwnd,const std::vector<SettingsPlacement>& placements,int contentEnd){
+    int bodyH=std::max(1,Ui().settingsBodyBottom-Ui().settingsBodyTop);
+    int maximum=std::max(0,contentEnd+16-bodyH);
+    Ui().settingsScrollY=std::clamp(Ui().settingsScrollY,0,maximum);
+    Ui().settingsScrollCurrent=std::clamp(Ui().settingsScrollCurrent,0.0,(double)maximum);
+    Ui().settingsScrollTarget=std::clamp(Ui().settingsScrollTarget,0.0,(double)maximum);
+    for(const auto& p:placements){
+        HWND control=GetDlgItem(hwnd,p.id);if(!control)continue;
+        int offset=Settings().animationLevel==AnimationLevel::Advanced?(int)std::lround((1-ItemEntrance(GetAnimationValue(hwnd,AnimChannel::Items,1),p.group))*8):0;
+        int top=Ui().settingsBodyTop+p.y-Ui().settingsScrollY+offset;
+        wchar_t type[24]{};GetClassNameW(control,type,24);bool combo=lstrcmpiW(type,L"ComboBox")==0;
+        SetWindowPos(control,nullptr,p.x,top,p.w,combo?430:p.h,SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOREDRAW);
+        RECT actual{};GetWindowRect(control,&actual);int controlH=actual.bottom-actual.top;
+        int clipTop=std::max(0,Ui().settingsBodyTop-top),clipBottom=std::min(controlH,Ui().settingsBodyBottom-top);
+        HRGN clip=CreateRectRgn(0,clipTop,p.w,std::max(clipTop,clipBottom));
+        if(clip&&!SetWindowRgn(control,clip,FALSE))DeleteObject(clip);
     }
-    for (int i = 0; i < (int)std::size(toggles); ++i)
-        move(toggles[i], pad + (i % columns) * (fieldWidth + gap), toggleY + (i / columns) * 42, fieldWidth, 34);
-    move(IDC_SETTINGS_RESET, pad, actionsY, width - pad * 2, 36);
-    const int buttonWidth = std::max(1, (width - pad * 2 - 12) / 2);
-    move(IDC_SETTINGS_APPLY, pad, actionsY + 48, buttonWidth, 38);
-    move(IDC_SETTINGS_CLOSE, pad + buttonWidth + 12, actionsY + 48, buttonWidth, 38);
-    HDWP positions = BeginDeferWindowPos((int)placements.size());
-    const UINT flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOREDRAW;
-    for (const auto& p : placements) {
-        if (!positions) break;
-        positions = DeferWindowPos(positions, p.control, nullptr, p.x, p.y, p.width, p.height, flags);
-    }
-    if (!positions || !EndDeferWindowPos(positions)) {
-        for (const auto& p : placements)
-            SetWindowPos(p.control, nullptr, p.x, p.y, p.width, p.height, flags);
-    }
-    SCROLLINFO scroll{sizeof(scroll)};
-    scroll.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
-    scroll.nMax = contentHeight - 1; scroll.nPage = height; scroll.nPos = Ui().settingsScrollY;
-    SetScrollInfo(hwnd, SB_VERT, &scroll, TRUE);
+    SCROLLINFO scroll{sizeof(scroll)};scroll.fMask=SIF_RANGE|SIF_PAGE|SIF_POS;
+    scroll.nMax=std::max(0,contentEnd+15);scroll.nPage=bodyH;scroll.nPos=Ui().settingsScrollY;SetScrollInfo(hwnd,SB_VERT,&scroll,TRUE);
 }
-
+int WrappedHeight(HWND control, int width) {
+    HDC dc = GetDC(control); if (!dc) return 28;
+    HGDIOBJ old = SelectObject(dc, (HFONT)SendMessageW(control, WM_GETFONT, 0, 0));
+    RECT measured{0,0,std::max(40,width),0}; auto text = GetText(control);
+    DrawTextW(dc,text.c_str(),-1,&measured,DT_CALCRECT|DT_WORDBREAK|DT_NOPREFIX);
+    SelectObject(dc,old); ReleaseDC(control,dc);
+    return std::max(MeasuredTextHeight(control), (int)measured.bottom);
+}
+void AdvanceSettingsScroll() {
+    if (!Ui().settingsScrollStartMs) return;
+    double t = (AnimationNowMs() - Ui().settingsScrollStartMs) / 200.0;
+    if (Settings().animationLevel == AnimationLevel::Off || !Settings().smoothScrollingEnabled) t = 1;
+    Ui().settingsScrollCurrent = Ui().settingsScrollStart +
+        (Ui().settingsScrollTarget-Ui().settingsScrollStart)*CubicBezierEase(t,.22,1,.36,1);
+    Ui().settingsScrollY = (int)std::lround(Ui().settingsScrollCurrent);
+    if (t >= 1) Ui().settingsScrollStartMs = 0;
+}
+void ScrollSettingsTo(HWND hwnd, int next, bool smooth) {
+    SCROLLINFO info{sizeof(info)}; info.fMask=SIF_ALL; GetScrollInfo(hwnd,SB_VERT,&info);
+    next=std::clamp(next,0,std::max(0,info.nMax-(int)info.nPage+1));
+    AdvanceSettingsScroll();
+    Ui().settingsScrollStart=Ui().settingsScrollCurrent;
+    Ui().settingsScrollTarget=next;
+    if (smooth && Settings().smoothScrollingEnabled && Settings().animationLevel!=AnimationLevel::Off) {
+        Ui().settingsScrollStartMs=AnimationNowMs();
+        RestartAnimation(hwnd,AnimChannel::SmoothScroll,1,200);
+    } else {
+        Ui().settingsScrollStartMs=0;
+        Ui().settingsScrollY=next; Ui().settingsScrollCurrent=next;
+    }
+    ResizeSettingsLayout(hwnd);
+}
+}
+void SetSettingsSaveResult(bool saved) {
+    Ui().settingsSaveFailed=!saved;
+    HWND hwnd=Ui().settingsWindow; if(!hwnd || !GetDlgItem(hwnd,IDC_SETTINGS_SAVE_STATUS))return;
+    SetText(GetDlgItem(hwnd,IDC_SETTINGS_SAVE_STATUS),saved?L"":
+        Tr(L"Settings not saved. Active for this session only.",L"设置未保存，仅在本次运行生效。"));
+    ShowWindow(GetDlgItem(hwnd,IDC_SETTINGS_RETRY),saved?SW_HIDE:SW_SHOW);
+    ShowWindow(GetDlgItem(hwnd,IDC_SETTINGS_SAVE_STATUS),saved?SW_HIDE:SW_SHOW);
+    ResizeSettingsLayout(hwnd);
+}
+void ResizeSettingsLayout(HWND hwnd){
+    if (!hwnd || Ui().settingsLayoutActive) return;
+    Ui().settingsLayoutActive=true;
+    RECT client{};GetClientRect(hwnd,&client);
+    int width=std::max(1,(int)client.right),height=std::max(1,(int)client.bottom);
+    if(settingsLayout.window==hwnd && settingsLayout.width==width && settingsLayout.height==height &&
+       settingsLayout.font==Ui().font && settingsLayout.language==Settings().language &&
+       settingsLayout.scale==Settings().textScale && settingsLayout.density==Settings().layoutDensity &&
+       settingsLayout.failed==Ui().settingsSaveFailed && GetPropW(hwnd,L"Attendance.LayoutReady")){
+        PositionSettingsContent(hwnd,settingsLayout.placements,settingsLayout.contentEnd);
+        RECT body{0,Ui().settingsBodyTop,width,Ui().settingsBodyBottom};
+        RedrawWindow(hwnd,&body,nullptr,RDW_INVALIDATE|RDW_ALLCHILDREN|RDW_NOERASE);
+        Ui().settingsLayoutActive=false;return;
+    }
+    RedrawScope redraw(hwnd);
+    const int pad=24,gap=24;
+    int resetWidth=MeasuredTextWidth(GetDlgItem(hwnd,IDC_SETTINGS_RESET))+40;
+    int closeWidth=std::max(100,MeasuredTextWidth(GetDlgItem(hwnd,IDC_SETTINGS_CLOSE))+40);
+    bool stacked=resetWidth+closeWidth+12>width-pad*2;
+    int buttonH=std::max(40,MeasuredTextHeight(GetDlgItem(hwnd,IDC_SETTINGS_RESET))+16);
+    int footerH=24+buttonH*(stacked?2:1)+(stacked?8:0)+(Ui().settingsSaveFailed?72:0);
+    Ui().settingsBodyTop=std::max(72,MeasuredTextHeight(GetDlgItem(hwnd,IDC_SETTINGS_TITLE))+40);
+    Ui().settingsBodyBottom=std::max(Ui().settingsBodyTop+1,height-footerH);
+    int columns=width>=800?2:1,fieldWidth=std::max(1,(width-pad*2-gap*(columns-1))/columns);
+    auto fixed=[&](int id,int x,int y,int w,int h){
+        HWND control=GetDlgItem(hwnd,id);if(!control)return;
+        SetWindowRgn(control,nullptr,FALSE);
+        SetWindowPos(control,nullptr,x,y,std::max(1,w),std::max(1,h),SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOREDRAW);
+    };
+    fixed(IDC_SETTINGS_TITLE,pad,20,width-pad*2,Ui().settingsBodyTop-30);
+    int actionY=height-16-buttonH*(stacked?2:1)-(stacked?8:0);
+    fixed(IDC_SETTINGS_RESET,pad,actionY,stacked?width-pad*2:std::min(resetWidth,width-pad*2-closeWidth-12),buttonH);
+    fixed(IDC_SETTINGS_CLOSE,stacked?pad:width-pad-closeWidth,stacked?actionY+buttonH+8:actionY,stacked?width-pad*2:closeWidth,buttonH);
+    fixed(IDC_SETTINGS_SAVE_STATUS,pad,Ui().settingsBodyBottom+8,std::max(40,width-pad*2-100),60);
+    fixed(IDC_SETTINGS_RETRY,width-pad-92,Ui().settingsBodyBottom+12,92,40);
+    std::vector<SettingsPlacement> placements;
+    const std::pair<int,int> fields[]={
+        {IDC_SETTINGS_LANG_LABEL,IDC_SETTINGS_LANGUAGE},{IDC_SETTINGS_FONT_LABEL,IDC_SETTINGS_FONT},
+        {IDC_SETTINGS_THEME_LABEL,IDC_SETTINGS_THEME},{IDC_SETTINGS_ACCENT_LABEL,IDC_SETTINGS_ACCENT},
+        {IDC_SETTINGS_TEXT_SCALE_LABEL,IDC_SETTINGS_TEXT_SCALE},{IDC_SETTINGS_DENSITY_LABEL,IDC_SETTINGS_DENSITY},
+        {IDC_SETTINGS_ANIMATION_LABEL,IDC_SETTINGS_ANIMATION_LEVEL},{IDC_SETTINGS_PARTICLE_LABEL,IDC_SETTINGS_PARTICLE_LEVEL},
+        {IDC_SETTINGS_REPORT_LABEL,IDC_SETTINGS_REPORT_TEMPLATE},{IDC_SETTINGS_AUTOSAVE_LABEL,IDC_SETTINGS_AUTOSAVE_INTERVAL},
+        {IDC_SETTINGS_SCROLL_FPS_LABEL,IDC_SETTINGS_SCROLL_FPS}};
+    int y=8,group=0;
+    for(int row=0;row<(int)std::size(fields);row+=columns){
+        int labelH=24;
+        for(int col=0;col<columns && row+col<(int)std::size(fields);++col)
+            labelH=std::max(labelH,WrappedHeight(GetDlgItem(hwnd,fields[row+col].first),fieldWidth));
+        int valueH=std::max(40,ComboItemHeight()+12);
+        for(int col=0;col<columns && row+col<(int)std::size(fields);++col){
+            auto field=fields[row+col];int x=pad+col*(fieldWidth+gap);
+            placements.push_back({field.first,x,y,fieldWidth,labelH,group});
+            bool fps=field.second==IDC_SETTINGS_SCROLL_FPS;
+            placements.push_back({field.second,x,y+labelH+8,fps?100:fieldWidth,valueH,group});
+            if(fps)placements.push_back({IDC_SETTINGS_SCROLL_FPS_UNIT,x+112,y+labelH+8,52,valueH,group});
+            if(field.second==IDC_SETTINGS_FONT)placements.push_back({IDC_SETTINGS_FONT_LOADING,x,y+labelH+valueH+4,fieldWidth,28,group});
+        }
+        y+=labelH+valueH+40;++group;
+    }
+    const int toggles[]={IDC_SETTINGS_PARTICLES,IDC_SETTINGS_SMOOTH_SCROLL,IDC_SETTINGS_SHOW_STATS,
+        IDC_SETTINGS_SHOW_HINT,IDC_SETTINGS_TABLE_GRID,IDC_SETTINGS_RISK_ALERTS,IDC_SETTINGS_AUTOSAVE_PROMPT,
+        IDC_SETTINGS_COMMAND_PALETTE,IDC_SETTINGS_ADVANCED_FILTER};
+    y+=8;
+    for(int row=0;row<(int)std::size(toggles);row+=columns){
+        int rowH=Settings().layoutDensity==LayoutDensity::Compact?36:40;
+        for(int col=0;col<columns && row+col<(int)std::size(toggles);++col)
+            rowH=std::max(rowH,WrappedHeight(GetDlgItem(hwnd,toggles[row+col]),fieldWidth-36)+16);
+        for(int col=0;col<columns && row+col<(int)std::size(toggles);++col)
+            placements.push_back({toggles[row+col],pad+col*(fieldWidth+gap),y,fieldWidth,rowH,group});
+        y+=rowH+12;++group;
+    }
+    settingsLayout.window=hwnd;settingsLayout.width=width;settingsLayout.height=height;
+    settingsLayout.font=Ui().font;settingsLayout.language=Settings().language;
+    settingsLayout.scale=Settings().textScale;settingsLayout.density=Settings().layoutDensity;
+    settingsLayout.failed=Ui().settingsSaveFailed;settingsLayout.contentEnd=y;
+    settingsLayout.placements=std::move(placements);SetPropW(hwnd,L"Attendance.LayoutReady",(HANDLE)1);
+    PositionSettingsContent(hwnd,settingsLayout.placements,y);
+    Ui().settingsLayoutActive=false;
+}
 void EnsureSettingsControlVisible(HWND control){
-    HWND hwnd = Ui().settingsWindow;
-    if (!hwnd || !control || GetParent(control) != hwnd) return;
-    RECT box{}, client{};
-    GetWindowRect(control, &box); GetClientRect(hwnd, &client);
-    MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&box), 2);
-    int next = Ui().settingsScrollY;
-    if (box.top < 32) next += box.top - 32;
-    else if (box.bottom > client.bottom - 12) next += box.bottom - client.bottom + 12;
-    SCROLLINFO info{sizeof(info)}; info.fMask = SIF_ALL; GetScrollInfo(hwnd, SB_VERT, &info);
-    next = std::clamp(next, 0, std::max(0, info.nMax - (int)info.nPage + 1));
-    if (next != Ui().settingsScrollY) { Ui().settingsScrollY = next; ResizeSettingsLayout(hwnd); }
+    HWND hwnd=Ui().settingsWindow;
+    if(!hwnd||!control||GetParent(control)!=hwnd)return;
+    int id=GetDlgCtrlID(control);
+    if(id==IDC_SETTINGS_CLOSE||id==IDC_SETTINGS_RESET||id==IDC_SETTINGS_RETRY)return;
+    RECT box{};GetWindowRect(control,&box);MapWindowPoints(nullptr,hwnd,(POINT*)&box,2);
+    int next=Ui().settingsScrollY;
+    if(box.top<Ui().settingsBodyTop+8)next+=box.top-Ui().settingsBodyTop-8;
+    else if(box.bottom>Ui().settingsBodyBottom-8)next+=box.bottom-Ui().settingsBodyBottom+8;
+    if(next!=Ui().settingsScrollY)ScrollSettingsTo(hwnd,next,false);
 }
 
 void ResetAppearanceValues(){
@@ -493,7 +583,6 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_SHOW_HINT);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_TABLE_GRID);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_RESET);
-        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_APPLY);
         MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_CLOSE);
         // Tab follows the same row-major order as the unified form.
         HWND after = HWND_TOP;
@@ -505,13 +594,16 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             IDC_SETTINGS_SHOW_STATS, IDC_SETTINGS_SHOW_HINT, IDC_SETTINGS_TABLE_GRID,
             IDC_SETTINGS_RISK_ALERTS, IDC_SETTINGS_AUTOSAVE_PROMPT,
             IDC_SETTINGS_COMMAND_PALETTE, IDC_SETTINGS_ADVANCED_FILTER,
-            IDC_SETTINGS_RESET, IDC_SETTINGS_APPLY, IDC_SETTINGS_CLOSE}) {
+            IDC_SETTINGS_RESET, IDC_SETTINGS_CLOSE}) {
             HWND control = GetDlgItem(hwnd, id);
             SetWindowPos(control, after, 0, 0, 0, 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOREDRAW);
             after = control;
         }
         SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), WM_SETFONT, (WPARAM)Ui().titleFont, TRUE);
+        MakeSettingsControl(hwnd,L"STATIC",L"",SS_LEFT|SS_NOPREFIX,IDC_SETTINGS_SAVE_STATUS);
+        MakeSettingsControl(hwnd,L"BUTTON",L"",BS_OWNERDRAW|WS_TABSTOP,IDC_SETTINGS_RETRY);
+        MakeSettingsControl(hwnd,L"STATIC",L"",SS_LEFT|SS_NOPREFIX,IDC_SETTINGS_FONT_LOADING);
         ApplySettingsLanguage(hwnd);
         ResizeSettingsLayout(hwnd);
         return 0;
@@ -520,42 +612,26 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         ResizeSettingsLayout(hwnd);
         return 0;
     case WM_VSCROLL: {
-        SCROLLINFO info{sizeof(info)};
-        info.fMask = SIF_ALL;
-        GetScrollInfo(hwnd, SB_VERT, &info);
-        int next = Ui().settingsScrollY;
-        switch (LOWORD(wParam)) {
-        case SB_LINEUP: next -= 36; break;
-        case SB_LINEDOWN: next += 36; break;
-        case SB_PAGEUP: next -= (int)info.nPage; break;
-        case SB_PAGEDOWN: next += (int)info.nPage; break;
-        case SB_THUMBTRACK: next = info.nTrackPos; break;
-        case SB_TOP: next = info.nMin; break;
-        case SB_BOTTOM: next = info.nMax; break;
-        default: return 0;
-        }
-        int maximum = std::max(0, info.nMax - (int)info.nPage + 1);
-        next = std::clamp(next, 0, maximum);
-        if (next != Ui().settingsScrollY) {
-            Ui().settingsScrollY = next;
-            ResizeSettingsLayout(hwnd);
-            InvalidateRect(hwnd, nullptr, FALSE);
-        }
-        return 0;
+        SCROLLINFO info{sizeof(info)};info.fMask=SIF_ALL;GetScrollInfo(hwnd,SB_VERT,&info);
+        int next=(int)Ui().settingsScrollTarget;bool smooth=true;
+        switch(LOWORD(wParam)){
+        case SB_LINEUP:next-=40;break;case SB_LINEDOWN:next+=40;break;
+        case SB_PAGEUP:next-=(int)info.nPage;break;case SB_PAGEDOWN:next+=(int)info.nPage;break;
+        case SB_THUMBTRACK:case SB_THUMBPOSITION:next=info.nTrackPos;smooth=false;break;
+        case SB_TOP:next=0;break;case SB_BOTTOM:next=info.nMax;break;default:return 0;}
+        ScrollSettingsTo(hwnd,next,smooth);return 0;
     }
     case WM_MOUSEWHEEL:
-        SendMessageW(hwnd, WM_VSCROLL,
-            MAKEWPARAM(GET_WHEEL_DELTA_WPARAM(wParam) > 0 ? SB_LINEUP : SB_LINEDOWN, 0), 0);
+        ScrollSettingsTo(hwnd,(int)Ui().settingsScrollTarget-(int)std::lround(GET_WHEEL_DELTA_WPARAM(wParam)/120.0*120),true);
         return 0;
     case WM_COMMAND:
         if (LOWORD(wParam) == IDC_SETTINGS_SCROLL_FPS
             && HIWORD(wParam) == EN_KILLFOCUS) {
-            NormalizeScrollFrameRateInput(hwnd);
-            SaveSettingsWithFeedback(hwnd);
+            if(!Ui().settingsClosing){NormalizeScrollFrameRateInput(hwnd);SaveSettingsWithFeedback(hwnd);}
             return 0;
         }
         if (HIWORD(wParam) == CBN_DROPDOWN) {
-            StartAnimation((HWND)lParam, AnimChannel::ComboOpen, 1.0, 340);
+            RestartAnimation((HWND)lParam, AnimChannel::ComboOpen, 1.0, Visual::OpenMs);
             ApplyComboDropDownTheme((HWND)lParam);
             return 0;
         }
@@ -613,6 +689,9 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             if (id == IDC_SETTINGS_SMOOTH_SCROLL && !checked) {
                 StopSmoothScrollingNow();
             }
+            if(id==IDC_SETTINGS_ADVANCED_FILTER||id==IDC_SETTINGS_RISK_ALERTS)RefreshList();
+            if(id==IDC_SETTINGS_SMOOTH_SCROLL && !checked)ScrollSettingsTo(hwnd,(int)Ui().settingsScrollTarget,false);
+            if(Settings().animationLevel==AnimationLevel::Off)RemoveAnimationState(hwnd);
             SaveSettingsWithFeedback(hwnd);
             InvalidateRect(toggle, nullptr, FALSE);
             return 0;
@@ -642,20 +721,23 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             InvalidateRect((HWND)lParam, nullptr, FALSE);
             return 0;
         }
-        if (LOWORD(wParam) == IDC_SETTINGS_APPLY) {
-            ApplySettingsFromWindow(hwnd);
-            return 0;
+        if (LOWORD(wParam) == IDC_SETTINGS_RETRY) {
+            SaveSettingsWithFeedback(hwnd); return 0;
         }
         if (LOWORD(wParam) == IDC_SETTINGS_CLOSE) {
             HideSettingsWindow();
             return 0;
         }
         if (LOWORD(wParam) == IDC_SETTINGS_RESET) {
-            std::wstring resetMsg = Tr(L"Reset all settings and delete the AppData configuration file?", L"\u91cd\u7f6e\u6240\u6709\u8bbe\u7f6e\u5e76\u5220\u9664 AppData \u914d\u7f6e\u6587\u4ef6\uff1f");
+            std::wstring resetMsg = Tr(L"Reset all settings? Attendance files will not be deleted.", L"重置所有设置？考勤文件不会被删除。");
             std::wstring resetTitle = Tr(L"Reset Settings", L"\u91cd\u7f6e\u8bbe\u7f6e");
             if (ThemedMessageBox(hwnd, resetMsg, resetTitle, true) == IDYES) {
                 UiTheme previousTheme = Settings().theme;
-                ResetSettings();
+                auto operation=BeginOperation(GetDlgItem(hwnd,IDC_SETTINGS_RESET),Tr(L"Reset All Settings",L"重置所有设置"));
+                if (!ResetSettings()) {
+                    FinishOperation(operation,OperationPhase::Failure,Tr(L"Could not save the settings file. Existing settings were kept.",L"无法保存配置文件，已保留原设置。"));return 0;
+                }
+                SetSettingsSaveResult(true);
                 if (previousTheme != UiTheme::Dark || Ui().themeTransition.active) {
                     BeginThemeTransition(UiTheme::Dark);
                     ApplyVisualSettings(true);
@@ -666,6 +748,8 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), WM_SETFONT, (WPARAM)Ui().titleFont, TRUE);
                 ApplySettingsLanguage(hwnd);
                 ResizeSettingsLayout(hwnd);
+                RefreshList();
+                FinishOperation(operation,OperationPhase::Success,Tr(L"Settings reset successfully.",L"设置已重置。"));
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
@@ -736,11 +820,26 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
         }
         break;
-    case WM_APP_ANIMATION_TICK:
+    case WM_APP_ANIMATION_TICK: {
         AcknowledgeAnimationTick(hwnd);
-        InvalidateRect(hwnd, nullptr, FALSE);
-        return 0;
+        if(!IsWindowVisible(hwnd))return 0;
+        AdvanceSettingsScroll();
+        double reveal=GetAnimationValue(hwnd,AnimChannel::Reveal,1);
+        SetLayeredWindowAttributes(hwnd,0,(BYTE)std::lround(reveal*255),LWA_ALPHA);
+        ResizeSettingsLayout(hwnd);
+        InvalidateRect(hwnd,nullptr,FALSE);return 0;
+    }
+    case WM_SETREDRAW:
+        // A late redraw transaction must not make a cached hidden dialog visible.
+        if(wParam && GetPropW(hwnd,L"Attendance.SettingsHidden"))return 0;
+        break;
     case WM_APP_ANIMATION_DONE:
+        if(Ui().settingsClosing && (UINT_PTR)lParam==Ui().settingsCloseSerial){
+            SetPropW(hwnd,L"Attendance.SettingsHidden",(HANDLE)1);
+            RemoveAnimationState(hwnd);
+            ShowWindow(hwnd,SW_HIDE);Ui().settingsClosing=false;
+            if(Ui().hwnd&&IsWindow(Ui().hwnd))SetFocus(Ui().hwnd);
+        }
         return 0;
     case WM_CLOSE:
         HideSettingsWindow();
@@ -772,7 +871,7 @@ HWND EnsureSettingsWindowCreated(){
 
     std::wstring settingsTitle = Tr(L"Settings", L"\u8bbe\u7f6e");
     Ui().settingsWindow = CreateWindowExW(
-        WS_EX_CONTROLPARENT | WS_EX_COMPOSITED,
+        WS_EX_CONTROLPARENT | WS_EX_COMPOSITED | WS_EX_LAYERED,
         className,
         settingsTitle.c_str(),
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN | WS_VSCROLL,
@@ -787,6 +886,7 @@ HWND EnsureSettingsWindowCreated(){
         std::min(1040, std::max(320, (int)(work.right - work.left) - 16)),
         std::min(860, std::max(320, (int)(work.bottom - work.top) - 16)),
         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    SetPropW(Ui().settingsWindow,L"Attendance.SettingsHidden",(HANDLE)1);
     ApplyGlassTitleBar(Ui().settingsWindow);
     ApplyThemedControls(Ui().settingsWindow);
     CenterOwnedWindow(Ui().settingsWindow, Ui().hwnd);
@@ -823,17 +923,37 @@ void HideSettingsWindow(){
         HWND combo = GetDlgItem(Ui().settingsWindow, id);
         if (combo) SendMessageW(combo, CB_SHOWDROPDOWN, FALSE, 0);
     }
-    ShowWindow(Ui().settingsWindow, SW_HIDE);
-    Ui().settingsScrollY = 0;
-    if (Ui().hwnd && IsWindow(Ui().hwnd)) SetFocus(Ui().hwnd);
+    HWND hwnd=Ui().settingsWindow;
+    if(!IsWindowVisible(hwnd) || Ui().settingsClosing)return;
+    NormalizeScrollFrameRateInput(hwnd);SaveSettingsWithFeedback(hwnd);
+    Ui().settingsScrollStartMs=0;Ui().settingsClosing=true;
+    double visible=GetAnimationValue(hwnd,AnimChannel::Reveal,1);
+    ++Ui().settingsCloseSerial;
+    StartAnimation(hwnd,AnimChannel::Reveal,0,Visual::CloseMs,true,Ui().settingsCloseSerial);
+    if(Settings().animationLevel==AnimationLevel::Off || visible<=.001){
+        SetPropW(hwnd,L"Attendance.SettingsHidden",(HANDLE)1);
+        RemoveAnimationState(hwnd);ShowWindow(hwnd,SW_HIDE);Ui().settingsClosing=false;
+        if(Ui().hwnd)SetFocus(Ui().hwnd);
+    }
 }
 
 void ShowSettingsWindow(){
     HWND settings = EnsureSettingsWindowCreated();
     if (!settings) return;
-    if (IsWindowVisible(settings)) { SetForegroundWindow(settings); return; }
-    Ui().settingsScrollY = 0;
+    if (IsWindowVisible(settings)) {
+        if(Ui().settingsClosing){Ui().settingsClosing=false;StartAnimation(settings,AnimChannel::Reveal,1,Visual::OpenMs);}
+        SetForegroundWindow(settings);return;
+    }
+    SetLayeredWindowAttributes(settings,0,0,LWA_ALPHA);
+    RemovePropW(settings,L"Attendance.SettingsHidden");
+    SendMessageW(settings,WM_SETREDRAW,TRUE,0);
+    ShowWindow(settings,SW_HIDE);
+    Ui().settingsClosing=false;Ui().settingsScrollY=0;
+    Ui().settingsScrollCurrent=Ui().settingsScrollStart=Ui().settingsScrollTarget=0;
+    Ui().settingsScrollStartMs=0;RemoveAnimationState(settings);
     SyncSettingsWindowState(settings);
+    StartWindowReveal(settings,Visual::OpenMs);
+    SetLayeredWindowAttributes(settings,0,Settings().animationLevel==AnimationLevel::Off?255:0,LWA_ALPHA);
     ShowWindow(Ui().settingsWindow, SW_SHOW);
     RedrawWindow(Ui().settingsWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE | RDW_UPDATENOW);
     SetForegroundWindow(Ui().settingsWindow);

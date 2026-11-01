@@ -1,3 +1,4 @@
+#include "ui/feedback.h"
 #include "core/status.h"
 #include "reports/powerpoint.h"
 #include "model/query.h"
@@ -14,6 +15,16 @@
 #include "ui/state.h"
 
 namespace attendance {
+namespace {
+struct PptRenderOptions {StatsRange range=StatsRange::All;ReportTemplate reportTemplate=ReportTemplate::Complete;};
+thread_local PptRenderOptions renderOptions;
+struct PptRenderScope {
+    PptRenderOptions previous=renderOptions;
+    PptRenderScope(StatsRange range,ReportTemplate reportTemplate){renderOptions={range,reportTemplate};}
+    ~PptRenderScope(){renderOptions=previous;}
+};
+}
+
 
 std::string ShapeText(int id, int x, int y, int cx, int cy, const std::wstring& text, int size, const char* color, bool bold = false);
 std::string RectShape(int id, int x, int y, int cx, int cy, const char* fill, const char* line = "FFFFFF", int alpha = 100000);
@@ -38,7 +49,7 @@ bool ExportPptxFile(const std::wstring& path);
 
 std::string ShapeText(int id, int x, int y, int cx, int cy, const std::wstring& text, int size, const char* color, bool bold){
     std::ostringstream ss;
-    std::string languageTag = LanguageToString(Settings().language);
+    std::string languageTag = LanguageToString(CurrentTranslationLanguage());
     if (languageTag == "en") languageTag = "en-US";
     ss << "<p:sp><p:nvSpPr><p:cNvPr id=\"" << id << "\" name=\"Text" << id
        << "\"/><p:cNvSpPr txBox=\"1\"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x=\"" << x << "\" y=\"" << y
@@ -144,7 +155,7 @@ int PptStatusBarWidth(int count,int maximum){return static_cast<int>(int64_t{std
 std::string BuildPptSlide1(const AttendanceSheet& sheet,const PptStats& stats){
  int id=3;std::ostringstream ss;ss<<SlideBackground();
  ss<<ShapeText(id++,760000,450000,10600000,500000,Tr(L"Attendance Summary",L"出勤摘要"),2900,"FFFFFF",true);
- ss<<ShapeText(id++,760000,1100000,10600000,450000,sheet.name+L" | "+StatsRangeName(Document().statsRange)+L" | "+ReportTemplateName(Settings().reportTemplate),1400,"BDBDBD");
+ ss<<ShapeText(id++,760000,1100000,10600000,450000,sheet.name+L" | "+StatsRangeName(renderOptions.range)+L" | "+ReportTemplateName(renderOptions.reportTemplate),1400,"BDBDBD");
  ss<<ShapeText(id++,760000,1750000,10600000,700000,Tr(L"Attendance",L"出勤率")+L"  "+AttendanceRateText(stats),3200,"8CA39A",true);
  int values[]={stats.present,stats.absent,stats.late,stats.other,stats.leave,stats.pending};
  for(int i=0;i<6;++i){int x=760000+(i%3)*3580000,y=2800000+(i/3)*1250000;
@@ -153,8 +164,8 @@ std::string BuildPptSlide1(const AttendanceSheet& sheet,const PptStats& stats){
   ss<<ShapeText(id++,x+220000,y+460000,2800000,400000,std::to_wstring(values[i]),2500,"FFFFFF",true);
  }
  std::wstring footer;
- if(Settings().reportTemplate==ReportTemplate::Teacher||Settings().reportTemplate==ReportTemplate::Complete)footer=sheet.teacher+L" | "+sheet.location+L" | "+sheet.notes;
- else if(Settings().reportTemplate==ReportTemplate::Parent)footer=Tr(L"Roster students",L"名单学生")+L": "+std::to_wstring(sheet.students.size());
+ if(renderOptions.reportTemplate==ReportTemplate::Teacher||renderOptions.reportTemplate==ReportTemplate::Complete)footer=sheet.teacher+L" | "+sheet.location+L" | "+sheet.notes;
+ else if(renderOptions.reportTemplate==ReportTemplate::Parent)footer=Tr(L"Roster students",L"名单学生")+L": "+std::to_wstring(sheet.students.size());
  ss<<ShapeText(id++,760000,5650000,10600000,650000,footer,1100,"BDBDBD");
  return SlideXml(ss.str());
 }
@@ -175,7 +186,7 @@ std::string BuildPptSlide2(const PptStats& stats){
 }
 std::string BuildPptSlide3(const std::vector<AttendanceRecord>& records){
  int id=3;std::map<std::wstring,PptStats> aggregated;
- for(const auto& r:records)if(RecordMatchesStatsRange(r))AccumulateStatus(aggregated[r.dateTime.substr(0,10)],r.status);
+ for(const auto& r:records)AccumulateStatus(aggregated[r.dateTime.substr(0,10)],r.status);
  std::vector<std::pair<std::wstring,PptStats>> days(aggregated.begin(),aggregated.end());
  if(days.size()>8)days.erase(days.begin(),days.end()-8);
  std::ostringstream ss;ss<<SlideBackground();
@@ -267,11 +278,8 @@ std::string PptSlideMasterXml(){
            "<p:sldMaster xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id=\"1\" name=\"\"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"0\" cy=\"0\"/><a:chOff x=\"0\" y=\"0\"/><a:chExt cx=\"0\" cy=\"0\"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld><p:clrMap bg1=\"lt1\" tx1=\"dk1\" bg2=\"lt2\" tx2=\"dk2\" accent1=\"accent1\" accent2=\"accent2\" accent3=\"accent3\" accent4=\"accent4\" accent5=\"accent5\" accent6=\"accent6\" hlink=\"hlink\" folHlink=\"folHlink\"/><p:sldLayoutIdLst><p:sldLayoutId id=\"2147483649\" r:id=\"rId1\"/></p:sldLayoutIdLst><p:txStyles><p:titleStyle/><p:bodyStyle/><p:otherStyle/></p:txStyles></p:sldMaster>";
 }
 
-std::vector<ZipEntry> BuildPptxEntries(){
-    SyncActiveSheet();
-    EnsureSheets();
-    const auto& sheet = Document().sheets[Document().activeSheet];
-    PptStats stats = CountRecords(sheet.records);
+std::vector<ZipEntry> BuildPptxEntries(const AttendanceSheet& sheet){
+    PptStats stats;for(const auto& record:sheet.records)AccumulateStatus(stats,record.status);
     std::vector<ZipEntry> entries;
     entries.push_back({"[Content_Types].xml", PptContentTypes()});
     entries.push_back({"_rels/.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"ppt/presentation.xml\"/><Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties\" Target=\"docProps/core.xml\"/><Relationship Id=\"rId3\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties\" Target=\"docProps/app.xml\"/></Relationships>"});
@@ -297,12 +305,18 @@ std::vector<ZipEntry> BuildPptxEntries(){
 }
 
 bool ExportPptxFile(const std::wstring& path){
-    return WriteZipStore(std::filesystem::path(path), BuildPptxEntries());
+    return PreparePptxExport(path)();
 }
 
 std::function<bool()> PreparePptxExport(const std::wstring& path) {
-    return [path, entries = BuildPptxEntries()]() mutable {
-        return WriteZipStore(std::filesystem::path(path), std::move(entries));
+    SyncActiveSheet();EnsureSheets();
+    auto sheet=Document().sheets[Document().activeSheet];
+    auto range=Document().statsRange;auto reportTemplate=Settings().reportTemplate;
+    auto language=Settings().language;auto today=TodayDateKey();
+    return [path,sheet=std::move(sheet),range,reportTemplate,language,today]() mutable {
+        TranslationScope translation(language);PptRenderScope options(range,reportTemplate);
+        sheet.records.erase(std::remove_if(sheet.records.begin(),sheet.records.end(),[&](const auto& record){return !RecordMatchesRangeAt(record,range,today);}),sheet.records.end());
+        return WriteZipStore(std::filesystem::path(path),BuildPptxEntries(sheet));
     };
 }
 
@@ -313,10 +327,10 @@ void ExportPptx(){
     }
     std::wstring path = SavePptxFileDialog();
     if (path.empty()) return;
-    auto complete = [](bool exported) {
-        ShowMessage(exported
-            ? Tr(L"PowerPoint exported successfully.", L"PowerPoint \u5bfc\u51fa\u6210\u529f\u3002")
-            : Tr(L"Could not export the PowerPoint file.", L"\u65e0\u6cd5\u5bfc\u51fa PowerPoint \u6587\u4ef6\u3002"));
+    auto operation=BeginOperation(nullptr,L"PowerPoint");
+    auto complete = [operation,path](bool exported) {
+        FinishOperation(operation,exported?OperationPhase::Success:OperationPhase::Failure,
+            exported?Tr(L"Completed successfully.",L"操作已完成。"):Tr(L"Operation failed. Existing files were preserved.",L"操作失败，已保留原文件。"));
     };
     if (!QueuePreparedReport(Ui().hwnd, [path] { return PreparePptxExport(path); }, complete)) complete(false);
 }

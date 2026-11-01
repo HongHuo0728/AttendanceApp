@@ -1,16 +1,17 @@
-# AttendanceApp 2.1.0
+# AttendanceApp 2.1.1 LTS
 
 AttendanceApp is an offline C++17 / Win32 attendance manager for Windows 10 and later. Each user runs an independent local copy. It manages courses, rosters, lessons, attendance, recovery files and reports without a server.
 
-## What is new
+## What is new in 2.1.1 LTS
 
-- Unified Settings form with one title, consistent keyboard order and focus scrolling; buffered control drawing and visibility-safe redraw transactions address operation/settings/theme flicker.
+- Settings save immediately without an Apply button. Reset All Settings and Close remain visible in a fixed footer while only the options scroll.
+- Cached settings reopen with a fresh animation; scrolling, dropdowns and command menus share continuous motion and cubic Bezier easing.
+- Paper-style popup reveal, rounded surfaces, consistent spacing, wrapped action labels and stable-width statistics retain the existing themes.
+- Save, export, backup and reset operations report real working/success/failure states. File import and save, report generation and backup writes use background snapshots.
+- Atomic settings reset, immediate advanced-filter refresh, pure workbook parsing and per-window task callbacks address maintenance defects.
+- New maintenance messages are available in all 20 interface languages. Existing V6 workbooks and settings remain compatible.
 
-- Six statuses: Present, Absent, Late, Other, Leave and Pending. New roster records and copied lessons start as Pending.
-- Batch status and note changes, make-up attendance with a required reason, searchable lesson selection, lesson rename/copy and courses created from existing course templates.
-- V6 workbooks, V1-V5 import and separate V5 compatibility export.
-- Calendar-week statistics, exact student matching within the current course and scoped bulk actions.
-- Small isolated tests, one reusable Release build tree and bounded history backups.
+The 2.1 LTS series is maintained on [2.1LTS](https://github.com/HongHuo0728/AttendanceApp/tree/2.1LTS). Subsequent 2.1.x releases provide accumulated maintenance fixes; no fixed end-of-support date is specified.
 
 Attendance rate is Present / (Total - Leave - Pending). A zero denominator displays No data. Late remains separate from Present. Leave and Pending do not trigger absence/late alerts.
 
@@ -68,6 +69,7 @@ User data is separate from build cleanup. Existing protected recovery files are 
 - [File format](docs/FILE_FORMAT.md)
 - [Testing and storage](docs/TESTING_AND_STORAGE.md)
 - [Changelog](CHANGELOG.md)
+- [2.1.1 implementation and validation audit](docs/V2.1.1_AUDIT.md)
 - [2.1.0 implementation and validation audit](docs/V2.1.0_AUDIT.md)
 - [Historical 2.0.4 audit](docs/V2.0.4_AUDIT.md)
 

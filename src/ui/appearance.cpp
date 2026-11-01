@@ -107,6 +107,7 @@ void ApplyVisualSettings(bool preserveThemeTransition){
         ShowWindow(GetDlgItem(Ui().hwnd, IDC_STAT_ISSUES), Settings().showStatsCards ? SW_SHOW : SW_HIDE);
         ShowWindow(GetDlgItem(Ui().hwnd, IDC_STAT_VISIBLE), Settings().showStatsCards ? SW_SHOW : SW_HIDE);
         ShowWindow(GetDlgItem(Ui().hwnd, IDC_HINT), Settings().showFooterHint ? SW_SHOW : SW_HIDE);
+        if(Ui().list)ListView_SetExtendedListViewStyleEx(Ui().list,LVS_EX_GRIDLINES,Settings().showTableGrid?LVS_EX_GRIDLINES:0);
         KillTimer(Ui().hwnd, 1);
         if (Settings().autosaveIntervalSeconds > 0) {
             SetTimer(Ui().hwnd, 1, (UINT)Settings().autosaveIntervalSeconds * 1000, nullptr);

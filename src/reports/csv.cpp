@@ -1,3 +1,6 @@
+#include "core/constants.h"
+#include "settings/state.h"
+#include "ui/feedback.h"
 #include "model/query.h"
 #include "core/status.h"
 #include "reports/csv.h"
@@ -19,13 +22,14 @@ std::function<bool()> PrepareCsvExport(const std::wstring& path) {
     const ReportLabels statuses = {StatusDisplayText(L"Present"), StatusDisplayText(L"Absent"),
         StatusDisplayText(L"Late"), StatusDisplayText(L"Other"), StatusDisplayText(L"Leave"), StatusDisplayText(L"Pending")};
     auto records=Document().Records();
-    records.erase(std::remove_if(records.begin(),records.end(),[](const auto& r){return !RecordMatchesStatsRange(r);}),records.end());
-    return [path, headers, statuses, records = std::move(records)] {
+    auto range=Document().statsRange;auto today=TodayDateKey();
+    return [path, headers, statuses, range, today, records = std::move(records)] {
         return WriteStreamFileAtomically(std::filesystem::path(path), [&](std::ofstream& file) {
             file << "\xEF\xBB\xBF";
             file << CsvCell(headers[0]) << ',' << CsvCell(headers[1]) << ','
                  << CsvCell(headers[2]) << ',' << CsvCell(headers[3]) << '\n';
             for (const auto& record : records) {
+                if(!RecordMatchesRangeAt(record,range,today))continue;
                 file << CsvCell(record.dateTime) << ',' << CsvCell(record.name) << ','
                      << CsvCell(ReportStatus(record.status, statuses)) << ',' << CsvCell(record.other) << '\n';
                 if (!file) return false;
@@ -36,16 +40,17 @@ std::function<bool()> PrepareCsvExport(const std::wstring& path) {
 }
 
 void ExportCsv() {
+    if(OperationButtonBusy(GetDlgItem(Ui().hwnd,IDC_EXPORT_CSV)))return;
     if (Document().Records().empty()) {
         ShowMessage(Tr(L"There are no records to export.", L"\u6ca1\u6709\u53ef\u5bfc\u51fa\u7684\u8bb0\u5f55\u3002"));
         return;
     }
     std::wstring path = SaveCsvFileDialog();
     if (path.empty()) return;
-    auto complete = [](bool exported) {
-        ShowMessage(exported
-            ? Tr(L"CSV exported successfully.", L"CSV \u5bfc\u51fa\u6210\u529f\u3002")
-            : Tr(L"Could not export the CSV file.", L"\u65e0\u6cd5\u5bfc\u51fa CSV \u6587\u4ef6\u3002"));
+    auto operation=BeginOperation(GetDlgItem(Ui().hwnd,IDC_EXPORT_CSV),L"CSV");
+    auto complete = [operation,path](bool exported) {
+        FinishOperation(operation,exported?OperationPhase::Success:OperationPhase::Failure,
+            exported?Tr(L"Completed successfully.",L"操作已完成。"):Tr(L"Operation failed. Existing files were preserved.",L"操作失败，已保留原文件。"));
     };
     if (!QueuePreparedReport(Ui().hwnd, [path] { return PrepareCsvExport(path); }, complete)) complete(false);
 }

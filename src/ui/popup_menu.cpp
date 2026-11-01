@@ -1,3 +1,4 @@
+#include "ui/motion.h"
 #include "ui/popup_menu.h"
 #include "animation/scheduler.h"
 #include "ui/drawing.h"
@@ -32,19 +33,21 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 void RegisterThemedMenuClass();
 int MeasureThemedMenuWidth(const std::vector<ThemedMenuItem>& items);
 
+int MenuRowHeight(const ThemedMenuState* state,int index){
+    if(state->items[index].separator)return THEMED_MENU_SEPARATOR_H;
+    return index<(int)state->itemHeights.size()?state->itemHeights[index]:THEMED_MENU_ITEM_H;
+}
 int ThemedMenuItemTop(const ThemedMenuState* state, int index){
     int y = THEMED_MENU_PAD_Y;
     for (int i = 0; i < index; ++i) {
-        y += state->items[i].separator ? THEMED_MENU_SEPARATOR_H : THEMED_MENU_ITEM_H;
+        y += MenuRowHeight(state,i);
     }
     return y;
 }
 
 int ThemedMenuTotalHeight(const ThemedMenuState* state){
     int height = THEMED_MENU_PAD_Y * 2;
-    for (const auto& item : state->items) {
-        height += item.separator ? THEMED_MENU_SEPARATOR_H : THEMED_MENU_ITEM_H;
-    }
+    for(int i=0;i<(int)state->items.size();++i)height+=MenuRowHeight(state,i);
     return height;
 }
 
@@ -63,7 +66,7 @@ int ThemedMenuHitTest(ThemedMenuState* state, int y){
     int contentY = y - ThemedMenuContentTop(state) + state->scrollY;
     for (int i = 0; i < (int)state->items.size(); ++i) {
         int top = ThemedMenuItemTop(state, i);
-        int height = state->items[i].separator ? THEMED_MENU_SEPARATOR_H : THEMED_MENU_ITEM_H;
+        int height = MenuRowHeight(state,i);
         if (contentY >= top && contentY < top + height) {
             return state->items[i].separator ? -1 : i;
         }
@@ -96,7 +99,7 @@ void QueueThemedMenuSmoothScroll(HWND hwnd, ThemedMenuState* state, int wheelDel
     if (!hwnd || !state || !state->scrollable || wheelDelta == 0) return;
     double pixelDelta = -(double)wheelDelta / WHEEL_DELTA
         * WheelScrollLineCount() * THEMED_MENU_ITEM_H;
-    if (!Settings().smoothScrollingEnabled) {
+    if (!Settings().smoothScrollingEnabled || Settings().animationLevel==AnimationLevel::Off) {
         int immediateDelta = (int)std::lround(pixelDelta);
         if (immediateDelta == 0) immediateDelta = wheelDelta < 0 ? 1 : -1;
         ScrollThemedMenu(hwnd, state, immediateDelta);
@@ -175,7 +178,7 @@ void EnsureThemedMenuItemVisible(HWND hwnd, ThemedMenuState* state, int index){
     state->smoothScrollTargetY = state->scrollY;
     state->smoothScrollStartMs = 0;
     int top = ThemedMenuItemTop(state, index);
-    int bottom = top + (state->items[index].separator ? THEMED_MENU_SEPARATOR_H : THEMED_MENU_ITEM_H);
+    int bottom = top + (MenuRowHeight(state,index));
     int viewportHeight = std::max(1, ThemedMenuContentBottom(state) - ThemedMenuContentTop(state));
     int next = state->scrollY;
     if (top < next) next = top;
@@ -206,14 +209,15 @@ RECT ThemedMenuItemRect(HWND hwnd, const ThemedMenuState* state, int index){
     if (!state || index < 0 || index >= (int)state->items.size() || state->items[index].separator) {
         return rc;
     }
-    double reveal = GetAnimationValue(hwnd, AnimChannel::Reveal, 1.0);
-    int slideOffset = -(int)std::lround((1.0 - reveal) * THEMED_MENU_SLIDE_PX);
+    int slideOffset = 0;
     int top = ThemedMenuItemTop(state, index) - state->scrollY + ThemedMenuContentTop(state) + slideOffset;
-    return RECT{6, top, rc.right - 6, top + THEMED_MENU_ITEM_H};
+    return RECT{6, top, rc.right - 6, top + MenuRowHeight(state,index)};
 }
 
 void ApplyThemedMenuReveal(HWND hwnd, ThemedMenuState* state){
     if (!hwnd || !state) return;
+    double reveal=GetAnimationValue(hwnd,AnimChannel::Reveal,1)*(1-GetAnimationValue(hwnd,AnimChannel::Close,0));
+    ClipPaperWindow(hwnd,reveal,GetPropW(hwnd,L"Attendance.PopupUp")!=nullptr);
     InvalidateRect(hwnd, nullptr, FALSE);
 }
 
@@ -224,53 +228,45 @@ void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState* state){
     COLORREF fill = BlendColor(Ui().COLOR_BG, Ui().COLOR_ROW_ALT, reveal);
     COLORREF border = BlendColor(Ui().COLOR_PANEL, Ui().COLOR_BORDER, reveal);
     COLORREF hover = Ui().COLOR_HOVER;
-    int blurRadius = (int)std::lround(reveal * 10.0);
-
-    HBRUSH dcBrush = (HBRUSH)GetStockObject(DC_BRUSH);
-    SetDCBrushColor(hdc, fill);
-    FillRect(hdc, &rc, dcBrush);
-
-    HGDIOBJ oldGlowPen = SelectObject(hdc, GetStockObject(DC_PEN));
-    HGDIOBJ oldGlowBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
-    for (int i = 0; i < blurRadius; i += 3) {
-        RECT glow{rc.left + i, rc.top + i, rc.right - i, rc.bottom - i};
-        SetDCPenColor(hdc,
-            BlendColor(Ui().COLOR_BG, Ui().COLOR_SELECTED, reveal * (1.0 - i / 12.0)));
-        Rectangle(hdc, glow.left, glow.top, glow.right, glow.bottom);
-    }
-    SelectObject(hdc, oldGlowBrush);
-    SelectObject(hdc, oldGlowPen);
+    HBRUSH dcBrush=(HBRUSH)GetStockObject(DC_BRUSH);
+    SetDCBrushColor(hdc,Ui().COLOR_BG);FillRect(hdc,&rc,dcBrush);
+    PaintSurface(hdc,rc,fill);
 
     HGDIOBJ oldFont = SelectObject(hdc, Ui().font);
     SetBkMode(hdc, TRANSPARENT);
 
     const int contentTop = ThemedMenuContentTop(state);
     const int contentBottom = ThemedMenuContentBottom(state);
-    const int slideOffset = -(int)std::lround((1.0 - reveal) * THEMED_MENU_SLIDE_PX);
+    const int slideOffset = 0;
     SaveDC(hdc);
     IntersectClipRect(hdc, 0, contentTop, rc.right, contentBottom);
     for (int i = 0; i < (int)state->items.size(); ++i) {
-        double itemProgress = EaseOut(reveal);
+        double itemProgress = ItemEntrance(GetAnimationValue(hwnd,AnimChannel::Items,1),std::max(0,i-state->scrollY/THEMED_MENU_ITEM_H));
         int top = ThemedMenuItemTop(state, i) - state->scrollY + contentTop + slideOffset;
-        int itemHeight = state->items[i].separator ? THEMED_MENU_SEPARATOR_H : THEMED_MENU_ITEM_H;
+        int itemHeight = MenuRowHeight(state,i);
         if (top + itemHeight <= contentTop || top >= contentBottom) continue;
         if (state->items[i].separator) {
             DrawSoftDivider(hdc, 12, rc.right - 12, top + 6);
             continue;
         }
 
-        RECT itemRc{0, top, rc.right, top + THEMED_MENU_ITEM_H};
+        RECT itemRc{6,top,rc.right-6,top+itemHeight};
         if (i == state->hover) {
             double hot = GetAnimationValue(hwnd, AnimChannel::Hover, 1.0);
             SetDCBrushColor(hdc, BlendColor(fill, hover, hot));
-            FillRect(hdc, &itemRc, dcBrush);
+            HGDIOBJ oldPen=SelectObject(hdc,GetStockObject(NULL_PEN));HGDIOBJ oldBrush=SelectObject(hdc,dcBrush);
+            RoundRect(hdc,itemRc.left,itemRc.top,itemRc.right,itemRc.bottom,12,12);
+            SelectObject(hdc,oldBrush);SelectObject(hdc,oldPen);
         }
 
         RECT textRc = itemRc;
         textRc.left += 16;
         textRc.right -= state->scrollable ? 26 : 16;
         SetTextColor(hdc, BlendColor(Ui().COLOR_MUTED, Ui().COLOR_TEXT, itemProgress));
-        DrawTextW(hdc, state->items[i].text.c_str(), -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        RECT measured{0,0,textRc.right-textRc.left,0};
+        DrawTextW(hdc,state->items[i].text.c_str(),-1,&measured,DT_CALCRECT|DT_WORDBREAK|DT_NOPREFIX);
+        textRc.top+=(itemHeight-measured.bottom)/2;
+        DrawTextW(hdc,state->items[i].text.c_str(),-1,&textRc,DT_LEFT|DT_WORDBREAK|DT_NOPREFIX);
     }
     RestoreDC(hdc, -1);
 
@@ -298,7 +294,7 @@ void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState* state){
     HGDIOBJ oldPen = SelectObject(hdc, GetStockObject(DC_PEN));
     HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
     SetDCPenColor(hdc, border);
-    Rectangle(hdc, rc.left, rc.top, rc.right, rc.bottom);
+    // The rounded surface and shadow carry the popup boundary.
     SelectObject(hdc, oldBrush);
     SelectObject(hdc, oldPen);
 }
@@ -356,7 +352,7 @@ void CloseThemedPopupMenu(HWND hwnd, ThemedMenuState* state, int selected){
     state->selected = selected;
     state->closing = true;
     ReleaseCapture();
-    BeginAnimatedClose(hwnd, 160);
+    BeginAnimatedClose(hwnd, Visual::CloseMs);
 }
 
 LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam){
@@ -389,7 +385,8 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             state->hasMousePoint = true;
             if (state->keyboardMode && !actuallyMoved) return 0;
             state->keyboardMode = false;
-            int next = ThemedMenuHitTest(state, mouse.y);
+            RECT viewport=PaperViewport(state->width,state->height,GetAnimationValue(hwnd,AnimChannel::Reveal,1),GetPropW(hwnd,L"Attendance.PopupUp")!=nullptr);
+            int next=PtInRect(&viewport,mouse)?ThemedMenuHitTest(state,mouse.y):-1;
             if (next != state->hover) {
                 RECT oldRc = ThemedMenuItemRect(hwnd, state, state->hover);
                 state->hover = next;
@@ -410,6 +407,7 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         break;
     case WM_LBUTTONDOWN:
         if (state && !state->closing) {
+            SetPropW(hwnd,L"Attendance.MenuPressed",(HANDLE)1);
             state->smoothScrollStartY = state->scrollY;
             state->smoothScrollCurrentY = state->scrollY;
             state->smoothScrollTargetY = state->scrollY;
@@ -431,7 +429,10 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 0;
     case WM_LBUTTONUP:
         if (state && !state->closing) {
-            int hit = ThemedMenuHitTest(state, GET_Y_LPARAM(lParam));
+            if(!RemovePropW(hwnd,L"Attendance.MenuPressed"))return 0;
+            POINT point{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
+            RECT viewport=PaperViewport(state->width,state->height,GetAnimationValue(hwnd,AnimChannel::Reveal,1),GetPropW(hwnd,L"Attendance.PopupUp")!=nullptr);
+            int hit=PtInRect(&viewport,point)?ThemedMenuHitTest(state,point.y):-1;
             CloseThemedPopupMenu(hwnd, state, hit >= 0 ? state->items[hit].command : 0);
         }
         return 0;
@@ -487,8 +488,8 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         break;
     case WM_APP_ANIMATION_TICK:
         AcknowledgeAnimationTick(hwnd);
-        if (state && !state->closing) {
-            UpdateThemedMenuSmoothScroll(hwnd, state);
+        if (state) {
+            if(!state->closing)UpdateThemedMenuSmoothScroll(hwnd, state);
             ApplyThemedMenuReveal(hwnd, state);
         }
         RedrawWindow(hwnd, nullptr, nullptr,
@@ -514,7 +515,7 @@ void RegisterThemedMenuClass(){
     if (registered) return;
 
     WNDCLASSW wc{};
-    wc.style = CS_HREDRAW | CS_VREDRAW;
+    wc.style = CS_HREDRAW | CS_VREDRAW | CS_DROPSHADOW;
     wc.lpfnWndProc = ThemedMenuProc;
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.lpszClassName = L"AttendanceThemedPopupMenu";
@@ -536,7 +537,8 @@ int MeasureThemedMenuWidth(const std::vector<ThemedMenuItem>& items){
     }
     SelectObject(hdc, oldFont);
     ReleaseDC(Ui().hwnd, hdc);
-    return std::min(width, 460);
+    MONITORINFO monitor{sizeof(monitor)};GetMonitorInfoW(MonitorFromWindow(Ui().hwnd,MONITOR_DEFAULTTONEAREST),&monitor);
+    return std::min(width,std::max(160,(int)(monitor.rcWork.right-monitor.rcWork.left)-32));
 }
 
 int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem>& items){
@@ -551,6 +553,10 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem>& items){
     RECT buttonRc{};
     GetWindowRect(button, &buttonRc);
     int width = MeasureThemedMenuWidth(items);
+    HDC measureDc=GetDC(button);HGDIOBJ oldFont=SelectObject(measureDc,Ui().font);
+    for(const auto& item:items){RECT text{0,0,std::max(1,width-40),0};DrawTextW(measureDc,item.text.c_str(),-1,&text,DT_CALCRECT|DT_WORDBREAK|DT_NOPREFIX);
+        state.itemHeights.push_back(std::max(Settings().layoutDensity==LayoutDensity::Compact?36:40,(int)text.bottom+16));}
+    SelectObject(measureDc,oldFont);ReleaseDC(button,measureDc);
     state.contentHeight = ThemedMenuTotalHeight(&state);
     int height = state.contentHeight;
     int x = buttonRc.right - width;
@@ -592,7 +598,8 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem>& items){
         return 0;
     }
 
-    StartWindowReveal(popup, 180);
+    if(y<buttonRc.top)SetPropW(popup,L"Attendance.PopupUp",(HANDLE)1);
+    StartWindowReveal(popup, Visual::OpenMs);
     ShowWindow(popup, SW_SHOWNOACTIVATE);
     ApplyThemedMenuReveal(popup, &state);
     SetCapture(popup);

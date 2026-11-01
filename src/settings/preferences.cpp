@@ -7,6 +7,7 @@
 #include "core/encoding.h"
 #include "settings/state.h"
 #include "ui/state.h"
+#include "ui/settings_window.h"
 #include "core/constants.h"
 
 namespace attendance {
@@ -30,40 +31,66 @@ std::string BoolSetting(bool value){
     return value ? "1" : "0";
 }
 
-bool SaveSettings(){
+SettingsSnapshot CaptureSettings(){
+    SettingsSnapshot result;
+    result.language = Settings().language;
+    result.theme = Settings().theme;
+    result.accentTone = Settings().accentTone;
+    result.textScale = Settings().textScale;
+    result.layoutDensity = Settings().layoutDensity;
+    result.animationLevel = Settings().animationLevel;
+    result.particleLevel = Settings().particleLevel;
+    result.reportTemplate = Settings().reportTemplate;
+    result.particlesEnabled = Settings().particlesEnabled;
+    result.riskAlertsEnabled = Settings().riskAlertsEnabled;
+    result.autosavePromptEnabled = Settings().autosavePromptEnabled;
+    result.commandPaletteEnabled = Settings().commandPaletteEnabled;
+    result.advancedFilterEnabled = Settings().advancedFilterEnabled;
+    result.smoothScrollingEnabled = Settings().smoothScrollingEnabled;
+    result.showStatsCards = Settings().showStatsCards;
+    result.showFooterHint = Settings().showFooterHint;
+    result.showTableGrid = Settings().showTableGrid;
+    result.autosaveIntervalSeconds = Settings().autosaveIntervalSeconds;
+    result.scrollAnimationFps = Settings().scrollAnimationFps.load();
+    return result;
+}
+
+bool WriteSettingsSnapshot(const SettingsSnapshot& settings){
     auto path = SettingsFilePath();
     if (path.empty()) return false;
     std::ostringstream data;
-    data << "language=" << LanguageToString(Settings().language) << "\n";
+    data << "language=" << LanguageToString(settings.language) << "\n";
     data << "advanced_personalization=1\n";
-    data << "theme=" << (int)Settings().theme << "\n";
-    data << "accent_tone=" << (int)Settings().accentTone << "\n";
-    data << "text_scale=" << (int)Settings().textScale << "\n";
-    data << "layout_density=" << (int)Settings().layoutDensity << "\n";
-    data << "show_stats_cards=" << BoolSetting(Settings().showStatsCards) << "\n";
-    data << "show_footer_hint=" << BoolSetting(Settings().showFooterHint) << "\n";
-    data << "show_table_grid=" << BoolSetting(Settings().showTableGrid) << "\n";
-    data << "autosave_interval=" << Settings().autosaveIntervalSeconds << "\n";
-    data << "font=" << WideToUtf8(Settings().fontFamily) << "\n";
-    data << "default_save_dir=" << WideToUtf8(Settings().defaultSaveDir) << "\n";
-    data << "particles=" << (Settings().particlesEnabled ? "1" : "0") << "\n";
-    data << "animation_level=" << (int)Settings().animationLevel << "\n";
-    data << "particle_level=" << (int)Settings().particleLevel << "\n";
-    data << "report_template=" << (int)Settings().reportTemplate << "\n";
-    data << "risk_alerts=" << BoolSetting(Settings().riskAlertsEnabled) << "\n";
-    data << "autosave_prompt=" << BoolSetting(Settings().autosavePromptEnabled) << "\n";
-    data << "command_palette=" << BoolSetting(Settings().commandPaletteEnabled) << "\n";
-    data << "advanced_filter=" << BoolSetting(Settings().advancedFilterEnabled) << "\n";
-    data << "smooth_scrolling=" << BoolSetting(Settings().smoothScrollingEnabled) << "\n";
-    data << "scroll_animation_fps=" << Settings().scrollAnimationFps.load() << "\n";
-    data << "shortcut_save=" << WideToUtf8(Settings().shortcutSave) << "\n";
-    data << "shortcut_import=" << WideToUtf8(Settings().shortcutImport) << "\n";
-    data << "shortcut_undo=" << WideToUtf8(Settings().shortcutUndo) << "\n";
-    data << "shortcut_redo=" << WideToUtf8(Settings().shortcutRedo) << "\n";
-    data << "shortcut_command=" << WideToUtf8(Settings().shortcutCommand) << "\n";
-    data << "shortcut_fullscreen=" << WideToUtf8(Settings().shortcutFullscreen) << "\n";
+    data << "theme=" << (int)settings.theme << "\n";
+    data << "accent_tone=" << (int)settings.accentTone << "\n";
+    data << "text_scale=" << (int)settings.textScale << "\n";
+    data << "layout_density=" << (int)settings.layoutDensity << "\n";
+    data << "show_stats_cards=" << BoolSetting(settings.showStatsCards) << "\n";
+    data << "show_footer_hint=" << BoolSetting(settings.showFooterHint) << "\n";
+    data << "show_table_grid=" << BoolSetting(settings.showTableGrid) << "\n";
+    data << "autosave_interval=" << settings.autosaveIntervalSeconds << "\n";
+    data << "font=" << WideToUtf8(settings.fontFamily) << "\n";
+    data << "default_save_dir=" << WideToUtf8(settings.defaultSaveDir) << "\n";
+    data << "particles=" << (settings.particlesEnabled ? "1" : "0") << "\n";
+    data << "animation_level=" << (int)settings.animationLevel << "\n";
+    data << "particle_level=" << (int)settings.particleLevel << "\n";
+    data << "report_template=" << (int)settings.reportTemplate << "\n";
+    data << "risk_alerts=" << BoolSetting(settings.riskAlertsEnabled) << "\n";
+    data << "autosave_prompt=" << BoolSetting(settings.autosavePromptEnabled) << "\n";
+    data << "command_palette=" << BoolSetting(settings.commandPaletteEnabled) << "\n";
+    data << "advanced_filter=" << BoolSetting(settings.advancedFilterEnabled) << "\n";
+    data << "smooth_scrolling=" << BoolSetting(settings.smoothScrollingEnabled) << "\n";
+    data << "scroll_animation_fps=" << settings.scrollAnimationFps << "\n";
+    data << "shortcut_save=" << WideToUtf8(settings.shortcutSave) << "\n";
+    data << "shortcut_import=" << WideToUtf8(settings.shortcutImport) << "\n";
+    data << "shortcut_undo=" << WideToUtf8(settings.shortcutUndo) << "\n";
+    data << "shortcut_redo=" << WideToUtf8(settings.shortcutRedo) << "\n";
+    data << "shortcut_command=" << WideToUtf8(settings.shortcutCommand) << "\n";
+    data << "shortcut_fullscreen=" << WideToUtf8(settings.shortcutFullscreen) << "\n";
     return WriteBinaryFileAtomically(path, data.str());
 }
+
+bool SaveSettings(){ return WriteSettingsSnapshot(CaptureSettings()); }
 
 bool ParseBoolSetting(const std::string& value, bool fallback){
     if (value == "1") return true;
@@ -73,6 +100,36 @@ bool ParseBoolSetting(const std::string& value, bool fallback){
 
 bool DecodeSettingText(const std::string& value, std::wstring& output){
     return DecodeUtf8Field(value, MAX_SETTINGS_FILE_BYTES, output);
+}
+
+void ApplySettingsSnapshot(const SettingsSnapshot& settings){
+    Settings().language = settings.language;
+    Settings().theme = settings.theme;
+    Settings().accentTone = settings.accentTone;
+    Settings().textScale = settings.textScale;
+    Settings().layoutDensity = settings.layoutDensity;
+    Settings().fontFamily = (settings.fontFamily);
+    Settings().defaultSaveDir = (settings.defaultSaveDir);
+    Settings().animationLevel = settings.animationLevel;
+    Settings().particleLevel = settings.particleLevel;
+    Settings().reportTemplate = settings.reportTemplate;
+    Settings().particlesEnabled = settings.particlesEnabled;
+    Settings().riskAlertsEnabled = settings.riskAlertsEnabled;
+    Settings().autosavePromptEnabled = settings.autosavePromptEnabled;
+    Settings().commandPaletteEnabled = settings.commandPaletteEnabled;
+    Settings().advancedFilterEnabled = settings.advancedFilterEnabled;
+    Settings().smoothScrollingEnabled = settings.smoothScrollingEnabled;
+    Settings().showStatsCards = settings.showStatsCards;
+    Settings().showFooterHint = settings.showFooterHint;
+    Settings().showTableGrid = settings.showTableGrid;
+    Settings().autosaveIntervalSeconds = settings.autosaveIntervalSeconds;
+    Settings().scrollAnimationFps.store(settings.scrollAnimationFps);
+    Settings().shortcutSave = (settings.shortcutSave);
+    Settings().shortcutImport = (settings.shortcutImport);
+    Settings().shortcutUndo = (settings.shortcutUndo);
+    Settings().shortcutRedo = (settings.shortcutRedo);
+    Settings().shortcutCommand = (settings.shortcutCommand);
+    Settings().shortcutFullscreen = (settings.shortcutFullscreen);
 }
 
 void LoadSettings(){
@@ -133,73 +190,21 @@ void LoadSettings(){
         }
     }
 
-    Settings().language = settings.language;
-    Settings().theme = settings.theme;
-    Settings().accentTone = settings.accentTone;
-    Settings().textScale = settings.textScale;
-    Settings().layoutDensity = settings.layoutDensity;
-    Settings().fontFamily = std::move(settings.fontFamily);
-    Settings().defaultSaveDir = std::move(settings.defaultSaveDir);
-    Settings().animationLevel = settings.animationLevel;
-    Settings().particleLevel = settings.particleLevel;
-    Settings().reportTemplate = settings.reportTemplate;
-    Settings().particlesEnabled = settings.particlesEnabled;
-    Settings().riskAlertsEnabled = settings.riskAlertsEnabled;
-    Settings().autosavePromptEnabled = settings.autosavePromptEnabled;
-    Settings().commandPaletteEnabled = settings.commandPaletteEnabled;
-    Settings().advancedFilterEnabled = settings.advancedFilterEnabled;
-    Settings().smoothScrollingEnabled = settings.smoothScrollingEnabled;
-    Settings().showStatsCards = settings.showStatsCards;
-    Settings().showFooterHint = settings.showFooterHint;
-    Settings().showTableGrid = settings.showTableGrid;
-    Settings().autosaveIntervalSeconds = settings.autosaveIntervalSeconds;
-    Settings().scrollAnimationFps.store(settings.scrollAnimationFps);
-    Settings().shortcutSave = std::move(settings.shortcutSave);
-    Settings().shortcutImport = std::move(settings.shortcutImport);
-    Settings().shortcutUndo = std::move(settings.shortcutUndo);
-    Settings().shortcutRedo = std::move(settings.shortcutRedo);
-    Settings().shortcutCommand = std::move(settings.shortcutCommand);
-    Settings().shortcutFullscreen = std::move(settings.shortcutFullscreen);
+    ApplySettingsSnapshot(settings);
 }
 
-void ResetSettings(){
-    auto path = SettingsFilePath();
-    if (!path.empty()) {
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-    }
-    Settings().language = UiLanguage::English;
-    Settings().theme = UiTheme::Dark;
-    Settings().accentTone = AccentTone::Neutral;
-    Settings().textScale = TextScale::Standard;
-    Settings().layoutDensity = LayoutDensity::Comfortable;
-    Settings().fontFamily = L"Segoe UI";
-    Settings().defaultSaveDir.clear();
-    Settings().particlesEnabled = true;
-    Settings().animationLevel = AnimationLevel::Advanced;
-    Settings().particleLevel = ParticleLevel::Medium;
-    Settings().reportTemplate = ReportTemplate::Complete;
-    Settings().riskAlertsEnabled = true;
-    Settings().autosavePromptEnabled = true;
-    Settings().commandPaletteEnabled = true;
-    Settings().advancedFilterEnabled = true;
-    Settings().smoothScrollingEnabled = true;
-    Settings().showStatsCards = true;
-    Settings().showFooterHint = true;
-    Settings().showTableGrid = true;
-    Settings().autosaveIntervalSeconds = 30;
-    Settings().scrollAnimationFps.store(60);
+bool ResetSettings(){
+    SettingsSnapshot defaults;
+    if (!WriteSettingsSnapshot(defaults)) return false;
+    ApplySettingsSnapshot(defaults);
     SignalAnimationScheduler();
-    Settings().shortcutSave = L"Ctrl+S";
-    Settings().shortcutImport = L"Ctrl+O";
-    Settings().shortcutUndo = L"Ctrl+Z";
-    Settings().shortcutRedo = L"Ctrl+Y";
-    Settings().shortcutCommand = L"Ctrl+K";
-    Settings().shortcutFullscreen = L"F11";
+    return true;
 }
 
 bool SaveSettingsWithFeedback(HWND owner){
-    if (SaveSettings()) return true;
+    bool saved = SaveSettings();
+    if (owner && owner == Ui().settingsWindow) { SetSettingsSaveResult(saved); return saved; }
+    if (saved) return true;
     ThemedMessageBox(owner ? owner : Ui().hwnd,
         Tr(L"Could not save the settings file. Your changes will remain active only for this session.",
             L"\u65e0\u6cd5\u4fdd\u5b58\u8bbe\u7f6e\u6587\u4ef6\u3002\u672c\u6b21\u66f4\u6539\u53ea\u4f1a\u5728\u5f53\u524d\u4f1a\u8bdd\u4e2d\u751f\u6548\u3002"),

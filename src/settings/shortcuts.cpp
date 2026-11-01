@@ -1,3 +1,4 @@
+#include "model/state.h"
 #include "settings/shortcuts.h"
 #include "animation/scheduler.h"
 #include "core/text.h"
@@ -127,6 +128,7 @@ bool ApplyShortcutConfigText(const std::wstring& config){
 }
 
 bool ExecuteMainShortcut(WPARAM key){
+    if(Document().loading)return true;
     if (ShortcutMatches(Settings().shortcutSave, key)) SaveAttendance();
     else if (ShortcutMatches(Settings().shortcutImport, key)) ImportAttendance();
     else if (ShortcutMatches(Settings().shortcutUndo, key)) UndoLast();

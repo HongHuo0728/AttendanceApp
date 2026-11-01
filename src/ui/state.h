@@ -28,6 +28,12 @@ struct UiState {
     int scrollX = 0;
     int scrollY = 0;
     int settingsScrollY = 0;
+    double settingsScrollCurrent = 0, settingsScrollStart = 0, settingsScrollTarget = 0;
+    uint64_t settingsScrollStartMs = 0;
+    int settingsBodyTop = 78, settingsBodyBottom = 600;
+    bool settingsClosing = false, settingsSaveFailed = false;
+    UINT_PTR settingsCloseSerial = 0;
+    bool settingsLayoutActive = false;
     int contentW = 0;
     int contentH = 0;
     int openThemedPopupMenus = 0;

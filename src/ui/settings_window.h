@@ -10,5 +10,7 @@ void ApplyLanguageAtomically(HWND settingsWindow);
 void ResetAppearanceValues();
 void PrewarmSettingsWindow();
 void ShowSettingsWindow();
+void HideSettingsWindow();
+void SetSettingsSaveResult(bool saved);
 
 } // namespace attendance

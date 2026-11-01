@@ -16,9 +16,9 @@ HFONT CreateUiFont(int height, int weight){
 }
 
 int ComboItemHeight(){
-    if (Settings().textScale == TextScale::Small) return 28;
-    if (Settings().textScale == TextScale::Large) return 36;
-    return 30;
+    int minimum=Settings().layoutDensity==LayoutDensity::Compact?36:40;
+    if(Settings().textScale==TextScale::Large)minimum+=8;
+    return minimum;
 }
 
 int CALLBACK EnumFontFamilyProc(const LOGFONTW* logFont, const TEXTMETRICW*, DWORD, LPARAM lParam){

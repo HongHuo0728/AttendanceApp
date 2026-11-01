@@ -50,6 +50,7 @@ double EaseOut(double value){
 
 double CubicBezierEase(double value, double x1, double y1, double x2, double y2){
     value = std::clamp(value, 0.0, 1.0);
+    if(value<=0 || value>=1)return value;
     auto sample = [](double t, double p1, double p2) {
         double inverse = 1.0 - t;
         return 3.0 * inverse * inverse * t * p1
@@ -105,7 +106,7 @@ void EnsureAnimationThread(){
         Clock::time_point nextStandardDeadline{};
         int scheduledFps = 0;
         std::vector<HWND> tickWindows;
-        std::vector<HWND> doneWindows;
+        std::vector<std::pair<HWND,UINT_PTR>> doneWindows;
         tickWindows.reserve(32);
         doneWindows.reserve(8);
         auto waitForFallbackWake = [&](Clock::time_point deadline) {
@@ -227,16 +228,15 @@ void EnsureAnimationThread(){
                             anim.current = anim.target;
                             anim.active = false;
                             changed = true;
-                            if (anim.closeOnDone) doneWindows.push_back(hwndEntry.first);
+                            if (anim.closeOnDone) doneWindows.push_back({hwndEntry.first,anim.completionToken});
                         } else {
-                            double eased = channelEntry.first == (int)AnimChannel::ThemeTransition
+                            double eased = channelEntry.first == (int)AnimChannel::Items ? t : channelEntry.first == (int)AnimChannel::ThemeTransition
                                 ? CubicBezierEase(t, 0.4, 0.0, 0.2, 1.0)
                                 : channelEntry.first == (int)AnimChannel::SmoothScroll
                                 ? CubicBezierEase(t, 0.22, 1.0, 0.36, 1.0)
-                                : (channelEntry.first == (int)AnimChannel::Reveal
-                                    || channelEntry.first == (int)AnimChannel::Close)
-                                    ? EaseOut(t)
-                                    : EaseInOut(t);
+                                : channelEntry.first == (int)AnimChannel::Close || anim.target < anim.start
+                                    ? CubicBezierEase(t,.4,0,1,1)
+                                    : CubicBezierEase(t,.22,1,.36,1);
                             anim.current = anim.start + (anim.target - anim.start) * eased;
                             changed = true;
                         }
@@ -253,8 +253,8 @@ void EnsureAnimationThread(){
                     Animations().pendingAnimationTicks.erase(hwnd);
                 }
             }
-            for (HWND hwnd : doneWindows) {
-                PostMessageW(hwnd, WM_APP_ANIMATION_DONE, 0, 0);
+            for (const auto& completion : doneWindows) {
+                PostMessageW(completion.first, WM_APP_ANIMATION_DONE, 0, (LPARAM)completion.second);
             }
 
             nowClock = Clock::now();
@@ -278,19 +278,13 @@ void StopAnimationThread(){
 }
 
 uint32_t EffectiveAnimationDuration(AnimChannel channel, uint32_t durationMs){
-    // Particle frames must follow their physical lifetime, independently of
-    // the interface animation preset. Shortening this channel freezes effects.
-    if (channel == AnimChannel::Effect
-        || channel == AnimChannel::ThemeTransition
-        || channel == AnimChannel::SmoothScroll) {
-        return durationMs;
-    }
+    (void)channel;
     if (Settings().animationLevel == AnimationLevel::Off) return 0;
     if (Settings().animationLevel == AnimationLevel::Standard) return std::min<uint32_t>(durationMs, 160);
     return durationMs;
 }
 
-void StartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t durationMs, bool closeOnDone){
+void StartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t durationMs, bool closeOnDone, UINT_PTR completionToken){
     if (!hwnd) return;
     durationMs = EffectiveAnimationDuration(channel, durationMs);
     EnsureAnimationThread();
@@ -309,6 +303,7 @@ void StartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t dura
         anim.durationMs = durationMs;
         anim.active = durationMs > 0 && std::abs(anim.target - anim.start) > 0.001;
         anim.closeOnDone = closeOnDone;
+        anim.completionToken=completionToken;
         if (!anim.active) anim.current = anim.target;
         schedulerChanged = anim.active;
     }
@@ -322,7 +317,7 @@ void RestartAnimation(HWND hwnd, AnimChannel channel, double target, uint32_t du
     {
         std::lock_guard<std::mutex> lock(Animations().animMutex);
         AnimValue& anim = Animations().animations[hwnd][(int)channel];
-        anim.current = 0.0;
+        anim.current = durationMs == 0 ? std::clamp(target,0.0,1.0) : 0.0;
         anim.start = 0.0;
         anim.target = std::clamp(target, 0.0, 1.0);
         anim.startMs = AnimationNowMs();
@@ -350,6 +345,8 @@ void RemoveAnimationState(HWND hwnd){
         Animations().animations.erase(hwnd);
         Animations().pendingAnimationTicks.erase(hwnd);
     }
+    MSG old{};
+    while(PeekMessageW(&old,hwnd,WM_APP_ANIMATION_TICK,WM_APP_ANIMATION_DONE,PM_REMOVE)){}
     SignalAnimationScheduler();
 }
 
@@ -357,6 +354,24 @@ void AcknowledgeAnimationTick(HWND hwnd){
     if (!hwnd) return;
     std::lock_guard<std::mutex> lock(Animations().animMutex);
     Animations().pendingAnimationTicks.erase(hwnd);
+}
+
+void SettleAllAnimations(){
+    std::vector<HWND> tick;std::vector<std::pair<HWND,UINT_PTR>> done;
+    {
+        std::lock_guard<std::mutex> lock(Animations().animMutex);
+        for(auto& window:Animations().animations){
+            for(auto& channel:window.second){auto& value=channel.second;
+                if(value.active && value.closeOnDone)done.push_back({window.first,value.completionToken});
+                value.current=value.target;value.active=false;
+            }
+            if(Animations().pendingAnimationTicks.insert(window.first).second)tick.push_back(window.first);
+        }
+    }
+    for(auto& pair:Animations().buttonEffects){pair.second.active=false;pair.second.particles.clear();}
+    for(auto window:tick)PostMessageW(window,WM_APP_ANIMATION_TICK,0,0);
+    for(auto completion:done)PostMessageW(completion.first,WM_APP_ANIMATION_DONE,0,(LPARAM)completion.second);
+    SignalAnimationScheduler();
 }
 
 void CancelAnimationChannel(AnimChannel channel){
@@ -375,12 +390,16 @@ void CancelAnimationChannel(AnimChannel channel){
 void StartWindowReveal(HWND hwnd, uint32_t durationMs){
     if (!hwnd) return;
     RestartAnimation(hwnd, AnimChannel::Reveal, 1.0, durationMs);
+    RestartAnimation(hwnd, AnimChannel::Items, 1.0, 360);
 }
 
 void BeginAnimatedClose(HWND hwnd, uint32_t durationMs){
-    (void)durationMs;
     if (!hwnd) return;
-    DestroyWindow(hwnd);
+    if (Settings().animationLevel==AnimationLevel::Off) { DestroyWindow(hwnd); return; }
+    EnableWindow(hwnd,FALSE);
+    SetWindowLongPtrW(hwnd,GWL_EXSTYLE,GetWindowLongPtrW(hwnd,GWL_EXSTYLE)|WS_EX_LAYERED);
+    SetLayeredWindowAttributes(hwnd,0,255,LWA_ALPHA);
+    StartAnimation(hwnd,AnimChannel::Close,1,durationMs,true);
 }
 
 } // namespace attendance

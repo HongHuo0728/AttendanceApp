@@ -125,7 +125,8 @@ enum class AnimChannel : int {
     ListReveal = 6,
     Effect = 7,
     ThemeTransition = 8,
-    SmoothScroll = 9
+    SmoothScroll = 9,
+    Items = 10
 };
 
 struct AnimValue {
@@ -136,6 +137,7 @@ struct AnimValue {
     uint32_t durationMs = 160;
     bool active = false;
     bool closeOnDone = false;
+    UINT_PTR completionToken = 0;
 };
 
 struct ButtonParticle {
@@ -166,6 +168,7 @@ struct ThemedMenuItem {
 
 struct ThemedMenuState {
     std::vector<ThemedMenuItem> items;
+    std::vector<int> itemHeights;
     int hover = -1;
     int selected = 0;
     int finalX = 0;
