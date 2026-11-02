@@ -1,8 +1,8 @@
 # AttendanceApp v2.1.1 LTS
 
-This maintenance release improves Settings, popup motion, operation feedback and background file processing while preserving the existing themes, attendance workflows and V6 compatibility. This revised draft includes the complete first UI repair and the second settings/dropdown repair.
+This maintenance release improves Settings, popup motion, operation feedback and background file processing while preserving the existing themes, attendance workflows and V6 compatibility. This updated release includes the complete first UI repair and the second settings/dropdown repair.
 
-The first v2.1.1 Release was withdrawn after desktop use exposed substantial UI regressions compared with v2.1.0: overlapping main-window controls, settings scroll stalls, inconsistent dropdown styling and motion, clipped dialogs and charts, and unreliable keyboard or wheel input. The earlier build and automated checks passed, but their coverage did not establish that the complete rendered interface was ready for release. This draft replaces the original notes with the accumulated fixes and actual UI screenshots; it does not republish the withdrawn package.
+The first v2.1.1 Release was withdrawn after desktop use exposed substantial UI regressions compared with v2.1.0: overlapping main-window controls, settings scroll stalls, inconsistent dropdown styling and motion, clipped dialogs and charts, and unreliable keyboard or wheel input. The earlier build and automated checks passed, but their coverage did not establish that the complete rendered interface was ready for release. This updated release replaces the withdrawn first package and its original notes with the accumulated fixes and actual UI screenshots.
 
 ## Settings
 
@@ -87,17 +87,18 @@ The first UI repair corrects the main layout, rendering, scrolling, dialogs, per
 - Architecture checks resolve 622 local includes across 61 implementation files and 65 headers without a header cycle. Localization checks cover 31 feature, 23 settings and 14 maintenance keys in 20 languages, plus 274 Hong Kong call-site keys; generated catalogs remain consistent.
 - Desktop inspection covers Chinese dark standard text and German light large/spacious layouts, main/table wheel routing, Settings top/bottom and fixed actions, menus and font lists, course selection, measured dialogs and the lesson chooser, six-state charts, quick-roll-call progress and note validation, and a 24-record CSV export.
 - ZIP CRC, embedded-executable hashes and reverse checks for incremental and cumulative repair patches passed. The final direct build sampled 403.55 MiB of generated artifacts, below the 512 MiB budget; intermediate cleanup left 6.90 MiB. Tests remain below 20 MiB total and 5 MiB per file.
-- The second-round local repair candidate is AttendanceApp-2.1.1-LTS-UI-repair2-2026-11-02.zip, 513,027 bytes. SHA-256: `479f475620d1a420132fd30c737046f837f597f4138872c9ea2621d3ba6f090e`.
-- The candidate executable SHA-256 is `92fad1a7ac5f04de81d391c27e15242a1203216ac77de29068a2ad7c11abf39c`.
+- The published repair package is [AttendanceApp-2.1.1-LTS-UI-repair2-2026-11-02.zip](https://github.com/HongHuo0728/AttendanceApp/releases/download/v2.1.1/AttendanceApp-2.1.1-LTS-UI-repair2-2026-11-02.zip), 513,027 bytes. SHA-256: `479f475620d1a420132fd30c737046f837f597f4138872c9ea2621d3ba6f090e`.
+- The published executable SHA-256 is `92fad1a7ac5f04de81d391c27e15242a1203216ac77de29068a2ad7c11abf39c`.
 
 ## Compatibility and Notes
 
 - Continue the [2.1 LTS maintenance series](https://github.com/HongHuo0728/AttendanceApp/tree/2.1LTS). FileVersion and ProductVersion are 2.1.1; the release tag is v2.1.1.
 - Continue writing ATTENDANCE_V6, reading V1-V5 and offering the existing separate V5 compatibility export.
 - Preserve existing settings keys and production data limits. Fourteen maintenance messages cover all 20 interface languages.
-- Keep this Release as a draft. The first package, AttendanceApp.v2.1.1.zip (515,181 bytes; SHA-256 `527e7cb26f31b0c8a43bc5a294a3550ecb2ba72c379102ab65c2e6e64bba5ff2`), is withdrawn and must not be distributed as the repaired build. It is retained only for traceability; the second-round candidate has not been republished through this draft.
+- The repaired v2.1.1 Release is public. The first package, AttendanceApp.v2.1.1.zip (515,181 bytes; SHA-256 `527e7cb26f31b0c8a43bc5a294a3550ecb2ba72c379102ab65c2e6e64bba5ff2`), was withdrawn and replaced in Assets by the repaired package above. The old hash is recorded only to identify the withdrawn build.
 - The first release was withdrawn because the observed interface did not meet release quality despite passing the earlier checks. The original coverage concentrated on functionality and selected settings geometry and did not adequately verify the complete main window, visible interaction and motion. The revised checks and screenshots address those gaps without claiming that every undiscovered UI defect is impossible.
-- Keep the original v2.1.1 tag and historical attachment unchanged while this draft is reviewed. The repair code is on 2.1LTS; a future publication must use a matching repaired source snapshot and package.
+- The [v2.1.1 tag](https://github.com/HongHuo0728/AttendanceApp/tree/v2.1.1) identifies the repaired 2.1LTS source snapshot, including both repair rounds and these revised release notes. Source code (zip) and Source code (tar.gz) include the same application implementation as the published executable.
+- The v2.1.1 tag was moved from the withdrawn first build to the repaired source. If you previously fetched this tag, refresh it with `git fetch --force origin tag v2.1.1` before building.
 - Use only isolated synthetic courses, students and settings for regression and desktop screenshots. Real attendance files and AppData preferences were not modified.
 - The Computer Use wrapper activates the main window before input, limiting reliable second-click selection in some owned Settings popups. Native live-message-loop checks supplement those selection paths.
 - Current checks do not establish that every rendered frame is flicker-free. High-speed animation recording, the full Windows scaling matrix, clean-machine GUI startup and complete native-speaker review of all 20 languages remain unverified.

@@ -1,13 +1,13 @@
 # Changelog
 
-## Unreleased UI repair - 2026-11-02
+## 2.1.1 LTS UI repair - 2026-11-02
 
 - Follow-up: move settings through one clipped content viewport and release opaque-window layering; share the Tools popup implementation with settings dropdowns and the main course selector, including continuous two-way arrow motion. See [the settings/dropdown follow-up](docs/V2.1.1_SETTINGS_POPUPS.md).
 - Repair table/composer overlap, translated and scaled layouts, flat cards, shared button edges, Tab/Enter navigation and main/table wheel routing.
 - Reduce settings scroll work, prevent wheel input from changing closed combos, and preserve font hierarchy, input alignment and dropdown metrics.
 - Repair menu scrollbar input, popup frame invalidation, chart sizing/completion/close opacity, roll-call progress, and measured/scrollable dialogs.
 - Preserve all settings across saving/reloading, accept Windows BOM/CRLF files, complete physical animation lifetimes and preserve process quit messages.
-- Keep the withdrawn 2.1.1 release in draft. See [the UI repair audit](docs/V2.1.1_UI_REPAIR.md) for causes, regression coverage and desktop acceptance.
+- Publish the two-round UI repair package and align the v2.1.1 source tag and release notes with the repaired implementation. Preserve the first withdrawal explanation and actual UI screenshots. See [the release notes](docs/RELEASE_NOTES_2.1.1.md) and [UI repair audit](docs/V2.1.1_UI_REPAIR.md).
 
 ## 2.1.1 LTS - 2026-11-01
 
