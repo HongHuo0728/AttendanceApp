@@ -1,5 +1,5 @@
-#include "ui/motion.h"
 #include "ui/feedback.h"
+#include "ui/motion.h"
 #pragma once
 #include "animation/state.h"
 #include "ui/common.h"
@@ -40,7 +40,7 @@ void TestUiRedraw() {
   UiState previousUi = Ui();
   Ui() = UiState{};
   auto oldLanguage = Settings().language;
-  auto oldDensity=Settings().layoutDensity;
+  auto oldDensity = Settings().layoutDensity;
   auto oldTheme = Settings().theme;
   int oldInterval = Settings().autosaveIntervalSeconds;
   auto oldScale = Settings().textScale;
@@ -173,6 +173,19 @@ void TestUiRedraw() {
         "settings prewarm stays hidden after creation and layout");
   Check(GetText(GetDlgItem(settings, IDC_SETTINGS_TITLE)) == L"Settings",
         "single settings title");
+  HWND fpsInput = GetDlgItem(settings, IDC_SETTINGS_SCROLL_FPS);
+  RECT fpsText{}, fpsClient{};
+  SendMessageW(fpsInput, EM_GETRECT, 0, (LPARAM)&fpsText);
+  GetClientRect(fpsInput, &fpsClient);
+  std::cout << "FPS text rect=" << fpsText.top << "," << fpsText.bottom
+            << " client=" << fpsClient.bottom << " style="
+            << GetWindowLongPtrW(fpsInput, GWL_STYLE) << "\n";
+  Check(
+      fpsText.top > 2 && fpsText.bottom < fpsClient.bottom &&
+          (GetWindowLongPtrW(GetDlgItem(settings, IDC_SETTINGS_SCROLL_FPS_UNIT),
+                             GWL_STYLE) &
+           SS_CENTERIMAGE),
+      "numeric settings input and its unit share vertical alignment");
   bool obsoleteTitle = false;
   EnumChildWindows(
       settings,
@@ -190,28 +203,17 @@ void TestUiRedraw() {
     ResizeSettingsLayout(settings);
     RECT client{};
     GetClientRect(settings, &client);
-    for (int id : {IDC_SETTINGS_LANGUAGE,
-                   IDC_SETTINGS_FONT,
-                   IDC_SETTINGS_THEME,
-                   IDC_SETTINGS_ACCENT,
-                   IDC_SETTINGS_TEXT_SCALE,
-                   IDC_SETTINGS_DENSITY,
-                   IDC_SETTINGS_ANIMATION_LEVEL,
-                   IDC_SETTINGS_PARTICLE_LEVEL,
-                   IDC_SETTINGS_REPORT_TEMPLATE,
-                   IDC_SETTINGS_AUTOSAVE_INTERVAL,
-                   IDC_SETTINGS_SCROLL_FPS,
-                   IDC_SETTINGS_PARTICLES,
-                   IDC_SETTINGS_SMOOTH_SCROLL,
-                   IDC_SETTINGS_SHOW_STATS,
-                   IDC_SETTINGS_SHOW_HINT,
-                   IDC_SETTINGS_TABLE_GRID,
-                   IDC_SETTINGS_RISK_ALERTS,
-                   IDC_SETTINGS_AUTOSAVE_PROMPT,
-                   IDC_SETTINGS_COMMAND_PALETTE,
-                   IDC_SETTINGS_ADVANCED_FILTER,
-                   IDC_SETTINGS_RESET,
-                   IDC_SETTINGS_CLOSE}) {
+    for (int id : {IDC_SETTINGS_LANGUAGE,        IDC_SETTINGS_FONT,
+                   IDC_SETTINGS_THEME,           IDC_SETTINGS_ACCENT,
+                   IDC_SETTINGS_TEXT_SCALE,      IDC_SETTINGS_DENSITY,
+                   IDC_SETTINGS_ANIMATION_LEVEL, IDC_SETTINGS_PARTICLE_LEVEL,
+                   IDC_SETTINGS_REPORT_TEMPLATE, IDC_SETTINGS_AUTOSAVE_INTERVAL,
+                   IDC_SETTINGS_SCROLL_FPS,      IDC_SETTINGS_PARTICLES,
+                   IDC_SETTINGS_SMOOTH_SCROLL,   IDC_SETTINGS_SHOW_STATS,
+                   IDC_SETTINGS_SHOW_HINT,       IDC_SETTINGS_TABLE_GRID,
+                   IDC_SETTINGS_RISK_ALERTS,     IDC_SETTINGS_AUTOSAVE_PROMPT,
+                   IDC_SETTINGS_COMMAND_PALETTE, IDC_SETTINGS_ADVANCED_FILTER,
+                   IDC_SETTINGS_RESET,           IDC_SETTINGS_CLOSE}) {
       HWND child = GetDlgItem(settings, id);
       RECT box{};
       GetWindowRect(child, &box);
@@ -225,11 +227,14 @@ void TestUiRedraw() {
     GetScrollInfo(settings, SB_VERT, &info);
     Check(info.nMax >= (int)info.nPage,
           "settings overflow remains reachable by scrolling");
-    RECT firstReset{},firstClose{};
-    GetWindowRect(GetDlgItem(settings,IDC_SETTINGS_RESET),&firstReset);
-    GetWindowRect(GetDlgItem(settings,IDC_SETTINGS_CLOSE),&firstClose);
-    MapWindowPoints(nullptr,settings,(POINT*)&firstReset,2);MapWindowPoints(nullptr,settings,(POINT*)&firstClose,2);
-    Check(firstReset.top>=Ui().settingsBodyBottom && firstClose.bottom<=client.bottom,"settings actions visible before scrolling");
+    RECT firstReset{}, firstClose{};
+    GetWindowRect(GetDlgItem(settings, IDC_SETTINGS_RESET), &firstReset);
+    GetWindowRect(GetDlgItem(settings, IDC_SETTINGS_CLOSE), &firstClose);
+    MapWindowPoints(nullptr, settings, (POINT *)&firstReset, 2);
+    MapWindowPoints(nullptr, settings, (POINT *)&firstClose, 2);
+    Check(firstReset.top >= Ui().settingsBodyBottom &&
+              firstClose.bottom <= client.bottom,
+          "settings actions visible before scrolling");
     SendMessageW(settings, WM_VSCROLL, SB_BOTTOM, 0);
     RECT close{};
     GetWindowRect(GetDlgItem(settings, IDC_SETTINGS_CLOSE), &close);
@@ -237,21 +242,72 @@ void TestUiRedraw() {
     Check(close.top >= 0 && close.bottom <= client.bottom,
           "fixed settings actions remain visible during scrolling");
   }
-  ShowWindow(settings,SW_SHOWNOACTIVATE);
-  auto previousMotion=Settings().animationLevel;bool previousSmooth=Settings().smoothScrollingEnabled;
-  Settings().animationLevel=AnimationLevel::Advanced;Settings().smoothScrollingEnabled=true;
-  Ui().settingsScrollY=0;Ui().settingsScrollCurrent=Ui().settingsScrollTarget=0;Ui().settingsScrollStartMs=0;
-  ResizeSettingsLayout(settings);SendMessageW(settings,WM_VSCROLL,SB_BOTTOM,0);StopAnimationThread();
-  Check(Ui().settingsScrollTarget>0 && Ui().settingsScrollY<Ui().settingsScrollTarget,"settings scroll schedules continuous motion");
-  Ui().settingsScrollStartMs=AnimationNowMs()-100;
-  SendMessageW(settings,WM_APP_ANIMATION_TICK,0,0);
-  Check(Ui().settingsScrollY>0 && Ui().settingsScrollY<Ui().settingsScrollTarget,"settings scroll has a real intermediate position");
-  Settings().smoothScrollingEnabled=false;SendMessageW(settings,WM_VSCROLL,SB_TOP,0);StopAnimationThread();
-  Check(Ui().settingsScrollY==0 && !Ui().settingsScrollStartMs,"smooth scrolling off immediately reaches its target");
-  Settings().animationLevel=previousMotion;Settings().smoothScrollingEnabled=previousSmooth;
-  ShowWindow(settings,SW_HIDE);RemoveAnimationState(settings);
-  SendMessageW(settings,WM_APP_ANIMATION_TICK,0,0);
-  Check(!IsWindowVisible(settings),"late animation ticks cannot reveal hidden settings");
+  ShowWindow(settings, SW_SHOWNOACTIVATE);
+  auto previousMotion = Settings().animationLevel;
+  bool previousSmooth = Settings().smoothScrollingEnabled;
+  Settings().animationLevel = AnimationLevel::Advanced;
+  Settings().smoothScrollingEnabled = true;
+  Ui().settingsScrollY = 0;
+  Ui().settingsScrollCurrent = Ui().settingsScrollTarget = 0;
+  Ui().settingsScrollStartMs = 0;
+  ResizeSettingsLayout(settings);
+  SendMessageW(settings, WM_VSCROLL, SB_BOTTOM, 0);
+  StopAnimationThread();
+  Check(Ui().settingsScrollTarget > 0 &&
+            Ui().settingsScrollY < Ui().settingsScrollTarget,
+        "settings scroll schedules continuous motion");
+  Ui().settingsScrollStartMs = AnimationNowMs() - 100;
+  SendMessageW(settings, WM_APP_ANIMATION_TICK, 0, 0);
+  Check(Ui().settingsScrollY > 0 &&
+            Ui().settingsScrollY < Ui().settingsScrollTarget,
+        "settings scroll has a real intermediate position");
+  Settings().smoothScrollingEnabled = false;
+  SendMessageW(settings, WM_VSCROLL, SB_TOP, 0);
+  StopAnimationThread();
+  Check(Ui().settingsScrollY == 0 && !Ui().settingsScrollStartMs,
+        "smooth scrolling off immediately reaches its target");
+  HWND cacheCombo = GetDlgItem(settings, IDC_SETTINGS_THEME);
+  PaintProbe scrollProbe;
+  RemoveAnimationState(settings);
+  ResizeSettingsLayout(settings);
+  SendMessageW(settings, WM_APP_ANIMATION_TICK, 0, 0);
+  SetWindowSubclass(cacheCombo, ProbeControl, 97, (DWORD_PTR)&scrollProbe);
+  ValidateRect(settings, nullptr);
+  ValidateRect(cacheCombo, nullptr);
+  for (int frame = 0; frame < 5; ++frame)
+    SendMessageW(settings, WM_APP_ANIMATION_TICK, 0, 0);
+  Check(
+      scrollProbe.position == 0 && !GetUpdateRect(cacheCombo, nullptr, FALSE),
+      "settled reveal ticks neither move controls nor invalidate form fields");
+  int selection = (int)SendMessageW(cacheCombo, CB_GETCURSEL, 0, 0);
+  SendMessageW(cacheCombo, WM_MOUSEWHEEL, MAKEWPARAM(0, (WORD)-WHEEL_DELTA), 0);
+  Check(Ui().settingsScrollY > 0 &&
+            (int)SendMessageW(cacheCombo, CB_GETCURSEL, 0, 0) == selection,
+        "wheel over a closed settings combo scrolls the form without changing "
+        "its value");
+  SCROLLINFO scrollRange{sizeof(scrollRange)};
+  scrollRange.fMask = SIF_ALL;
+  GetScrollInfo(settings, SB_VERT, &scrollRange);
+  int scrollMax = std::max(0, scrollRange.nMax - (int)scrollRange.nPage + 1);
+  uint64_t scrollStart = PerformanceNowUs(), scrollPeak = 0;
+  for (int frame = 0; frame < 120; ++frame) {
+    Ui().settingsScrollY = scrollMax * frame / 119;
+    uint64_t frameStart = PerformanceNowUs();
+    ResizeSettingsLayout(settings);
+    scrollPeak = std::max(scrollPeak, PerformanceNowUs() - frameStart);
+  }
+  std::cout << "settings positioning mean_us="
+            << (PerformanceNowUs() - scrollStart) / 120
+            << " max_us=" << scrollPeak << "\n";
+  SendMessageW(settings, WM_VSCROLL, SB_TOP, 0);
+  RemoveWindowSubclass(cacheCombo, ProbeControl, 97);
+  Settings().animationLevel = previousMotion;
+  Settings().smoothScrollingEnabled = previousSmooth;
+  ShowWindow(settings, SW_HIDE);
+  RemoveAnimationState(settings);
+  SendMessageW(settings, WM_APP_ANIMATION_TICK, 0, 0);
+  Check(!IsWindowVisible(settings),
+        "late animation ticks cannot reveal hidden settings");
   // Language/font/layout refreshes must never expose the cached hidden dialog.
   for (auto language :
        {UiLanguage::English, UiLanguage::ChineseSimplified,
@@ -264,7 +320,8 @@ void TestUiRedraw() {
   }
   HWND tab = GetNextDlgTabItem(settings, nullptr, FALSE);
   Check(GetText(GetDlgItem(settings, IDC_SETTINGS_THEME_LABEL)) == L"Design" &&
-            Tr(L"Untranslated test label", L"测试回退") == L"Untranslated test label",
+            Tr(L"Untranslated test label", L"测试回退") ==
+                L"Untranslated test label",
         "German settings labels translate and missing keys use English");
   SendMessageW(GetDlgItem(settings, IDC_SETTINGS_LANGUAGE), CB_SETCURSEL,
                static_cast<WPARAM>(UiLanguage::ChineseSimplified), 0);
@@ -295,8 +352,7 @@ void TestUiRedraw() {
                     reinterpret_cast<DWORD_PTR>(&comboProbe));
   SetWindowSubclass(settings, ProbeControl, 99,
                     reinterpret_cast<DWORD_PTR>(&positionProbe));
-  SendMessageW(theme, CB_SETCURSEL, 1, 0);
-  ApplySettingsFromWindow(settings);
+  SendMessageW(theme, WM_APP_COMMIT_COMBO_SELECTION, 1, 0);
   Check(Settings().theme == UiTheme::Light && Ui().themeTransition.active,
         "theme change retains transition");
   Check(comboProbe.reset == 0 && positionProbe.position == 0,
@@ -332,55 +388,116 @@ void TestUiRedraw() {
   ApplyNativeControlTheme(theme);
   Check(comboProbe.theme == firstTheme,
         "identical native theme does not trigger another theme change");
-  auto oldAnimation=Settings().animationLevel;
-  Settings().animationLevel=AnimationLevel::Advanced;
-  DWORD warmedGdi=0;
-  for(int cycle=0;cycle<30;++cycle){
-    ShowSettingsWindow();StopAnimationThread();
-    Check(IsWindowVisible(settings) && GetAnimationValue(settings,AnimChannel::Reveal,1)<1,"cached settings restarts opening motion");
-    {std::lock_guard<std::mutex> lock(Animations().animMutex);auto& value=Animations().animations[settings][(int)AnimChannel::Reveal];value.current=.5;value.active=false;}
-    HideSettingsWindow();StopAnimationThread();
-    Check(Ui().settingsClosing && IsWindowVisible(settings),"settings closes through a cached-window animation");
-    UINT_PTR previousClose=Ui().settingsCloseSerial;double reversingFrom=0;
-    {std::lock_guard<std::mutex> lock(Animations().animMutex);auto& value=Animations().animations[settings][(int)AnimChannel::Reveal];reversingFrom=value.current;value.active=false;}
-    ShowSettingsWindow();StopAnimationThread();
-    double newStart=0;{std::lock_guard<std::mutex> lock(Animations().animMutex);newStart=Animations().animations[settings][(int)AnimChannel::Reveal].start;}
-    Check(!Ui().settingsClosing && newStart==reversingFrom,"reopening reverses the captured closing frame without a restart jump");
-    HideSettingsWindow();StopAnimationThread();
-    SendMessageW(settings,WM_APP_ANIMATION_DONE,0,(LPARAM)previousClose);
-    Check(IsWindowVisible(settings) && Ui().settingsClosing,"stale close completion cannot hide a new animation");
-    {std::lock_guard<std::mutex> lock(Animations().animMutex);auto& value=Animations().animations[settings][(int)AnimChannel::Reveal];value.current=0;value.active=false;}
-    SendMessageW(settings,WM_APP_ANIMATION_DONE,0,(LPARAM)Ui().settingsCloseSerial);
-    if(IsWindowVisible(settings)||Ui().settingsClosing){
-      std::cerr<<"close cycle="<<cycle<<" visible="<<IsWindowVisible(settings)<<" closing="<<Ui().settingsClosing
-               <<" serial="<<Ui().settingsCloseSerial<<" reveal="<<GetAnimationValue(settings,AnimChannel::Reveal,-1)<<"\n";
-      throw std::runtime_error("close completion hides without destroying settings");
+  auto oldAnimation = Settings().animationLevel;
+  Settings().animationLevel = AnimationLevel::Advanced;
+  DWORD warmedGdi = 0;
+  for (int cycle = 0; cycle < 30; ++cycle) {
+    ShowSettingsWindow();
+    StopAnimationThread();
+    Check(IsWindowVisible(settings) &&
+              GetAnimationValue(settings, AnimChannel::Reveal, 1) < 1,
+          "cached settings restarts opening motion");
+    {
+      std::lock_guard<std::mutex> lock(Animations().animMutex);
+      auto &value = Animations().animations[settings][(int)AnimChannel::Reveal];
+      value.current = .5;
+      value.active = false;
     }
-    if(cycle==0)warmedGdi=GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS);
+    HideSettingsWindow();
+    StopAnimationThread();
+    Check(Ui().settingsClosing && IsWindowVisible(settings),
+          "settings closes through a cached-window animation");
+    UINT_PTR previousClose = Ui().settingsCloseSerial;
+    double reversingFrom = 0;
+    {
+      std::lock_guard<std::mutex> lock(Animations().animMutex);
+      auto &value = Animations().animations[settings][(int)AnimChannel::Reveal];
+      reversingFrom = value.current;
+      value.active = false;
+    }
+    ShowSettingsWindow();
+    StopAnimationThread();
+    double newStart = 0;
+    {
+      std::lock_guard<std::mutex> lock(Animations().animMutex);
+      newStart =
+          Animations().animations[settings][(int)AnimChannel::Reveal].start;
+    }
+    Check(
+        !Ui().settingsClosing && newStart == reversingFrom,
+        "reopening reverses the captured closing frame without a restart jump");
+    HideSettingsWindow();
+    StopAnimationThread();
+    SendMessageW(settings, WM_APP_ANIMATION_DONE, 0, (LPARAM)previousClose);
+    Check(IsWindowVisible(settings) && Ui().settingsClosing,
+          "stale close completion cannot hide a new animation");
+    {
+      std::lock_guard<std::mutex> lock(Animations().animMutex);
+      auto &value = Animations().animations[settings][(int)AnimChannel::Reveal];
+      value.current = 0;
+      value.active = false;
+    }
+    SendMessageW(settings, WM_APP_ANIMATION_DONE, 0,
+                 (LPARAM)Ui().settingsCloseSerial);
+    if (IsWindowVisible(settings) || Ui().settingsClosing) {
+      std::cerr << "close cycle=" << cycle
+                << " visible=" << IsWindowVisible(settings)
+                << " closing=" << Ui().settingsClosing
+                << " serial=" << Ui().settingsCloseSerial << " reveal="
+                << GetAnimationValue(settings, AnimChannel::Reveal, -1) << "\n";
+      throw std::runtime_error(
+          "close completion hides without destroying settings");
+    }
+    if (cycle == 0)
+      warmedGdi = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
   }
-  Check(GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS)<=warmedGdi+4,"cached settings cycles do not accumulate GDI objects");
-  Settings().animationLevel=AnimationLevel::Off;
-  RestartAnimation(settings,AnimChannel::Reveal,1,240);
-  Check(GetAnimationValue(settings,AnimChannel::Reveal,0)==1,"animation off reaches final opening frame");
-  ShowSettingsWindow();HideSettingsWindow();StopAnimationThread();
-  if(IsWindowVisible(settings))std::cerr<<"off close visible="<<IsWindowVisible(settings)<<" closing="<<Ui().settingsClosing<<" hidden="<<(UINT_PTR)GetPropW(settings,L"Attendance.SettingsHidden")<<"\n";
-  Check(!IsWindowVisible(settings),"animation off closes immediately");
-  SendMessageW(settings,WM_SETREDRAW,TRUE,0);
-  Check(!IsWindowVisible(settings),"late redraw enable preserves explicit hidden intent");
-  Settings().animationLevel=oldAnimation;
-  for(int language=0;language<20;++language){
-    Settings().language=(UiLanguage)language;ApplyLanguageAtomically(settings);
-    for(auto scale:{TextScale::Small,TextScale::Standard,TextScale::Large}){
-      Settings().textScale=scale;RecreateFonts();EnumChildWindows(settings,ApplyFontToChild,0);
-      for(auto density:{LayoutDensity::Compact,LayoutDensity::Comfortable,LayoutDensity::Spacious}){
-        Settings().layoutDensity=density;
-        for(int width:{520,1040}){
-          SetWindowPos(settings,nullptr,-32000,-32000,width,700,SWP_NOZORDER|SWP_NOACTIVATE);
-          ResizeSettingsLayout(settings);RECT area{};GetClientRect(settings,&area);
-          for(int id:{IDC_SETTINGS_RESET,IDC_SETTINGS_CLOSE}){
-            RECT box{};GetWindowRect(GetDlgItem(settings,id),&box);MapWindowPoints(nullptr,settings,(POINT*)&box,2);
-            Check(box.left>=0 && box.right<=area.right && box.top>=Ui().settingsBodyBottom && box.bottom<=area.bottom,"all-language footer geometry");
-            Check(MeasuredTextWidth(GetDlgItem(settings,id))+16<=box.right-box.left,"translated actions fit without truncation");
+  Check(GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS) <= warmedGdi + 4,
+        "cached settings cycles do not accumulate GDI objects");
+  Settings().animationLevel = AnimationLevel::Off;
+  RestartAnimation(settings, AnimChannel::Reveal, 1, 240);
+  Check(GetAnimationValue(settings, AnimChannel::Reveal, 0) == 1,
+        "animation off reaches final opening frame");
+  ShowSettingsWindow();
+  HideSettingsWindow();
+  StopAnimationThread();
+  if (IsWindowVisible(settings))
+    std::cerr << "off close visible=" << IsWindowVisible(settings)
+              << " closing=" << Ui().settingsClosing << " hidden="
+              << (UINT_PTR)GetPropW(settings, L"Attendance.SettingsHidden")
+              << "\n";
+  Check(!IsWindowVisible(settings), "animation off closes immediately");
+  SendMessageW(settings, WM_SETREDRAW, TRUE, 0);
+  Check(!IsWindowVisible(settings),
+        "late redraw enable preserves explicit hidden intent");
+  Settings().animationLevel = oldAnimation;
+  for (int language = 0; language < 20; ++language) {
+    Settings().language = (UiLanguage)language;
+    ApplyLanguageAtomically(settings);
+    for (auto scale :
+         {TextScale::Small, TextScale::Standard, TextScale::Large}) {
+      Settings().textScale = scale;
+      RecreateFonts();
+      EnumChildWindows(settings, ApplyFontToChild, 0);
+      for (auto density : {LayoutDensity::Compact, LayoutDensity::Comfortable,
+                           LayoutDensity::Spacious}) {
+        Settings().layoutDensity = density;
+        for (int width : {520, 1040}) {
+          SetWindowPos(settings, nullptr, -32000, -32000, width, 700,
+                       SWP_NOZORDER | SWP_NOACTIVATE);
+          ResizeSettingsLayout(settings);
+          RECT area{};
+          GetClientRect(settings, &area);
+          for (int id : {IDC_SETTINGS_RESET, IDC_SETTINGS_CLOSE}) {
+            RECT box{};
+            GetWindowRect(GetDlgItem(settings, id), &box);
+            MapWindowPoints(nullptr, settings, (POINT *)&box, 2);
+            Check(box.left >= 0 && box.right <= area.right &&
+                      box.top >= Ui().settingsBodyBottom &&
+                      box.bottom <= area.bottom,
+                  "all-language footer geometry");
+            Check(MeasuredTextWidth(GetDlgItem(settings, id)) + 16 <=
+                      box.right - box.left,
+                  "translated actions fit without truncation");
           }
         }
       }
@@ -408,7 +525,7 @@ void TestUiRedraw() {
   Settings().theme = oldTheme;
   Settings().autosaveIntervalSeconds = oldInterval;
   Settings().textScale = oldScale;
-  Settings().layoutDensity=oldDensity;
+  Settings().layoutDensity = oldDensity;
   std::cout << "UI redraw, hidden settings, buffered paint and unified layout "
                "checks passed\n";
 }

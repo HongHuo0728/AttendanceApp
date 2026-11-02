@@ -1,29 +1,29 @@
+#include "ui/settings_window.h"
+#include "animation/scheduler.h"
+#include "core/constants.h"
+#include "core/text.h"
+#include "localization/strings.h"
+#include "settings/font_state.h"
+#include "settings/fonts.h"
+#include "settings/preferences.h"
+#include "settings/state.h"
+#include "settings/toggles.h"
+#include "ui/appearance.h"
+#include "ui/combobox.h"
+#include "ui/common.h"
+#include "ui/controls.h"
+#include "ui/dialogs.h"
+#include "ui/drawing.h"
 #include "ui/feedback.h"
-#include <memory>
 #include "ui/layout.h"
 #include "ui/motion.h"
 #include "ui/redraw.h"
-#include "ui/settings_window.h"
-#include "settings/toggles.h"
-#include "ui/common.h"
-#include "animation/scheduler.h"
-#include "ui/title_bar.h"
-#include "core/text.h"
-#include "ui/dialogs.h"
-#include "localization/strings.h"
-#include "settings/fonts.h"
-#include "ui/combobox.h"
-#include "settings/preferences.h"
+#include "ui/roll_call.h"
+#include "ui/state.h"
 #include "ui/table.h"
 #include "ui/theme.h"
-#include "ui/appearance.h"
-#include "ui/roll_call.h"
-#include "ui/controls.h"
-#include "ui/drawing.h"
-#include "settings/state.h"
-#include "settings/font_state.h"
-#include "ui/state.h"
-#include "core/constants.h"
+#include "ui/title_bar.h"
+#include <memory>
 
 namespace attendance {
 
@@ -32,931 +32,1417 @@ void ApplySettingsLanguage(HWND hwnd);
 int NormalizeScrollFrameRateInput(HWND hwnd);
 void ApplySettingsFromWindow(HWND hwnd);
 void ResizeSettingsLayout(HWND hwnd);
-LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam,
+                              LPARAM lParam);
 HWND EnsureSettingsWindowCreated();
 void SyncSettingsWindowState(HWND hwnd);
 void HideSettingsWindow();
 
-void ApplyFontListToSettings(HWND hwnd){
-    if (!hwnd || !IsWindow(hwnd)) return;
-    HWND font = GetDlgItem(hwnd, IDC_SETTINGS_FONT);
-    if (!font) return;
-    bool cacheReady=false;{std::lock_guard<std::mutex> lock(Fonts().fontEnumerationMutex);cacheReady=Fonts().fontCacheReady;}
-    SetText(GetDlgItem(hwnd,IDC_SETTINGS_FONT_LOADING),cacheReady?L"":Tr(L"Loading fonts...",L"正在加载字体…"));
-    if (SendMessageW(font, CB_GETDROPPEDSTATE, 0, 0)) {
-        Fonts().fontComboRefreshPending = true;
+void ApplyFontListToSettings(HWND hwnd) {
+  if (!hwnd || !IsWindow(hwnd))
+    return;
+  HWND font = GetDlgItem(hwnd, IDC_SETTINGS_FONT);
+  if (!font)
+    return;
+  bool cacheReady = false;
+  {
+    std::lock_guard<std::mutex> lock(Fonts().fontEnumerationMutex);
+    cacheReady = Fonts().fontCacheReady;
+  }
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_FONT_LOADING),
+          cacheReady ? L"" : Tr(L"Loading fonts...", L"正在加载字体…"));
+  if (SendMessageW(font, CB_GETDROPPEDSTATE, 0, 0)) {
+    Fonts().fontComboRefreshPending = true;
+    return;
+  }
+
+  std::vector<std::wstring> fonts;
+  uint64_t generation = 0;
+  {
+    std::lock_guard<std::mutex> lock(Fonts().fontEnumerationMutex);
+    generation = Fonts().fontPublishedGeneration;
+    if (generation == Fonts().fontAppliedGeneration &&
+        SendMessageW(font, CB_GETCOUNT, 0, 0) > 0) {
+      LRESULT selected =
+          SendMessageW(font, CB_FINDSTRINGEXACT, static_cast<WPARAM>(-1),
+                       reinterpret_cast<LPARAM>(Settings().fontFamily.c_str()));
+      if (selected != CB_ERR) {
+        SendMessageW(font, CB_SETCURSEL, selected, 0);
+        Fonts().fontComboRefreshPending = false;
         return;
+      }
     }
+    if (Fonts().fontCacheReady)
+      fonts = Fonts().availableFonts;
+  }
+  if (std::find(fonts.begin(), fonts.end(), Settings().fontFamily) ==
+      fonts.end()) {
+    fonts.push_back(Settings().fontFamily);
+    std::sort(fonts.begin(), fonts.end());
+  }
 
-    std::vector<std::wstring> fonts;
-    uint64_t generation = 0;
-    {
-        std::lock_guard<std::mutex> lock(Fonts().fontEnumerationMutex);
-        generation = Fonts().fontPublishedGeneration;
-        if (generation == Fonts().fontAppliedGeneration && SendMessageW(font, CB_GETCOUNT, 0, 0) > 0) {
-            LRESULT selected = SendMessageW(font, CB_FINDSTRINGEXACT, static_cast<WPARAM>(-1),
-                reinterpret_cast<LPARAM>(Settings().fontFamily.c_str()));
-            if (selected != CB_ERR) {
-                SendMessageW(font, CB_SETCURSEL, selected, 0);
-                Fonts().fontComboRefreshPending = false;
-                return;
-            }
-        }
-        if (Fonts().fontCacheReady) fonts = Fonts().availableFonts;
-    }
-    if (std::find(fonts.begin(), fonts.end(), Settings().fontFamily) == fonts.end()) {
-        fonts.push_back(Settings().fontFamily);
-        std::sort(fonts.begin(), fonts.end());
-    }
-
-    RedrawScope redraw(font);
-    SendMessageW(font, CB_RESETCONTENT, 0, 0);
-    int selected = 0;
-    for (int i = 0; i < static_cast<int>(fonts.size()); ++i) {
-        SendMessageW(font, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(fonts[i].c_str()));
-        if (Settings().fontFamily == fonts[i]) selected = i;
-    }
-    SendMessageW(font, CB_SETCURSEL, selected, 0);
-    InvalidateRect(font, nullptr, FALSE);
-    Fonts().fontComboRefreshPending = false;
-    Fonts().fontAppliedGeneration = generation;
-    bool ready=false;{std::lock_guard<std::mutex> lock(Fonts().fontEnumerationMutex);ready=Fonts().fontCacheReady;}
-    SetText(GetDlgItem(hwnd,IDC_SETTINGS_FONT_LOADING),ready?L"":Tr(L"Loading fonts...",L"正在加载字体…"));
+  RedrawScope redraw(font);
+  SendMessageW(font, CB_RESETCONTENT, 0, 0);
+  int selected = 0;
+  for (int i = 0; i < static_cast<int>(fonts.size()); ++i) {
+    SendMessageW(font, CB_ADDSTRING, 0,
+                 reinterpret_cast<LPARAM>(fonts[i].c_str()));
+    if (Settings().fontFamily == fonts[i])
+      selected = i;
+  }
+  SendMessageW(font, CB_SETCURSEL, selected, 0);
+  InvalidateRect(font, nullptr, FALSE);
+  Fonts().fontComboRefreshPending = false;
+  Fonts().fontAppliedGeneration = generation;
+  bool ready = false;
+  {
+    std::lock_guard<std::mutex> lock(Fonts().fontEnumerationMutex);
+    ready = Fonts().fontCacheReady;
+  }
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_FONT_LOADING),
+          ready ? L"" : Tr(L"Loading fonts...", L"正在加载字体…"));
 }
 
-void FillSettingsCombos(HWND hwnd, bool refillLanguageAndFont){
-    RedrawScope redraw(hwnd);
-    HWND language = GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE);
-    HWND font = GetDlgItem(hwnd, IDC_SETTINGS_FONT);
-    HWND animation = GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LEVEL);
-    HWND particle = GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL);
-    HWND report = GetDlgItem(hwnd, IDC_SETTINGS_REPORT_TEMPLATE);
-    HWND theme = GetDlgItem(hwnd, IDC_SETTINGS_THEME);
-    HWND accent = GetDlgItem(hwnd, IDC_SETTINGS_ACCENT);
-    HWND textScale = GetDlgItem(hwnd, IDC_SETTINGS_TEXT_SCALE);
-    HWND density = GetDlgItem(hwnd, IDC_SETTINGS_DENSITY);
-    HWND autosave = GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_INTERVAL);
+void FillSettingsCombos(HWND hwnd, bool refillLanguageAndFont) {
+  RedrawScope redraw(hwnd);
+  HWND language = GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE);
+  HWND font = GetDlgItem(hwnd, IDC_SETTINGS_FONT);
+  HWND animation = GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LEVEL);
+  HWND particle = GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL);
+  HWND report = GetDlgItem(hwnd, IDC_SETTINGS_REPORT_TEMPLATE);
+  HWND theme = GetDlgItem(hwnd, IDC_SETTINGS_THEME);
+  HWND accent = GetDlgItem(hwnd, IDC_SETTINGS_ACCENT);
+  HWND textScale = GetDlgItem(hwnd, IDC_SETTINGS_TEXT_SCALE);
+  HWND density = GetDlgItem(hwnd, IDC_SETTINGS_DENSITY);
+  HWND autosave = GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_INTERVAL);
 
-    if (refillLanguageAndFont) {
-        SendMessageW(language, CB_RESETCONTENT, 0, 0);
-        for (int i = 0; i <= (int)UiLanguage::ChineseTraditionalHongKong; ++i) {
-            SendMessageW(language, CB_ADDSTRING, 0, (LPARAM)LanguageName((UiLanguage)i));
-        }
+  if (refillLanguageAndFont) {
+    SendMessageW(language, CB_RESETCONTENT, 0, 0);
+    for (int i = 0; i <= (int)UiLanguage::ChineseTraditionalHongKong; ++i) {
+      SendMessageW(language, CB_ADDSTRING, 0,
+                   (LPARAM)LanguageName((UiLanguage)i));
     }
-    SendMessageW(language, CB_SETCURSEL, (WPARAM)Settings().language, 0);
+  }
+  SendMessageW(language, CB_SETCURSEL, (WPARAM)Settings().language, 0);
 
-    if (refillLanguageAndFont) {
-        ApplyFontListToSettings(hwnd);
+  if (refillLanguageAndFont) {
+    ApplyFontListToSettings(hwnd);
+  }
+
+  SendMessageW(animation, CB_RESETCONTENT, 0, 0);
+  for (int i = 0; i <= 2; ++i) {
+    std::wstring label = AnimationLevelName((AnimationLevel)i);
+    SendMessageW(animation, CB_ADDSTRING, 0, (LPARAM)label.c_str());
+  }
+  SendMessageW(animation, CB_SETCURSEL, (WPARAM)Settings().animationLevel, 0);
+
+  SendMessageW(particle, CB_RESETCONTENT, 0, 0);
+  for (int i = 0; i <= 2; ++i) {
+    std::wstring label = ParticleLevelName((ParticleLevel)i);
+    SendMessageW(particle, CB_ADDSTRING, 0, (LPARAM)label.c_str());
+  }
+  SendMessageW(particle, CB_SETCURSEL, (WPARAM)Settings().particleLevel, 0);
+
+  SendMessageW(report, CB_RESETCONTENT, 0, 0);
+  for (int i = 0; i <= 3; ++i) {
+    std::wstring label = ReportTemplateName((ReportTemplate)i);
+    SendMessageW(report, CB_ADDSTRING, 0, (LPARAM)label.c_str());
+  }
+  SendMessageW(report, CB_SETCURSEL, (WPARAM)Settings().reportTemplate, 0);
+
+  SendMessageW(theme, CB_RESETCONTENT, 0, 0);
+  SendMessageW(theme, CB_ADDSTRING, 0,
+               (LPARAM)Tr(L"Pure black", L"\u7eaf\u9ed1").c_str());
+  SendMessageW(theme, CB_ADDSTRING, 0,
+               (LPARAM)Tr(L"Pure white", L"\u7eaf\u767d").c_str());
+  SendMessageW(theme, CB_SETCURSEL, (WPARAM)Settings().theme, 0);
+
+  SendMessageW(accent, CB_RESETCONTENT, 0, 0);
+  SendMessageW(accent, CB_ADDSTRING, 0,
+               (LPARAM)Tr(L"Neutral", L"\u4e2d\u6027\u7070").c_str());
+  SendMessageW(
+      accent, CB_ADDSTRING, 0,
+      (LPARAM)Tr(L"Muted sage", L"\u4f4e\u9971\u548c\u9f20\u5c3e\u8349")
+          .c_str());
+  SendMessageW(
+      accent, CB_ADDSTRING, 0,
+      (LPARAM)Tr(L"Muted cyan", L"\u4f4e\u9971\u548c\u9752\u8272").c_str());
+  SendMessageW(accent, CB_SETCURSEL, (WPARAM)Settings().accentTone, 0);
+
+  SendMessageW(textScale, CB_RESETCONTENT, 0, 0);
+  SendMessageW(textScale, CB_ADDSTRING, 0,
+               (LPARAM)Tr(L"Small", L"\u5c0f").c_str());
+  SendMessageW(textScale, CB_ADDSTRING, 0,
+               (LPARAM)Tr(L"Standard", L"\u6807\u51c6").c_str());
+  SendMessageW(textScale, CB_ADDSTRING, 0,
+               (LPARAM)Tr(L"Large", L"\u5927").c_str());
+  SendMessageW(textScale, CB_SETCURSEL, (WPARAM)Settings().textScale, 0);
+
+  SendMessageW(density, CB_RESETCONTENT, 0, 0);
+  SendMessageW(density, CB_ADDSTRING, 0,
+               (LPARAM)Tr(L"Compact", L"\u7d27\u51d1").c_str());
+  SendMessageW(density, CB_ADDSTRING, 0,
+               (LPARAM)Tr(L"Comfortable", L"\u8212\u9002").c_str());
+  SendMessageW(density, CB_ADDSTRING, 0,
+               (LPARAM)Tr(L"Spacious", L"\u5bbd\u677e").c_str());
+  SendMessageW(density, CB_SETCURSEL, (WPARAM)Settings().layoutDensity, 0);
+
+  SendMessageW(autosave, CB_RESETCONTENT, 0, 0);
+  SendMessageW(autosave, CB_ADDSTRING, 0,
+               (LPARAM)Tr(L"Off", L"\u5173\u95ed").c_str());
+  SendMessageW(autosave, CB_ADDSTRING, 0,
+               (LPARAM)Tr(L"30 seconds", L"30 \u79d2").c_str());
+  SendMessageW(autosave, CB_ADDSTRING, 0,
+               (LPARAM)Tr(L"1 minute", L"1 \u5206\u949f").c_str());
+  SendMessageW(autosave, CB_ADDSTRING, 0,
+               (LPARAM)Tr(L"5 minutes", L"5 \u5206\u949f").c_str());
+  int autosaveIndex = Settings().autosaveIntervalSeconds == 0     ? 0
+                      : Settings().autosaveIntervalSeconds == 60  ? 2
+                      : Settings().autosaveIntervalSeconds == 300 ? 3
+                                                                  : 1;
+  SendMessageW(autosave, CB_SETCURSEL, autosaveIndex, 0);
+
+  if (!Ui().languageUpdateActive) {
+    const HWND combos[] = {language, font,   animation, particle, report,
+                           theme,    accent, textScale, density,  autosave};
+    for (HWND combo : combos) {
+      RedrawWindow(combo, nullptr, nullptr, RDW_INVALIDATE | RDW_NOERASE);
     }
-
-    SendMessageW(animation, CB_RESETCONTENT, 0, 0);
-    for (int i = 0; i <= 2; ++i) {
-        std::wstring label = AnimationLevelName((AnimationLevel)i);
-        SendMessageW(animation, CB_ADDSTRING, 0, (LPARAM)label.c_str());
-    }
-    SendMessageW(animation, CB_SETCURSEL, (WPARAM)Settings().animationLevel, 0);
-
-    SendMessageW(particle, CB_RESETCONTENT, 0, 0);
-    for (int i = 0; i <= 2; ++i) {
-        std::wstring label = ParticleLevelName((ParticleLevel)i);
-        SendMessageW(particle, CB_ADDSTRING, 0, (LPARAM)label.c_str());
-    }
-    SendMessageW(particle, CB_SETCURSEL, (WPARAM)Settings().particleLevel, 0);
-
-    SendMessageW(report, CB_RESETCONTENT, 0, 0);
-    for (int i = 0; i <= 3; ++i) {
-        std::wstring label = ReportTemplateName((ReportTemplate)i);
-        SendMessageW(report, CB_ADDSTRING, 0, (LPARAM)label.c_str());
-    }
-    SendMessageW(report, CB_SETCURSEL, (WPARAM)Settings().reportTemplate, 0);
-
-    SendMessageW(theme, CB_RESETCONTENT, 0, 0);
-    SendMessageW(theme, CB_ADDSTRING, 0, (LPARAM)Tr(L"Pure black", L"\u7eaf\u9ed1").c_str());
-    SendMessageW(theme, CB_ADDSTRING, 0, (LPARAM)Tr(L"Pure white", L"\u7eaf\u767d").c_str());
-    SendMessageW(theme, CB_SETCURSEL, (WPARAM)Settings().theme, 0);
-
-    SendMessageW(accent, CB_RESETCONTENT, 0, 0);
-    SendMessageW(accent, CB_ADDSTRING, 0, (LPARAM)Tr(L"Neutral", L"\u4e2d\u6027\u7070").c_str());
-    SendMessageW(accent, CB_ADDSTRING, 0, (LPARAM)Tr(L"Muted sage", L"\u4f4e\u9971\u548c\u9f20\u5c3e\u8349").c_str());
-    SendMessageW(accent, CB_ADDSTRING, 0, (LPARAM)Tr(L"Muted cyan", L"\u4f4e\u9971\u548c\u9752\u8272").c_str());
-    SendMessageW(accent, CB_SETCURSEL, (WPARAM)Settings().accentTone, 0);
-
-    SendMessageW(textScale, CB_RESETCONTENT, 0, 0);
-    SendMessageW(textScale, CB_ADDSTRING, 0, (LPARAM)Tr(L"Small", L"\u5c0f").c_str());
-    SendMessageW(textScale, CB_ADDSTRING, 0, (LPARAM)Tr(L"Standard", L"\u6807\u51c6").c_str());
-    SendMessageW(textScale, CB_ADDSTRING, 0, (LPARAM)Tr(L"Large", L"\u5927").c_str());
-    SendMessageW(textScale, CB_SETCURSEL, (WPARAM)Settings().textScale, 0);
-
-    SendMessageW(density, CB_RESETCONTENT, 0, 0);
-    SendMessageW(density, CB_ADDSTRING, 0, (LPARAM)Tr(L"Compact", L"\u7d27\u51d1").c_str());
-    SendMessageW(density, CB_ADDSTRING, 0, (LPARAM)Tr(L"Comfortable", L"\u8212\u9002").c_str());
-    SendMessageW(density, CB_ADDSTRING, 0, (LPARAM)Tr(L"Spacious", L"\u5bbd\u677e").c_str());
-    SendMessageW(density, CB_SETCURSEL, (WPARAM)Settings().layoutDensity, 0);
-
-    SendMessageW(autosave, CB_RESETCONTENT, 0, 0);
-    SendMessageW(autosave, CB_ADDSTRING, 0, (LPARAM)Tr(L"Off", L"\u5173\u95ed").c_str());
-    SendMessageW(autosave, CB_ADDSTRING, 0, (LPARAM)Tr(L"30 seconds", L"30 \u79d2").c_str());
-    SendMessageW(autosave, CB_ADDSTRING, 0, (LPARAM)Tr(L"1 minute", L"1 \u5206\u949f").c_str());
-    SendMessageW(autosave, CB_ADDSTRING, 0, (LPARAM)Tr(L"5 minutes", L"5 \u5206\u949f").c_str());
-    int autosaveIndex = Settings().autosaveIntervalSeconds == 0 ? 0 : Settings().autosaveIntervalSeconds == 60 ? 2 : Settings().autosaveIntervalSeconds == 300 ? 3 : 1;
-    SendMessageW(autosave, CB_SETCURSEL, autosaveIndex, 0);
-
-    if (!Ui().languageUpdateActive) {
-        const HWND combos[] = {language, font, animation, particle, report, theme, accent, textScale, density, autosave};
-        for (HWND combo : combos) {
-            RedrawWindow(combo, nullptr, nullptr, RDW_INVALIDATE | RDW_NOERASE);
-        }
-    }
-    EnableWindow(particle, Settings().particlesEnabled ? TRUE : FALSE);
+  }
+  EnableWindow(particle, Settings().particlesEnabled ? TRUE : FALSE);
 }
 
-void ApplySettingsLanguage(HWND hwnd){
-    RedrawScope redraw(hwnd);
-    std::wstring settingsTitle = Tr(L"Settings", L"\u8bbe\u7f6e");
-    SetWindowTextW(hwnd, settingsTitle.c_str());
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), Tr(L"Settings", L"\u8bbe\u7f6e"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_LANG_LABEL), Tr(L"Language", L"\u8bed\u8a00"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_FONT_LABEL), Tr(L"Interface Font", L"\u754c\u9762\u5b57\u4f53"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LABEL), Tr(L"Animation level", L"\u52a8\u753b\u5f3a\u5ea6"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LABEL), Tr(L"Particle density", L"\u7c92\u5b50\u5bc6\u5ea6"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_REPORT_LABEL), Tr(L"Report template", L"\u62a5\u544a\u6a21\u677f"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLES), ParticleEffectsLabel());
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_RISK_ALERTS), Tr(L"Enable risk student reminders", L"\u542f\u7528\u98ce\u9669\u5b66\u751f\u63d0\u9192"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_PROMPT), Tr(L"Prompt for autosave recovery", L"\u542f\u52a8\u65f6\u63d0\u793a\u6062\u590d\u81ea\u52a8\u4fdd\u5b58"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_COMMAND_PALETTE), Tr(L"Enable Ctrl+K command palette", L"\u542f\u7528 Ctrl+K \u547d\u4ee4\u9762\u677f"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_ADVANCED_FILTER), Tr(L"Enable advanced filter syntax", L"\u542f\u7528\u9ad8\u7ea7\u7b5b\u9009\u8bed\u6cd5"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_SMOOTH_SCROLL), SmoothDropdownScrollingLabel());
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_THEME_LABEL), Tr(L"Theme", L"\u4e3b\u9898"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_ACCENT_LABEL), Tr(L"Accent tone", L"\u5f3a\u8c03\u8272\u8c03"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_TEXT_SCALE_LABEL), Tr(L"Text size", L"\u6587\u5b57\u5927\u5c0f"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_DENSITY_LABEL), Tr(L"Interface density", L"\u754c\u9762\u5bc6\u5ea6"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_LABEL), Tr(L"Autosave interval", L"\u81ea\u52a8\u4fdd\u5b58\u95f4\u9694"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS_LABEL), ScrollFrameRateLabel());
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS_UNIT), L"FPS");
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS), std::to_wstring(Settings().scrollAnimationFps.load()));
-    ConfigureEditMetrics(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_SHOW_STATS), Tr(L"Show statistics cards", L"\u663e\u793a\u7edf\u8ba1\u5361\u7247"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_SHOW_HINT), Tr(L"Show bottom usage hint", L"\u663e\u793a\u5e95\u90e8\u4f7f\u7528\u63d0\u793a"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_TABLE_GRID), Tr(L"Show table grid lines", L"\u663e\u793a\u8868\u683c\u7f51\u683c\u7ebf"));
+void ApplySettingsLanguage(HWND hwnd) {
+  RedrawScope redraw(hwnd);
+  std::wstring settingsTitle = Tr(L"Settings", L"\u8bbe\u7f6e");
+  SetWindowTextW(hwnd, settingsTitle.c_str());
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_TITLE),
+          Tr(L"Settings", L"\u8bbe\u7f6e"));
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_LANG_LABEL),
+          Tr(L"Language", L"\u8bed\u8a00"));
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_FONT_LABEL),
+          Tr(L"Interface Font", L"\u754c\u9762\u5b57\u4f53"));
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LABEL),
+          Tr(L"Animation level", L"\u52a8\u753b\u5f3a\u5ea6"));
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LABEL),
+          Tr(L"Particle density", L"\u7c92\u5b50\u5bc6\u5ea6"));
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_REPORT_LABEL),
+          Tr(L"Report template", L"\u62a5\u544a\u6a21\u677f"));
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLES), ParticleEffectsLabel());
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_RISK_ALERTS),
+          Tr(L"Enable risk student reminders",
+             L"\u542f\u7528\u98ce\u9669\u5b66\u751f\u63d0\u9192"));
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_PROMPT),
+          Tr(L"Prompt for autosave recovery",
+             L"\u542f\u52a8\u65f6\u63d0\u793a\u6062\u590d\u81ea\u52a8\u4fdd"
+             L"\u5b58"));
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_COMMAND_PALETTE),
+          Tr(L"Enable Ctrl+K command palette",
+             L"\u542f\u7528 Ctrl+K \u547d\u4ee4\u9762\u677f"));
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_ADVANCED_FILTER),
+          Tr(L"Enable advanced filter syntax",
+             L"\u542f\u7528\u9ad8\u7ea7\u7b5b\u9009\u8bed\u6cd5"));
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_SMOOTH_SCROLL),
+          SmoothDropdownScrollingLabel());
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_THEME_LABEL),
+          Tr(L"Theme", L"\u4e3b\u9898"));
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_ACCENT_LABEL),
+          Tr(L"Accent tone", L"\u5f3a\u8c03\u8272\u8c03"));
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_TEXT_SCALE_LABEL),
+          Tr(L"Text size", L"\u6587\u5b57\u5927\u5c0f"));
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_DENSITY_LABEL),
+          Tr(L"Interface density", L"\u754c\u9762\u5bc6\u5ea6"));
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_LABEL),
+          Tr(L"Autosave interval", L"\u81ea\u52a8\u4fdd\u5b58\u95f4\u9694"));
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS_LABEL),
+          ScrollFrameRateLabel());
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS_UNIT), L"FPS");
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS),
+          std::to_wstring(Settings().scrollAnimationFps.load()));
+  ConfigureEditMetrics(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS));
+  SetText(
+      GetDlgItem(hwnd, IDC_SETTINGS_SHOW_STATS),
+      Tr(L"Show statistics cards", L"\u663e\u793a\u7edf\u8ba1\u5361\u7247"));
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_SHOW_HINT),
+          Tr(L"Show bottom usage hint",
+             L"\u663e\u793a\u5e95\u90e8\u4f7f\u7528\u63d0\u793a"));
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_TABLE_GRID),
+          Tr(L"Show table grid lines",
+             L"\u663e\u793a\u8868\u683c\u7f51\u683c\u7ebf"));
 
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_CLOSE), Tr(L"Close", L"\u5173\u95ed"));
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_RESET), Tr(L"Reset All Settings", L"\u91cd\u7f6e\u6240\u6709\u8bbe\u7f6e"));
-    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE), Tr(L"Language", L"\u8bed\u8a00"));
-    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_FONT), Tr(L"Interface Font", L"\u754c\u9762\u5b57\u4f53"));
-    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LEVEL), Tr(L"Animation level", L"\u52a8\u753b\u5f3a\u5ea6"));
-    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL), Tr(L"Particle density", L"\u7c92\u5b50\u5bc6\u5ea6"));
-    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_REPORT_TEMPLATE), Tr(L"Report template", L"\u62a5\u544a\u6a21\u677f"));
-    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_THEME), Tr(L"Theme", L"\u4e3b\u9898"));
-    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_ACCENT), Tr(L"Accent tone", L"\u5f3a\u8c03\u8272\u8c03"));
-    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_TEXT_SCALE), Tr(L"Text size", L"\u6587\u5b57\u5927\u5c0f"));
-    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_DENSITY), Tr(L"Interface density", L"\u754c\u9762\u5bc6\u5ea6"));
-    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_INTERVAL), Tr(L"Autosave interval", L"\u81ea\u52a8\u4fdd\u5b58\u95f4\u9694"));
-    SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS), ScrollFrameRateLabel());
-    for (const auto& binding : SettingToggleBindings()) {
-        SendMessageW(GetDlgItem(hwnd, binding.id), BM_SETCHECK,
-            *binding.value ? BST_CHECKED : BST_UNCHECKED, 0);
-    }
-    FillSettingsCombos(hwnd, !Ui().languageUpdateActive);
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_RETRY), Tr(L"Retry", L"重试"));
-    SetSettingsSaveResult(!Ui().settingsSaveFailed);
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_CLOSE), Tr(L"Close", L"\u5173\u95ed"));
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_RESET),
+          Tr(L"Reset All Settings", L"\u91cd\u7f6e\u6240\u6709\u8bbe\u7f6e"));
+  SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE),
+                    Tr(L"Language", L"\u8bed\u8a00"));
+  SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_FONT),
+                    Tr(L"Interface Font", L"\u754c\u9762\u5b57\u4f53"));
+  SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LEVEL),
+                    Tr(L"Animation level", L"\u52a8\u753b\u5f3a\u5ea6"));
+  SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL),
+                    Tr(L"Particle density", L"\u7c92\u5b50\u5bc6\u5ea6"));
+  SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_REPORT_TEMPLATE),
+                    Tr(L"Report template", L"\u62a5\u544a\u6a21\u677f"));
+  SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_THEME),
+                    Tr(L"Theme", L"\u4e3b\u9898"));
+  SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_ACCENT),
+                    Tr(L"Accent tone", L"\u5f3a\u8c03\u8272\u8c03"));
+  SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_TEXT_SCALE),
+                    Tr(L"Text size", L"\u6587\u5b57\u5927\u5c0f"));
+  SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_DENSITY),
+                    Tr(L"Interface density", L"\u754c\u9762\u5bc6\u5ea6"));
+  SetAccessibleName(
+      GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_INTERVAL),
+      Tr(L"Autosave interval", L"\u81ea\u52a8\u4fdd\u5b58\u95f4\u9694"));
+  SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS),
+                    ScrollFrameRateLabel());
+  for (const auto &binding : SettingToggleBindings()) {
+    SendMessageW(GetDlgItem(hwnd, binding.id), BM_SETCHECK,
+                 *binding.value ? BST_CHECKED : BST_UNCHECKED, 0);
+  }
+  FillSettingsCombos(hwnd, !Ui().languageUpdateActive);
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_RETRY), Tr(L"Retry", L"重试"));
+  SetSettingsSaveResult(!Ui().settingsSaveFailed);
 }
 
-void ApplyLanguageAtomically(HWND settingsWindow){
-    const HWND candidates[] = {Ui().hwnd, settingsWindow, Ui().chartWindow, Ui().quickRollCallWindow};
-    std::vector<HWND> roots;
-    for (HWND root : candidates) {
-        if (root && IsWindow(root)
-            && std::find(roots.begin(), roots.end(), root) == roots.end()) {
-            roots.push_back(root);
-        }
+void ApplyLanguageAtomically(HWND settingsWindow) {
+  const HWND candidates[] = {Ui().hwnd, settingsWindow, Ui().chartWindow,
+                             Ui().quickRollCallWindow};
+  std::vector<HWND> roots;
+  for (HWND root : candidates) {
+    if (root && IsWindow(root) &&
+        std::find(roots.begin(), roots.end(), root) == roots.end()) {
+      roots.push_back(root);
     }
-    std::vector<HWND> redrawWindows = roots;
-    for (HWND root : roots) {
-        EnumChildWindows(root, [](HWND child, LPARAM data) -> BOOL {
-            auto* windows = reinterpret_cast<std::vector<HWND>*>(data);
-            if (std::find(windows->begin(), windows->end(), child) == windows->end()) {
-                windows->push_back(child);
-            }
-            return TRUE;
-        }, reinterpret_cast<LPARAM>(&redrawWindows));
-    }
-    HWND previousFocus = GetFocus();
-    Ui().languageUpdateActive = true;
-    std::vector<std::unique_ptr<RedrawScope>> redrawScopes;
-    for (HWND window : redrawWindows) redrawScopes.push_back(std::make_unique<RedrawScope>(window));
+  }
+  std::vector<HWND> redrawWindows = roots;
+  for (HWND root : roots) {
+    EnumChildWindows(
+        root,
+        [](HWND child, LPARAM data) -> BOOL {
+          auto *windows = reinterpret_cast<std::vector<HWND> *>(data);
+          if (std::find(windows->begin(), windows->end(), child) ==
+              windows->end()) {
+            windows->push_back(child);
+          }
+          return TRUE;
+        },
+        reinterpret_cast<LPARAM>(&redrawWindows));
+  }
+  HWND previousFocus = GetFocus();
+  Ui().languageUpdateActive = true;
+  std::vector<std::unique_ptr<RedrawScope>> redrawScopes;
+  for (HWND window : redrawWindows)
+    redrawScopes.push_back(std::make_unique<RedrawScope>(window));
 
-    ApplyMainLanguage();
-    RefreshCourseCombo();
-    if (settingsWindow && IsWindow(settingsWindow)) ApplySettingsLanguage(settingsWindow);
-    if (Ui().chartWindow && IsWindow(Ui().chartWindow)) {
-        SetWindowTextW(Ui().chartWindow, Tr(L"Statistics Chart", L"\u7edf\u8ba1\u56fe\u8868").c_str());
-    }
-    if (Ui().quickRollCallWindow && IsWindow(Ui().quickRollCallWindow)) {
-        SetWindowTextW(Ui().quickRollCallWindow, Tr(L"Quick roll call", L"\u5feb\u901f\u70b9\u540d").c_str());
-        SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_TITLE), Tr(L"Quick roll call", L"\u5feb\u901f\u70b9\u540d"));
-        SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_NOTES_LABEL), Tr(L"Notes:", L"\u5907\u6ce8\uff1a"));
-        SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_PRESENT), Tr(L"Present", L"\u51fa\u5e2d"));
-        SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_ABSENT), Tr(L"Absent", L"\u7f3a\u5e2d"));
-        SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_LATE), Tr(L"Late", L"\u8fdf\u5230"));
-        SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_OTHER), Tr(L"Other", L"\u5176\u4ed6"));
-        SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_PREVIOUS), Tr(L"Previous", L"\u4e0a\u4e00\u4f4d"));
-        SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_SKIP), Tr(L"Skip", L"\u8df3\u8fc7"));
-        SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_FINISH), Tr(L"Finish", L"\u5b8c\u6210"));
-        SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_CANCEL), Tr(L"Cancel", L"\u53d6\u6d88"));
-        SetText(GetDlgItem(Ui().quickRollCallWindow,IDC_QUICK_LEAVE),Tr(L"Leave",L"请假"));
-        SetText(GetDlgItem(Ui().quickRollCallWindow,IDC_QUICK_PENDING),Tr(L"Pending",L"未点名"));
-        SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_HINT),
-            Tr(L"Keys 1-6: Present, Absent, Late, Other, Leave, Pending; arrows: Previous / Skip",L"数字键1至6选择六种状态，方向键上一位或跳过"));
-        RefreshQuickRollCallWindow(Ui().quickRollCallWindow);
-    }
+  ApplyMainLanguage();
+  RefreshCourseCombo();
+  if (settingsWindow && IsWindow(settingsWindow))
+    ApplySettingsLanguage(settingsWindow);
+  if (Ui().chartWindow && IsWindow(Ui().chartWindow)) {
+    SetWindowTextW(
+        Ui().chartWindow,
+        Tr(L"Statistics Chart", L"\u7edf\u8ba1\u56fe\u8868").c_str());
+    SendMessageW(Ui().chartWindow, WM_SIZE, 0, 0);
+  }
+  if (Ui().quickRollCallWindow && IsWindow(Ui().quickRollCallWindow)) {
+    SetWindowTextW(Ui().quickRollCallWindow,
+                   Tr(L"Quick roll call", L"\u5feb\u901f\u70b9\u540d").c_str());
+    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_TITLE),
+            Tr(L"Quick roll call", L"\u5feb\u901f\u70b9\u540d"));
+    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_NOTES_LABEL),
+            Tr(L"Notes:", L"\u5907\u6ce8\uff1a"));
+    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_PRESENT),
+            Tr(L"Present", L"\u51fa\u5e2d"));
+    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_ABSENT),
+            Tr(L"Absent", L"\u7f3a\u5e2d"));
+    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_LATE),
+            Tr(L"Late", L"\u8fdf\u5230"));
+    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_OTHER),
+            Tr(L"Other", L"\u5176\u4ed6"));
+    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_PREVIOUS),
+            Tr(L"Previous", L"\u4e0a\u4e00\u4f4d"));
+    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_SKIP),
+            Tr(L"Skip", L"\u8df3\u8fc7"));
+    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_FINISH),
+            Tr(L"Finish", L"\u5b8c\u6210"));
+    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_CANCEL),
+            Tr(L"Cancel", L"\u53d6\u6d88"));
+    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_LEAVE),
+            Tr(L"Leave", L"请假"));
+    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_PENDING),
+            Tr(L"Pending", L"未点名"));
+    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_HINT),
+            Tr(L"Keys 1-6: Present, Absent, Late, Other, Leave, Pending; "
+               L"arrows: Previous / Skip",
+               L"数字键1至6选择六种状态，方向键上一位或跳过"));
+    RefreshQuickRollCallWindow(Ui().quickRollCallWindow);
+  }
 
-    Ui().languageUpdateActive = false;
-    redrawScopes.clear();
-    if (settingsWindow) ResizeSettingsLayout(settingsWindow);
-    if (previousFocus && IsWindow(previousFocus)) SetFocus(previousFocus);
+  if (Ui().hwnd)
+    ResizeLayout(Ui().hwnd);
+  Ui().languageUpdateActive = false;
+  redrawScopes.clear();
+  if (settingsWindow)
+    ResizeSettingsLayout(settingsWindow);
+  if (previousFocus && IsWindow(previousFocus))
+    SetFocus(previousFocus);
 }
 
-int NormalizeScrollFrameRateInput(HWND hwnd){
-    HWND edit = GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS);
-    int current = std::clamp(Settings().scrollAnimationFps.load(), 60, 360);
-    int normalized = current;
-    std::wstring value = TrimWide(GetText(edit));
-    if (!value.empty()) {
-        try {
-            size_t parsed = 0;
-            long long candidate = std::stoll(value, &parsed, 10);
-            if (parsed == value.size()) {
-                normalized = (int)std::clamp<long long>(candidate, 60, 360);
-            }
-        } catch (const std::exception&) {
-            normalized = current;
-        }
+int NormalizeScrollFrameRateInput(HWND hwnd) {
+  HWND edit = GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS);
+  int current = std::clamp(Settings().scrollAnimationFps.load(), 60, 360);
+  int normalized = current;
+  std::wstring value = TrimWide(GetText(edit));
+  if (!value.empty()) {
+    try {
+      size_t parsed = 0;
+      long long candidate = std::stoll(value, &parsed, 10);
+      if (parsed == value.size()) {
+        normalized = (int)std::clamp<long long>(candidate, 60, 360);
+      }
+    } catch (const std::exception &) {
+      normalized = current;
     }
-    SetText(edit, std::to_wstring(normalized));
-    ConfigureEditMetrics(edit);
-    if (normalized != current) {
-        Settings().scrollAnimationFps.store(normalized);
-        SignalAnimationScheduler();
-    }
-    return normalized;
+  }
+  SetText(edit, std::to_wstring(normalized));
+  ConfigureEditMetrics(edit);
+  if (normalized != current) {
+    Settings().scrollAnimationFps.store(normalized);
+    SignalAnimationScheduler();
+  }
+  return normalized;
 }
 
-void ApplySettingsFromWindow(HWND hwnd){
-    const auto previousLanguage = Settings().language;
-    const auto previousFont = Settings().fontFamily;
-    const auto previousScale = Settings().textScale;
-    const auto previousDensity = Settings().layoutDensity;
-    const int previousAutosaveInterval = Settings().autosaveIntervalSeconds;
-    UiTheme previousTheme = Settings().theme;
-    AccentTone previousAccent = Settings().accentTone;
-    UiTheme requestedTheme = Settings().theme;
-    int language = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE), CB_GETCURSEL, 0, 0);
-    int fontIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_FONT), CB_GETCURSEL, 0, 0);
-    int animationIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LEVEL), CB_GETCURSEL, 0, 0);
-    int particleIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL), CB_GETCURSEL, 0, 0);
-    int reportIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_REPORT_TEMPLATE), CB_GETCURSEL, 0, 0);
-    int themeIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_THEME), CB_GETCURSEL, 0, 0);
-    int accentIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_ACCENT), CB_GETCURSEL, 0, 0);
-    int textScaleIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TEXT_SCALE), CB_GETCURSEL, 0, 0);
-    int densityIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_DENSITY), CB_GETCURSEL, 0, 0);
-    int autosaveIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_INTERVAL), CB_GETCURSEL, 0, 0);
+void ApplySettingsFromWindow(HWND hwnd) {
+  const auto previousLanguage = Settings().language;
+  const auto previousFont = Settings().fontFamily;
+  const auto previousScale = Settings().textScale;
+  const auto previousDensity = Settings().layoutDensity;
+  const int previousAutosaveInterval = Settings().autosaveIntervalSeconds;
+  UiTheme previousTheme = Settings().theme;
+  AccentTone previousAccent = Settings().accentTone;
+  UiTheme requestedTheme = Settings().theme;
+  int language = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE),
+                                   CB_GETCURSEL, 0, 0);
+  int fontIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_FONT),
+                                    CB_GETCURSEL, 0, 0);
+  int animationIndex = (int)SendMessageW(
+      GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LEVEL), CB_GETCURSEL, 0, 0);
+  int particleIndex = (int)SendMessageW(
+      GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL), CB_GETCURSEL, 0, 0);
+  int reportIndex = (int)SendMessageW(
+      GetDlgItem(hwnd, IDC_SETTINGS_REPORT_TEMPLATE), CB_GETCURSEL, 0, 0);
+  int themeIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_THEME),
+                                     CB_GETCURSEL, 0, 0);
+  int accentIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_ACCENT),
+                                      CB_GETCURSEL, 0, 0);
+  int textScaleIndex = (int)SendMessageW(
+      GetDlgItem(hwnd, IDC_SETTINGS_TEXT_SCALE), CB_GETCURSEL, 0, 0);
+  int densityIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_DENSITY),
+                                       CB_GETCURSEL, 0, 0);
+  int autosaveIndex = (int)SendMessageW(
+      GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_INTERVAL), CB_GETCURSEL, 0, 0);
 
-    if (language < 0 || language > (int)UiLanguage::ChineseTraditionalHongKong) language = 0;
-    Settings().language = (UiLanguage)language;
-    if (animationIndex >= 0 && animationIndex <= 2) Settings().animationLevel = (AnimationLevel)animationIndex;
-    if (particleIndex >= 0 && particleIndex <= 2) Settings().particleLevel = (ParticleLevel)particleIndex;
-    if (reportIndex >= 0 && reportIndex <= 3) Settings().reportTemplate = (ReportTemplate)reportIndex;
-    {
-        if (themeIndex >= 0 && themeIndex <= 1) requestedTheme = (UiTheme)themeIndex;
-        if (accentIndex >= 0 && accentIndex <= 2) Settings().accentTone = (AccentTone)accentIndex;
-        if (textScaleIndex >= 0 && textScaleIndex <= 2) Settings().textScale = (TextScale)textScaleIndex;
-        if (densityIndex >= 0 && densityIndex <= 2) Settings().layoutDensity = (LayoutDensity)densityIndex;
-        static const int autosaveSeconds[] = {0, 30, 60, 300};
-        if (autosaveIndex >= 0 && autosaveIndex <= 3) Settings().autosaveIntervalSeconds = autosaveSeconds[autosaveIndex];
-        NormalizeScrollFrameRateInput(hwnd);
-    }
+  if (language < 0 || language > (int)UiLanguage::ChineseTraditionalHongKong)
+    language = 0;
+  Settings().language = (UiLanguage)language;
+  if (animationIndex >= 0 && animationIndex <= 2)
+    Settings().animationLevel = (AnimationLevel)animationIndex;
+  if (particleIndex >= 0 && particleIndex <= 2)
+    Settings().particleLevel = (ParticleLevel)particleIndex;
+  if (reportIndex >= 0 && reportIndex <= 3)
+    Settings().reportTemplate = (ReportTemplate)reportIndex;
+  {
+    if (themeIndex >= 0 && themeIndex <= 1)
+      requestedTheme = (UiTheme)themeIndex;
+    if (accentIndex >= 0 && accentIndex <= 2)
+      Settings().accentTone = (AccentTone)accentIndex;
+    if (textScaleIndex >= 0 && textScaleIndex <= 2)
+      Settings().textScale = (TextScale)textScaleIndex;
+    if (densityIndex >= 0 && densityIndex <= 2)
+      Settings().layoutDensity = (LayoutDensity)densityIndex;
+    static const int autosaveSeconds[] = {0, 30, 60, 300};
+    if (autosaveIndex >= 0 && autosaveIndex <= 3)
+      Settings().autosaveIntervalSeconds = autosaveSeconds[autosaveIndex];
+    NormalizeScrollFrameRateInput(hwnd);
+  }
 
-    if (fontIndex >= 0) {
-        std::wstring fontName = GetComboSelectedText(GetDlgItem(hwnd, IDC_SETTINGS_FONT));
-        if (!fontName.empty()) Settings().fontFamily = fontName;
+  if (fontIndex >= 0) {
+    std::wstring fontName =
+        GetComboSelectedText(GetDlgItem(hwnd, IDC_SETTINGS_FONT));
+    if (!fontName.empty())
+      Settings().fontFamily = fontName;
+  }
+  bool paletteChanged = requestedTheme != previousTheme ||
+                        Settings().accentTone != previousAccent;
+  if (paletteChanged) {
+    BeginThemeTransition(requestedTheme);
+  }
+  if (paletteChanged || previousFont != Settings().fontFamily ||
+      previousScale != Settings().textScale ||
+      previousDensity != Settings().layoutDensity ||
+      previousAutosaveInterval != Settings().autosaveIntervalSeconds) {
+    // A palette transition changes colors only; it must not rebuild controls or
+    // layout.
+    if (previousFont != Settings().fontFamily ||
+        previousScale != Settings().textScale ||
+        previousDensity != Settings().layoutDensity) {
+      ApplyVisualSettings(Ui().themeTransition.active);
+      ResizeSettingsLayout(hwnd);
     }
-    bool paletteChanged = requestedTheme != previousTheme || Settings().accentTone != previousAccent;
-    if (paletteChanged) {
-        BeginThemeTransition(requestedTheme);
+    if (previousAutosaveInterval != Settings().autosaveIntervalSeconds &&
+        Ui().hwnd) {
+      KillTimer(Ui().hwnd, 1);
+      if (Settings().autosaveIntervalSeconds > 0)
+        SetTimer(Ui().hwnd, 1, Settings().autosaveIntervalSeconds * 1000,
+                 nullptr);
     }
-    if (paletteChanged || previousFont != Settings().fontFamily || previousScale != Settings().textScale
-        || previousDensity != Settings().layoutDensity || previousAutosaveInterval != Settings().autosaveIntervalSeconds) {
-        // A palette transition changes colors only; it must not rebuild controls or layout.
-        if (previousFont != Settings().fontFamily || previousScale != Settings().textScale
-            || previousDensity != Settings().layoutDensity) {
-            ApplyVisualSettings(Ui().themeTransition.active);
-            ResizeSettingsLayout(hwnd);
-        }
-        if (previousAutosaveInterval != Settings().autosaveIntervalSeconds && Ui().hwnd) {
-            KillTimer(Ui().hwnd, 1);
-            if (Settings().autosaveIntervalSeconds > 0)
-                SetTimer(Ui().hwnd, 1, Settings().autosaveIntervalSeconds * 1000, nullptr);
-        }
-    }
-    if (previousLanguage != Settings().language) ApplyLanguageAtomically(hwnd);
-    if(Settings().animationLevel==AnimationLevel::Off){
-        SettleAllAnimations();
-        Ui().settingsScrollStartMs=0;Ui().settingsScrollY=(int)Ui().settingsScrollTarget;
-        Ui().settingsScrollCurrent=Ui().settingsScrollTarget;
-        RemoveAnimationState(hwnd);SetLayeredWindowAttributes(hwnd,0,255,LWA_ALPHA);ResizeSettingsLayout(hwnd);
-    }
-    SaveSettingsWithFeedback(hwnd);
+  }
+  if (previousLanguage != Settings().language)
+    ApplyLanguageAtomically(hwnd);
+  if (Settings().animationLevel == AnimationLevel::Off) {
+    SettleAllAnimations();
+    Ui().settingsScrollStartMs = 0;
+    Ui().settingsScrollY = (int)Ui().settingsScrollTarget;
+    Ui().settingsScrollCurrent = Ui().settingsScrollTarget;
+    RemoveAnimationState(hwnd);
+    SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+    ResizeSettingsLayout(hwnd);
+  }
+  SaveSettingsWithFeedback(hwnd);
 }
 
 namespace {
-struct SettingsPlacement{int id,x,y,w,h,group;};
-struct SettingsLayoutCache{
-    HWND window=nullptr;HFONT font=nullptr;int width=0,height=0,contentEnd=0;
-    UiLanguage language=UiLanguage::English;TextScale scale=TextScale::Standard;
-    LayoutDensity density=LayoutDensity::Comfortable;bool failed=false;
-    std::vector<SettingsPlacement> placements;
+struct SettingsPlacement {
+  int id, x, y, w, h, group;
+};
+struct SettingsLayoutCache {
+  HWND window = nullptr;
+  HFONT font = nullptr;
+  int width = 0, height = 0, contentEnd = 0;
+  UiLanguage language = UiLanguage::English;
+  TextScale scale = TextScale::Standard;
+  LayoutDensity density = LayoutDensity::Comfortable;
+  bool failed = false;
+  std::vector<SettingsPlacement> placements;
+  struct Applied {
+    HWND control = nullptr;
+    int x = 0, top = 0, width = 0, height = 0, actualHeight = 0;
+    RECT clip{};
+    bool clipped = true;
+  };
+  std::vector<Applied> applied;
+  int scrollMaximum = -1, scrollPage = -1, scrollPosition = -1;
 } settingsLayout;
-void PositionSettingsContent(HWND hwnd,const std::vector<SettingsPlacement>& placements,int contentEnd){
-    int bodyH=std::max(1,Ui().settingsBodyBottom-Ui().settingsBodyTop);
-    int maximum=std::max(0,contentEnd+16-bodyH);
-    Ui().settingsScrollY=std::clamp(Ui().settingsScrollY,0,maximum);
-    Ui().settingsScrollCurrent=std::clamp(Ui().settingsScrollCurrent,0.0,(double)maximum);
-    Ui().settingsScrollTarget=std::clamp(Ui().settingsScrollTarget,0.0,(double)maximum);
-    for(const auto& p:placements){
-        HWND control=GetDlgItem(hwnd,p.id);if(!control)continue;
-        int offset=Settings().animationLevel==AnimationLevel::Advanced?(int)std::lround((1-ItemEntrance(GetAnimationValue(hwnd,AnimChannel::Items,1),p.group))*8):0;
-        int top=Ui().settingsBodyTop+p.y-Ui().settingsScrollY+offset;
-        wchar_t type[24]{};GetClassNameW(control,type,24);bool combo=lstrcmpiW(type,L"ComboBox")==0;
-        SetWindowPos(control,nullptr,p.x,top,p.w,combo?430:p.h,SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOREDRAW);
-        RECT actual{};GetWindowRect(control,&actual);int controlH=actual.bottom-actual.top;
-        int clipTop=std::max(0,Ui().settingsBodyTop-top),clipBottom=std::min(controlH,Ui().settingsBodyBottom-top);
-        HRGN clip=CreateRectRgn(0,clipTop,p.w,std::max(clipTop,clipBottom));
-        if(clip&&!SetWindowRgn(control,clip,FALSE))DeleteObject(clip);
+void PositionSettingsContent(HWND hwnd,
+                             const std::vector<SettingsPlacement> &placements,
+                             int contentEnd) {
+  int bodyH = std::max(1, Ui().settingsBodyBottom - Ui().settingsBodyTop);
+  int maximum = std::max(0, contentEnd + 16 - bodyH);
+  Ui().settingsScrollY = std::clamp(Ui().settingsScrollY, 0, maximum);
+  Ui().settingsScrollCurrent =
+      std::clamp(Ui().settingsScrollCurrent, 0.0, (double)maximum);
+  Ui().settingsScrollTarget =
+      std::clamp(Ui().settingsScrollTarget, 0.0, (double)maximum);
+  bool changed = false;
+  if (settingsLayout.applied.size() != placements.size())
+    settingsLayout.applied.resize(placements.size());
+  HDWP batch = BeginDeferWindowPos((int)placements.size());
+  std::vector<size_t> moved;
+  for (size_t index = 0; index < placements.size(); ++index) {
+    const auto &p = placements[index];
+    auto &applied = settingsLayout.applied[index];
+    HWND control = GetDlgItem(hwnd, p.id);
+    if (!control)
+      continue;
+    int offset =
+        Settings().animationLevel == AnimationLevel::Advanced
+            ? (int)std::lround(
+                  (1 -
+                   ItemEntrance(GetAnimationValue(hwnd, AnimChannel::Items, 1),
+                                p.group)) *
+                  8)
+            : 0;
+    int top = Ui().settingsBodyTop + p.y - Ui().settingsScrollY + offset;
+    if (applied.control != control || applied.x != p.x || applied.top != top ||
+        applied.width != p.w || applied.height != p.h) {
+      wchar_t type[24]{};
+      GetClassNameW(control, type, 24);
+      bool combo = lstrcmpiW(type, L"ComboBox") == 0;
+      bool resized = applied.control != control || applied.width != p.w ||
+                     applied.height != p.h;
+      applied.control = control;
+      applied.x = p.x;
+      applied.top = top;
+      applied.width = p.w;
+      applied.height = p.h;
+      if (resized)
+        applied.actualHeight = 0;
+      if (batch)
+        batch = DeferWindowPos(batch, control, nullptr, p.x, top, p.w,
+                               combo ? 430 : p.h,
+                               SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW |
+                                   (resized ? 0 : SWP_NOSIZE));
+      moved.push_back(index);
+      changed = true;
     }
-    SCROLLINFO scroll{sizeof(scroll)};scroll.fMask=SIF_RANGE|SIF_PAGE|SIF_POS;
-    scroll.nMax=std::max(0,contentEnd+15);scroll.nPage=bodyH;scroll.nPos=Ui().settingsScrollY;SetScrollInfo(hwnd,SB_VERT,&scroll,TRUE);
+  }
+  if (batch)
+    EndDeferWindowPos(batch);
+  else
+    for (size_t index : moved) {
+      const auto &p = placements[index];
+      auto &applied = settingsLayout.applied[index];
+      wchar_t type[24]{};
+      GetClassNameW(applied.control, type, 24);
+      SetWindowPos(applied.control, nullptr, p.x, applied.top, p.w,
+                   lstrcmpiW(type, L"ComboBox") == 0 ? 430 : p.h,
+                   SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
+    }
+  for (auto &applied : settingsLayout.applied) {
+    if (!applied.control)
+      continue;
+    if (!applied.actualHeight) {
+      RECT actual{};
+      GetWindowRect(applied.control, &actual);
+      applied.actualHeight = actual.bottom - actual.top;
+    }
+    int clipTop =
+        std::clamp(Ui().settingsBodyTop - applied.top, 0, applied.actualHeight);
+    int clipBottom = std::clamp(Ui().settingsBodyBottom - applied.top, clipTop,
+                                applied.actualHeight);
+    RECT clip{0, clipTop, applied.width, clipBottom};
+    bool clipped = clipTop != 0 || clipBottom != applied.actualHeight;
+    if (clipped != applied.clipped ||
+        (clipped && !EqualRect(&clip, &applied.clip))) {
+      HRGN region = clipped ? CreateRectRgnIndirect(&clip) : nullptr;
+      if (!SetWindowRgn(applied.control, region, FALSE) && region)
+        DeleteObject(region);
+      applied.clip = clip;
+      applied.clipped = clipped;
+      changed = true;
+    }
+  }
+  if (settingsLayout.scrollMaximum != maximum ||
+      settingsLayout.scrollPage != bodyH ||
+      settingsLayout.scrollPosition != Ui().settingsScrollY) {
+    SCROLLINFO scroll{sizeof(scroll)};
+    scroll.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+    scroll.nMax = std::max(0, contentEnd + 15);
+    scroll.nPage = bodyH;
+    scroll.nPos = Ui().settingsScrollY;
+    SetScrollInfo(hwnd, SB_VERT, &scroll, TRUE);
+    settingsLayout.scrollMaximum = maximum;
+    settingsLayout.scrollPage = bodyH;
+    settingsLayout.scrollPosition = Ui().settingsScrollY;
+  }
+  if (changed) {
+    RECT body{0, Ui().settingsBodyTop, settingsLayout.width,
+              Ui().settingsBodyBottom};
+    RedrawWindow(hwnd, &body, nullptr,
+                 RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE);
+  }
 }
 int WrappedHeight(HWND control, int width) {
-    HDC dc = GetDC(control); if (!dc) return 28;
-    HGDIOBJ old = SelectObject(dc, (HFONT)SendMessageW(control, WM_GETFONT, 0, 0));
-    RECT measured{0,0,std::max(40,width),0}; auto text = GetText(control);
-    DrawTextW(dc,text.c_str(),-1,&measured,DT_CALCRECT|DT_WORDBREAK|DT_NOPREFIX);
-    SelectObject(dc,old); ReleaseDC(control,dc);
-    return std::max(MeasuredTextHeight(control), (int)measured.bottom);
+  HDC dc = GetDC(control);
+  if (!dc)
+    return 28;
+  HGDIOBJ old =
+      SelectObject(dc, (HFONT)SendMessageW(control, WM_GETFONT, 0, 0));
+  RECT measured{0, 0, std::max(40, width), 0};
+  auto text = GetText(control);
+  DrawTextW(dc, text.c_str(), -1, &measured,
+            DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+  SelectObject(dc, old);
+  ReleaseDC(control, dc);
+  return std::max(MeasuredTextHeight(control), (int)measured.bottom);
 }
 void AdvanceSettingsScroll() {
-    if (!Ui().settingsScrollStartMs) return;
-    double t = (AnimationNowMs() - Ui().settingsScrollStartMs) / 200.0;
-    if (Settings().animationLevel == AnimationLevel::Off || !Settings().smoothScrollingEnabled) t = 1;
-    Ui().settingsScrollCurrent = Ui().settingsScrollStart +
-        (Ui().settingsScrollTarget-Ui().settingsScrollStart)*CubicBezierEase(t,.22,1,.36,1);
-    Ui().settingsScrollY = (int)std::lround(Ui().settingsScrollCurrent);
-    if (t >= 1) Ui().settingsScrollStartMs = 0;
+  if (!Ui().settingsScrollStartMs)
+    return;
+  double t = (AnimationNowMs() - Ui().settingsScrollStartMs) / 200.0;
+  if (Settings().animationLevel == AnimationLevel::Off ||
+      !Settings().smoothScrollingEnabled)
+    t = 1;
+  Ui().settingsScrollCurrent =
+      Ui().settingsScrollStart +
+      (Ui().settingsScrollTarget - Ui().settingsScrollStart) *
+          CubicBezierEase(t, .22, 1, .36, 1);
+  Ui().settingsScrollY = (int)std::lround(Ui().settingsScrollCurrent);
+  if (t >= 1)
+    Ui().settingsScrollStartMs = 0;
 }
 void ScrollSettingsTo(HWND hwnd, int next, bool smooth) {
-    SCROLLINFO info{sizeof(info)}; info.fMask=SIF_ALL; GetScrollInfo(hwnd,SB_VERT,&info);
-    next=std::clamp(next,0,std::max(0,info.nMax-(int)info.nPage+1));
-    AdvanceSettingsScroll();
-    Ui().settingsScrollStart=Ui().settingsScrollCurrent;
-    Ui().settingsScrollTarget=next;
-    if (smooth && Settings().smoothScrollingEnabled && Settings().animationLevel!=AnimationLevel::Off) {
-        Ui().settingsScrollStartMs=AnimationNowMs();
-        RestartAnimation(hwnd,AnimChannel::SmoothScroll,1,200);
-    } else {
-        Ui().settingsScrollStartMs=0;
-        Ui().settingsScrollY=next; Ui().settingsScrollCurrent=next;
-    }
-    ResizeSettingsLayout(hwnd);
+  SCROLLINFO info{sizeof(info)};
+  info.fMask = SIF_ALL;
+  GetScrollInfo(hwnd, SB_VERT, &info);
+  next = std::clamp(next, 0, std::max(0, info.nMax - (int)info.nPage + 1));
+  AdvanceSettingsScroll();
+  Ui().settingsScrollStart = Ui().settingsScrollCurrent;
+  Ui().settingsScrollTarget = next;
+  if (smooth && Settings().smoothScrollingEnabled &&
+      Settings().animationLevel != AnimationLevel::Off) {
+    Ui().settingsScrollStartMs = AnimationNowMs();
+    RestartAnimation(hwnd, AnimChannel::SmoothScroll, 1, 200);
+  } else {
+    Ui().settingsScrollStartMs = 0;
+    Ui().settingsScrollY = next;
+    Ui().settingsScrollCurrent = next;
+  }
+  ResizeSettingsLayout(hwnd);
 }
-}
+} // namespace
 void SetSettingsSaveResult(bool saved) {
-    Ui().settingsSaveFailed=!saved;
-    HWND hwnd=Ui().settingsWindow; if(!hwnd || !GetDlgItem(hwnd,IDC_SETTINGS_SAVE_STATUS))return;
-    SetText(GetDlgItem(hwnd,IDC_SETTINGS_SAVE_STATUS),saved?L"":
-        Tr(L"Settings not saved. Active for this session only.",L"设置未保存，仅在本次运行生效。"));
-    ShowWindow(GetDlgItem(hwnd,IDC_SETTINGS_RETRY),saved?SW_HIDE:SW_SHOW);
-    ShowWindow(GetDlgItem(hwnd,IDC_SETTINGS_SAVE_STATUS),saved?SW_HIDE:SW_SHOW);
+  Ui().settingsSaveFailed = !saved;
+  HWND hwnd = Ui().settingsWindow;
+  if (!hwnd || !GetDlgItem(hwnd, IDC_SETTINGS_SAVE_STATUS))
+    return;
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_SAVE_STATUS),
+          saved ? L""
+                : Tr(L"Settings not saved. Active for this session only.",
+                     L"设置未保存，仅在本次运行生效。"));
+  ShowWindow(GetDlgItem(hwnd, IDC_SETTINGS_RETRY), saved ? SW_HIDE : SW_SHOW);
+  ShowWindow(GetDlgItem(hwnd, IDC_SETTINGS_SAVE_STATUS),
+             saved ? SW_HIDE : SW_SHOW);
+  ResizeSettingsLayout(hwnd);
+}
+void ResizeSettingsLayout(HWND hwnd) {
+  if (!hwnd || Ui().settingsLayoutActive)
+    return;
+  Ui().settingsLayoutActive = true;
+  RECT client{};
+  GetClientRect(hwnd, &client);
+  int width = std::max(1, (int)client.right),
+      height = std::max(1, (int)client.bottom);
+  if (settingsLayout.window == hwnd && settingsLayout.width == width &&
+      settingsLayout.height == height && settingsLayout.font == Ui().font &&
+      settingsLayout.language == Settings().language &&
+      settingsLayout.scale == Settings().textScale &&
+      settingsLayout.density == Settings().layoutDensity &&
+      settingsLayout.failed == Ui().settingsSaveFailed &&
+      GetPropW(hwnd, L"Attendance.LayoutReady")) {
+    PositionSettingsContent(hwnd, settingsLayout.placements,
+                            settingsLayout.contentEnd);
+    Ui().settingsLayoutActive = false;
+    return;
+  }
+  RedrawScope redraw(hwnd);
+  const int pad = 24, gap = 24;
+  int resetWidth = MeasuredTextWidth(GetDlgItem(hwnd, IDC_SETTINGS_RESET)) + 40;
+  int closeWidth = std::max(
+      100, MeasuredTextWidth(GetDlgItem(hwnd, IDC_SETTINGS_CLOSE)) + 40);
+  bool stacked = resetWidth + closeWidth + 12 > width - pad * 2;
+  int buttonH = std::max(
+      40, MeasuredTextHeight(GetDlgItem(hwnd, IDC_SETTINGS_RESET)) + 16);
+  int footerH = 24 + buttonH * (stacked ? 2 : 1) + (stacked ? 8 : 0) +
+                (Ui().settingsSaveFailed ? 72 : 0);
+  Ui().settingsBodyTop = std::max(
+      72, MeasuredTextHeight(GetDlgItem(hwnd, IDC_SETTINGS_TITLE)) + 40);
+  Ui().settingsBodyBottom =
+      std::max(Ui().settingsBodyTop + 1, height - footerH);
+  int columns = width >= 800 ? 2 : 1,
+      fieldWidth =
+          std::max(1, (width - pad * 2 - gap * (columns - 1)) / columns);
+  auto fixed = [&](int id, int x, int y, int w, int h) {
+    HWND control = GetDlgItem(hwnd, id);
+    if (!control)
+      return;
+    SetWindowRgn(control, nullptr, FALSE);
+    SetWindowPos(control, nullptr, x, y, std::max(1, w), std::max(1, h),
+                 SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
+  };
+  fixed(IDC_SETTINGS_TITLE, pad, 20, width - pad * 2,
+        Ui().settingsBodyTop - 30);
+  int actionY = height - 16 - buttonH * (stacked ? 2 : 1) - (stacked ? 8 : 0);
+  fixed(IDC_SETTINGS_RESET, pad, actionY,
+        stacked ? width - pad * 2
+                : std::min(resetWidth, width - pad * 2 - closeWidth - 12),
+        buttonH);
+  fixed(IDC_SETTINGS_CLOSE, stacked ? pad : width - pad - closeWidth,
+        stacked ? actionY + buttonH + 8 : actionY,
+        stacked ? width - pad * 2 : closeWidth, buttonH);
+  fixed(IDC_SETTINGS_SAVE_STATUS, pad, Ui().settingsBodyBottom + 8,
+        std::max(40, width - pad * 2 - 100), 60);
+  fixed(IDC_SETTINGS_RETRY, width - pad - 92, Ui().settingsBodyBottom + 12, 92,
+        40);
+  std::vector<SettingsPlacement> placements;
+  const std::pair<int, int> fields[] = {
+      {IDC_SETTINGS_LANG_LABEL, IDC_SETTINGS_LANGUAGE},
+      {IDC_SETTINGS_FONT_LABEL, IDC_SETTINGS_FONT},
+      {IDC_SETTINGS_THEME_LABEL, IDC_SETTINGS_THEME},
+      {IDC_SETTINGS_ACCENT_LABEL, IDC_SETTINGS_ACCENT},
+      {IDC_SETTINGS_TEXT_SCALE_LABEL, IDC_SETTINGS_TEXT_SCALE},
+      {IDC_SETTINGS_DENSITY_LABEL, IDC_SETTINGS_DENSITY},
+      {IDC_SETTINGS_ANIMATION_LABEL, IDC_SETTINGS_ANIMATION_LEVEL},
+      {IDC_SETTINGS_PARTICLE_LABEL, IDC_SETTINGS_PARTICLE_LEVEL},
+      {IDC_SETTINGS_REPORT_LABEL, IDC_SETTINGS_REPORT_TEMPLATE},
+      {IDC_SETTINGS_AUTOSAVE_LABEL, IDC_SETTINGS_AUTOSAVE_INTERVAL},
+      {IDC_SETTINGS_SCROLL_FPS_LABEL, IDC_SETTINGS_SCROLL_FPS}};
+  int y = 8, group = 0;
+  for (int row = 0; row < (int)std::size(fields); row += columns) {
+    int labelH = 24;
+    for (int col = 0; col < columns && row + col < (int)std::size(fields);
+         ++col)
+      labelH = std::max(
+          labelH,
+          WrappedHeight(GetDlgItem(hwnd, fields[row + col].first), fieldWidth));
+    int valueH = std::max(40, ComboItemHeight() + 12);
+    for (int col = 0; col < columns && row + col < (int)std::size(fields);
+         ++col) {
+      auto field = fields[row + col];
+      int x = pad + col * (fieldWidth + gap);
+      placements.push_back({field.first, x, y, fieldWidth, labelH, group});
+      bool fps = field.second == IDC_SETTINGS_SCROLL_FPS;
+      placements.push_back({field.second, x, y + labelH + 8,
+                            fps ? 100 : fieldWidth, valueH, group});
+      if (fps)
+        placements.push_back({IDC_SETTINGS_SCROLL_FPS_UNIT, x + 112,
+                              y + labelH + 8, 52, valueH, group});
+      if (field.second == IDC_SETTINGS_FONT)
+        placements.push_back({IDC_SETTINGS_FONT_LOADING, x,
+                              y + labelH + valueH + 4, fieldWidth, 28, group});
+    }
+    y += labelH + valueH + 40;
+    ++group;
+  }
+  const int toggles[] = {
+      IDC_SETTINGS_PARTICLES,       IDC_SETTINGS_SMOOTH_SCROLL,
+      IDC_SETTINGS_SHOW_STATS,      IDC_SETTINGS_SHOW_HINT,
+      IDC_SETTINGS_TABLE_GRID,      IDC_SETTINGS_RISK_ALERTS,
+      IDC_SETTINGS_AUTOSAVE_PROMPT, IDC_SETTINGS_COMMAND_PALETTE,
+      IDC_SETTINGS_ADVANCED_FILTER};
+  y += 8;
+  for (int row = 0; row < (int)std::size(toggles); row += columns) {
+    int rowH = Settings().layoutDensity == LayoutDensity::Compact ? 36 : 40;
+    for (int col = 0; col < columns && row + col < (int)std::size(toggles);
+         ++col)
+      rowH = std::max(rowH, WrappedHeight(GetDlgItem(hwnd, toggles[row + col]),
+                                          fieldWidth - 36) +
+                                16);
+    for (int col = 0; col < columns && row + col < (int)std::size(toggles);
+         ++col)
+      placements.push_back({toggles[row + col], pad + col * (fieldWidth + gap),
+                            y, fieldWidth, rowH, group});
+    y += rowH + 12;
+    ++group;
+  }
+  settingsLayout.window = hwnd;
+  settingsLayout.width = width;
+  settingsLayout.height = height;
+  settingsLayout.font = Ui().font;
+  settingsLayout.language = Settings().language;
+  settingsLayout.scale = Settings().textScale;
+  settingsLayout.density = Settings().layoutDensity;
+  settingsLayout.failed = Ui().settingsSaveFailed;
+  settingsLayout.contentEnd = y;
+  settingsLayout.placements = std::move(placements);
+  settingsLayout.applied.clear();
+  settingsLayout.scrollMaximum = settingsLayout.scrollPage =
+      settingsLayout.scrollPosition = -1;
+  SetPropW(hwnd, L"Attendance.LayoutReady", (HANDLE)1);
+  PositionSettingsContent(hwnd, settingsLayout.placements, y);
+  Ui().settingsLayoutActive = false;
+}
+void EnsureSettingsControlVisible(HWND control) {
+  HWND hwnd = Ui().settingsWindow;
+  if (!hwnd || !control || GetParent(control) != hwnd)
+    return;
+  int id = GetDlgCtrlID(control);
+  if (id == IDC_SETTINGS_CLOSE || id == IDC_SETTINGS_RESET ||
+      id == IDC_SETTINGS_RETRY)
+    return;
+  RECT box{};
+  GetWindowRect(control, &box);
+  MapWindowPoints(nullptr, hwnd, (POINT *)&box, 2);
+  int next = Ui().settingsScrollY;
+  if (box.top < Ui().settingsBodyTop + 8)
+    next += box.top - Ui().settingsBodyTop - 8;
+  else if (box.bottom > Ui().settingsBodyBottom - 8)
+    next += box.bottom - Ui().settingsBodyBottom + 8;
+  if (next != Ui().settingsScrollY)
+    ScrollSettingsTo(hwnd, next, false);
+}
+
+void ResetAppearanceValues() {
+  Settings().theme = UiTheme::Dark;
+  Settings().accentTone = AccentTone::Neutral;
+  Settings().textScale = TextScale::Standard;
+  Settings().layoutDensity = LayoutDensity::Comfortable;
+  Settings().showStatsCards = true;
+  Settings().showFooterHint = true;
+  Settings().showTableGrid = true;
+  Settings().autosaveIntervalSeconds = 30;
+  Settings().scrollAnimationFps.store(60);
+  SignalAnimationScheduler();
+}
+
+LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam,
+                              LPARAM lParam) {
+  switch (msg) {
+  case WM_CREATE: {
+    MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_TITLE);
+    MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_LANG_LABEL);
+    MakeSettingsControl(hwnd, L"COMBOBOX", L"",
+                        CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
+                            WS_VSCROLL | WS_TABSTOP,
+                        IDC_SETTINGS_LANGUAGE);
+    MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_FONT_LABEL);
+    MakeSettingsControl(hwnd, L"COMBOBOX", L"",
+                        CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
+                            WS_VSCROLL | WS_TABSTOP,
+                        IDC_SETTINGS_FONT);
+    MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_ANIMATION_LABEL);
+    MakeSettingsControl(hwnd, L"COMBOBOX", L"",
+                        CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
+                            WS_VSCROLL | WS_TABSTOP,
+                        IDC_SETTINGS_ANIMATION_LEVEL);
+    MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_PARTICLE_LABEL);
+    MakeSettingsControl(hwnd, L"COMBOBOX", L"",
+                        CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
+                            WS_VSCROLL | WS_TABSTOP,
+                        IDC_SETTINGS_PARTICLE_LEVEL);
+    MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_REPORT_LABEL);
+    MakeSettingsControl(hwnd, L"COMBOBOX", L"",
+                        CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
+                            WS_VSCROLL | WS_TABSTOP,
+                        IDC_SETTINGS_REPORT_TEMPLATE);
+    MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP,
+                        IDC_SETTINGS_PARTICLES);
+    MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP,
+                        IDC_SETTINGS_RISK_ALERTS);
+    MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP,
+                        IDC_SETTINGS_AUTOSAVE_PROMPT);
+    MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP,
+                        IDC_SETTINGS_COMMAND_PALETTE);
+    MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP,
+                        IDC_SETTINGS_ADVANCED_FILTER);
+    MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP,
+                        IDC_SETTINGS_SMOOTH_SCROLL);
+
+    MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_THEME_LABEL);
+    MakeSettingsControl(hwnd, L"COMBOBOX", L"",
+                        CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
+                            WS_VSCROLL | WS_TABSTOP,
+                        IDC_SETTINGS_THEME);
+    MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_ACCENT_LABEL);
+    MakeSettingsControl(hwnd, L"COMBOBOX", L"",
+                        CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
+                            WS_VSCROLL | WS_TABSTOP,
+                        IDC_SETTINGS_ACCENT);
+    MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_TEXT_SCALE_LABEL);
+    MakeSettingsControl(hwnd, L"COMBOBOX", L"",
+                        CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
+                            WS_VSCROLL | WS_TABSTOP,
+                        IDC_SETTINGS_TEXT_SCALE);
+    MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_DENSITY_LABEL);
+    MakeSettingsControl(hwnd, L"COMBOBOX", L"",
+                        CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
+                            WS_VSCROLL | WS_TABSTOP,
+                        IDC_SETTINGS_DENSITY);
+    MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_AUTOSAVE_LABEL);
+    MakeSettingsControl(hwnd, L"COMBOBOX", L"",
+                        CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
+                            WS_VSCROLL | WS_TABSTOP,
+                        IDC_SETTINGS_AUTOSAVE_INTERVAL);
+    MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_SCROLL_FPS_LABEL);
+    HWND scrollFps = MakeSettingsControl(
+        hwnd, L"EDIT", L"60", ES_NUMBER | ES_AUTOHSCROLL | WS_TABSTOP,
+        IDC_SETTINGS_SCROLL_FPS);
+    MakeSettingsControl(hwnd, L"STATIC", L"FPS", SS_CENTERIMAGE,
+                        IDC_SETTINGS_SCROLL_FPS_UNIT);
+    SendMessageW(scrollFps, EM_SETLIMITTEXT, 3, 0);
+    ConfigureEditMetrics(scrollFps);
+    MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP,
+                        IDC_SETTINGS_SHOW_STATS);
+    MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP,
+                        IDC_SETTINGS_SHOW_HINT);
+    MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP,
+                        IDC_SETTINGS_TABLE_GRID);
+    MakeSettingsControl(hwnd, L"BUTTON", L"",
+                        BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP,
+                        IDC_SETTINGS_RESET);
+    MakeSettingsControl(hwnd, L"BUTTON", L"",
+                        BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP,
+                        IDC_SETTINGS_CLOSE);
+    // Tab follows the same row-major order as the unified form.
+    HWND after = HWND_TOP;
+    for (int id : {IDC_SETTINGS_LANGUAGE,        IDC_SETTINGS_FONT,
+                   IDC_SETTINGS_THEME,           IDC_SETTINGS_ACCENT,
+                   IDC_SETTINGS_TEXT_SCALE,      IDC_SETTINGS_DENSITY,
+                   IDC_SETTINGS_ANIMATION_LEVEL, IDC_SETTINGS_PARTICLE_LEVEL,
+                   IDC_SETTINGS_REPORT_TEMPLATE, IDC_SETTINGS_AUTOSAVE_INTERVAL,
+                   IDC_SETTINGS_SCROLL_FPS,      IDC_SETTINGS_PARTICLES,
+                   IDC_SETTINGS_SMOOTH_SCROLL,   IDC_SETTINGS_SHOW_STATS,
+                   IDC_SETTINGS_SHOW_HINT,       IDC_SETTINGS_TABLE_GRID,
+                   IDC_SETTINGS_RISK_ALERTS,     IDC_SETTINGS_AUTOSAVE_PROMPT,
+                   IDC_SETTINGS_COMMAND_PALETTE, IDC_SETTINGS_ADVANCED_FILTER,
+                   IDC_SETTINGS_RESET,           IDC_SETTINGS_CLOSE}) {
+      HWND control = GetDlgItem(hwnd, id);
+      SetWindowPos(control, after, 0, 0, 0, 0,
+                   SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOREDRAW);
+      after = control;
+    }
+    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), WM_SETFONT,
+                 (WPARAM)Ui().titleFont, TRUE);
+    MakeSettingsControl(hwnd, L"STATIC", L"", SS_LEFT | SS_NOPREFIX,
+                        IDC_SETTINGS_SAVE_STATUS);
+    MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP,
+                        IDC_SETTINGS_RETRY);
+    MakeSettingsControl(hwnd, L"STATIC", L"", SS_LEFT | SS_NOPREFIX,
+                        IDC_SETTINGS_FONT_LOADING);
+    ApplySettingsLanguage(hwnd);
     ResizeSettingsLayout(hwnd);
-}
-void ResizeSettingsLayout(HWND hwnd){
-    if (!hwnd || Ui().settingsLayoutActive) return;
-    Ui().settingsLayoutActive=true;
-    RECT client{};GetClientRect(hwnd,&client);
-    int width=std::max(1,(int)client.right),height=std::max(1,(int)client.bottom);
-    if(settingsLayout.window==hwnd && settingsLayout.width==width && settingsLayout.height==height &&
-       settingsLayout.font==Ui().font && settingsLayout.language==Settings().language &&
-       settingsLayout.scale==Settings().textScale && settingsLayout.density==Settings().layoutDensity &&
-       settingsLayout.failed==Ui().settingsSaveFailed && GetPropW(hwnd,L"Attendance.LayoutReady")){
-        PositionSettingsContent(hwnd,settingsLayout.placements,settingsLayout.contentEnd);
-        RECT body{0,Ui().settingsBodyTop,width,Ui().settingsBodyBottom};
-        RedrawWindow(hwnd,&body,nullptr,RDW_INVALIDATE|RDW_ALLCHILDREN|RDW_NOERASE);
-        Ui().settingsLayoutActive=false;return;
+    return 0;
+  }
+  case WM_SIZE:
+    ResizeSettingsLayout(hwnd);
+    return 0;
+  case WM_VSCROLL: {
+    SCROLLINFO info{sizeof(info)};
+    info.fMask = SIF_ALL;
+    GetScrollInfo(hwnd, SB_VERT, &info);
+    int next = (int)Ui().settingsScrollTarget;
+    bool smooth = true;
+    switch (LOWORD(wParam)) {
+    case SB_LINEUP:
+      next -= 40;
+      break;
+    case SB_LINEDOWN:
+      next += 40;
+      break;
+    case SB_PAGEUP:
+      next -= (int)info.nPage;
+      break;
+    case SB_PAGEDOWN:
+      next += (int)info.nPage;
+      break;
+    case SB_THUMBTRACK:
+    case SB_THUMBPOSITION:
+      next = info.nTrackPos;
+      smooth = false;
+      break;
+    case SB_TOP:
+      next = 0;
+      break;
+    case SB_BOTTOM:
+      next = info.nMax;
+      break;
+    default:
+      return 0;
     }
-    RedrawScope redraw(hwnd);
-    const int pad=24,gap=24;
-    int resetWidth=MeasuredTextWidth(GetDlgItem(hwnd,IDC_SETTINGS_RESET))+40;
-    int closeWidth=std::max(100,MeasuredTextWidth(GetDlgItem(hwnd,IDC_SETTINGS_CLOSE))+40);
-    bool stacked=resetWidth+closeWidth+12>width-pad*2;
-    int buttonH=std::max(40,MeasuredTextHeight(GetDlgItem(hwnd,IDC_SETTINGS_RESET))+16);
-    int footerH=24+buttonH*(stacked?2:1)+(stacked?8:0)+(Ui().settingsSaveFailed?72:0);
-    Ui().settingsBodyTop=std::max(72,MeasuredTextHeight(GetDlgItem(hwnd,IDC_SETTINGS_TITLE))+40);
-    Ui().settingsBodyBottom=std::max(Ui().settingsBodyTop+1,height-footerH);
-    int columns=width>=800?2:1,fieldWidth=std::max(1,(width-pad*2-gap*(columns-1))/columns);
-    auto fixed=[&](int id,int x,int y,int w,int h){
-        HWND control=GetDlgItem(hwnd,id);if(!control)return;
-        SetWindowRgn(control,nullptr,FALSE);
-        SetWindowPos(control,nullptr,x,y,std::max(1,w),std::max(1,h),SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOREDRAW);
-    };
-    fixed(IDC_SETTINGS_TITLE,pad,20,width-pad*2,Ui().settingsBodyTop-30);
-    int actionY=height-16-buttonH*(stacked?2:1)-(stacked?8:0);
-    fixed(IDC_SETTINGS_RESET,pad,actionY,stacked?width-pad*2:std::min(resetWidth,width-pad*2-closeWidth-12),buttonH);
-    fixed(IDC_SETTINGS_CLOSE,stacked?pad:width-pad-closeWidth,stacked?actionY+buttonH+8:actionY,stacked?width-pad*2:closeWidth,buttonH);
-    fixed(IDC_SETTINGS_SAVE_STATUS,pad,Ui().settingsBodyBottom+8,std::max(40,width-pad*2-100),60);
-    fixed(IDC_SETTINGS_RETRY,width-pad-92,Ui().settingsBodyBottom+12,92,40);
-    std::vector<SettingsPlacement> placements;
-    const std::pair<int,int> fields[]={
-        {IDC_SETTINGS_LANG_LABEL,IDC_SETTINGS_LANGUAGE},{IDC_SETTINGS_FONT_LABEL,IDC_SETTINGS_FONT},
-        {IDC_SETTINGS_THEME_LABEL,IDC_SETTINGS_THEME},{IDC_SETTINGS_ACCENT_LABEL,IDC_SETTINGS_ACCENT},
-        {IDC_SETTINGS_TEXT_SCALE_LABEL,IDC_SETTINGS_TEXT_SCALE},{IDC_SETTINGS_DENSITY_LABEL,IDC_SETTINGS_DENSITY},
-        {IDC_SETTINGS_ANIMATION_LABEL,IDC_SETTINGS_ANIMATION_LEVEL},{IDC_SETTINGS_PARTICLE_LABEL,IDC_SETTINGS_PARTICLE_LEVEL},
-        {IDC_SETTINGS_REPORT_LABEL,IDC_SETTINGS_REPORT_TEMPLATE},{IDC_SETTINGS_AUTOSAVE_LABEL,IDC_SETTINGS_AUTOSAVE_INTERVAL},
-        {IDC_SETTINGS_SCROLL_FPS_LABEL,IDC_SETTINGS_SCROLL_FPS}};
-    int y=8,group=0;
-    for(int row=0;row<(int)std::size(fields);row+=columns){
-        int labelH=24;
-        for(int col=0;col<columns && row+col<(int)std::size(fields);++col)
-            labelH=std::max(labelH,WrappedHeight(GetDlgItem(hwnd,fields[row+col].first),fieldWidth));
-        int valueH=std::max(40,ComboItemHeight()+12);
-        for(int col=0;col<columns && row+col<(int)std::size(fields);++col){
-            auto field=fields[row+col];int x=pad+col*(fieldWidth+gap);
-            placements.push_back({field.first,x,y,fieldWidth,labelH,group});
-            bool fps=field.second==IDC_SETTINGS_SCROLL_FPS;
-            placements.push_back({field.second,x,y+labelH+8,fps?100:fieldWidth,valueH,group});
-            if(fps)placements.push_back({IDC_SETTINGS_SCROLL_FPS_UNIT,x+112,y+labelH+8,52,valueH,group});
-            if(field.second==IDC_SETTINGS_FONT)placements.push_back({IDC_SETTINGS_FONT_LOADING,x,y+labelH+valueH+4,fieldWidth,28,group});
+    ScrollSettingsTo(hwnd, next, smooth);
+    return 0;
+  }
+  case WM_MOUSEWHEEL:
+    ScrollSettingsTo(
+        hwnd,
+        (int)Ui().settingsScrollTarget -
+            (int)std::lround(GET_WHEEL_DELTA_WPARAM(wParam) / 120.0 * 120),
+        true);
+    return 0;
+  case WM_COMMAND:
+    if (LOWORD(wParam) == IDC_SETTINGS_SCROLL_FPS &&
+        HIWORD(wParam) == EN_KILLFOCUS) {
+      if (!Ui().settingsClosing) {
+        NormalizeScrollFrameRateInput(hwnd);
+        SaveSettingsWithFeedback(hwnd);
+      }
+      return 0;
+    }
+    if (HIWORD(wParam) == CBN_DROPDOWN) {
+      RestartAnimation((HWND)lParam, AnimChannel::ComboOpen, 1.0,
+                       Visual::OpenMs);
+      ApplyComboDropDownTheme((HWND)lParam);
+      return 0;
+    }
+    if (HIWORD(wParam) == CBN_CLOSEUP) {
+      StartAnimation((HWND)lParam, AnimChannel::ComboOpen, 0.0, 220);
+      if (LOWORD(wParam) == IDC_SETTINGS_FONT &&
+          Fonts().fontComboRefreshPending) {
+        ApplyFontListToSettings(hwnd);
+      }
+      return 0;
+    }
+    if (LOWORD(wParam) == IDC_SETTINGS_LANGUAGE &&
+        HIWORD(wParam) == CBN_SELCHANGE) {
+      CommitComboSelectionNow((HWND)lParam);
+      int language = (int)SendMessageW((HWND)lParam, CB_GETCURSEL, 0, 0);
+      if (language >= 0 &&
+          language <= (int)UiLanguage::ChineseTraditionalHongKong &&
+          Settings().language != (UiLanguage)language) {
+        Settings().language = (UiLanguage)language;
+        ApplyLanguageAtomically(hwnd);
+        SaveSettingsWithFeedback(hwnd);
+      }
+      return 0;
+    }
+    if (LOWORD(wParam) == IDC_SETTINGS_FONT &&
+        HIWORD(wParam) == CBN_SELCHANGE) {
+      CommitComboSelectionNow((HWND)lParam);
+      ApplySettingsFromWindow(hwnd);
+      return 0;
+    }
+    if ((LOWORD(wParam) == IDC_SETTINGS_ANIMATION_LEVEL ||
+         LOWORD(wParam) == IDC_SETTINGS_PARTICLE_LEVEL ||
+         LOWORD(wParam) == IDC_SETTINGS_REPORT_TEMPLATE ||
+         LOWORD(wParam) == IDC_SETTINGS_THEME ||
+         LOWORD(wParam) == IDC_SETTINGS_ACCENT ||
+         LOWORD(wParam) == IDC_SETTINGS_TEXT_SCALE ||
+         LOWORD(wParam) == IDC_SETTINGS_DENSITY ||
+         LOWORD(wParam) == IDC_SETTINGS_AUTOSAVE_INTERVAL) &&
+        HIWORD(wParam) == CBN_SELCHANGE) {
+      CommitComboSelectionNow((HWND)lParam);
+      ApplySettingsFromWindow(hwnd);
+      return 0;
+    }
+    if ((LOWORD(wParam) == IDC_SETTINGS_PARTICLES ||
+         LOWORD(wParam) == IDC_SETTINGS_RISK_ALERTS ||
+         LOWORD(wParam) == IDC_SETTINGS_AUTOSAVE_PROMPT ||
+         LOWORD(wParam) == IDC_SETTINGS_COMMAND_PALETTE ||
+         LOWORD(wParam) == IDC_SETTINGS_ADVANCED_FILTER ||
+         LOWORD(wParam) == IDC_SETTINGS_SMOOTH_SCROLL) &&
+        HIWORD(wParam) == BN_CLICKED) {
+      int id = LOWORD(wParam);
+      HWND toggle = GetDlgItem(hwnd, id);
+      bool *value = FindSettingToggleValue(id);
+      if (!value)
+        return 0;
+      *value = !*value;
+      bool checked = *value;
+      SendMessageW(toggle, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED,
+                   0);
+      if (id == IDC_SETTINGS_PARTICLES) {
+        EnableWindow(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL),
+                     checked ? TRUE : FALSE);
+      }
+      if (id == IDC_SETTINGS_SMOOTH_SCROLL && !checked) {
+        StopSmoothScrollingNow();
+      }
+      if (id == IDC_SETTINGS_ADVANCED_FILTER || id == IDC_SETTINGS_RISK_ALERTS)
+        RefreshList();
+      if (id == IDC_SETTINGS_SMOOTH_SCROLL && !checked)
+        ScrollSettingsTo(hwnd, (int)Ui().settingsScrollTarget, false);
+      if (Settings().animationLevel == AnimationLevel::Off)
+        RemoveAnimationState(hwnd);
+      SaveSettingsWithFeedback(hwnd);
+      InvalidateRect(toggle, nullptr, FALSE);
+      return 0;
+    }
+    if ((LOWORD(wParam) == IDC_SETTINGS_SHOW_STATS ||
+         LOWORD(wParam) == IDC_SETTINGS_SHOW_HINT ||
+         LOWORD(wParam) == IDC_SETTINGS_TABLE_GRID) &&
+        HIWORD(wParam) == BN_CLICKED) {
+      int id = LOWORD(wParam);
+      bool *value = FindSettingToggleValue(id);
+      if (!value)
+        return 0;
+      *value = !*value;
+      bool checked = *value;
+      SendMessageW((HWND)lParam, BM_SETCHECK,
+                   checked ? BST_CHECKED : BST_UNCHECKED, 0);
+      if (id == IDC_SETTINGS_TABLE_GRID && Ui().list) {
+        ListView_SetExtendedListViewStyleEx(Ui().list, LVS_EX_GRIDLINES, 0);
+        InvalidateRect(Ui().list, nullptr, FALSE);
+      } else if (Ui().hwnd) {
+        RedrawScope redraw(Ui().hwnd);
+        if (id == IDC_SETTINGS_SHOW_STATS) {
+          for (int card : {IDC_STAT_TOTAL, IDC_STAT_ATTENDANCE, IDC_STAT_ISSUES,
+                           IDC_STAT_VISIBLE})
+            ShowWindow(GetDlgItem(Ui().hwnd, card),
+                       checked ? SW_SHOW : SW_HIDE);
+        } else
+          ShowWindow(GetDlgItem(Ui().hwnd, IDC_HINT),
+                     checked ? SW_SHOW : SW_HIDE);
+        ResizeLayout(Ui().hwnd);
+      }
+      SaveSettingsWithFeedback(hwnd);
+      InvalidateRect((HWND)lParam, nullptr, FALSE);
+      return 0;
+    }
+    if (LOWORD(wParam) == IDC_SETTINGS_RETRY) {
+      SaveSettingsWithFeedback(hwnd);
+      return 0;
+    }
+    if (LOWORD(wParam) == IDC_SETTINGS_CLOSE) {
+      HideSettingsWindow();
+      return 0;
+    }
+    if (LOWORD(wParam) == IDC_SETTINGS_RESET) {
+      std::wstring resetMsg =
+          Tr(L"Reset all settings? Attendance files will not be deleted.",
+             L"重置所有设置？考勤文件不会被删除。");
+      std::wstring resetTitle =
+          Tr(L"Reset Settings", L"\u91cd\u7f6e\u8bbe\u7f6e");
+      if (ThemedMessageBox(hwnd, resetMsg, resetTitle, true) == IDYES) {
+        UiTheme previousTheme = Settings().theme;
+        auto operation =
+            BeginOperation(GetDlgItem(hwnd, IDC_SETTINGS_RESET),
+                           Tr(L"Reset All Settings", L"重置所有设置"));
+        if (!ResetSettings()) {
+          FinishOperation(operation, OperationPhase::Failure,
+                          Tr(L"Could not save the settings file. Existing "
+                             L"settings were kept.",
+                             L"无法保存配置文件，已保留原设置。"));
+          return 0;
         }
-        y+=labelH+valueH+40;++group;
-    }
-    const int toggles[]={IDC_SETTINGS_PARTICLES,IDC_SETTINGS_SMOOTH_SCROLL,IDC_SETTINGS_SHOW_STATS,
-        IDC_SETTINGS_SHOW_HINT,IDC_SETTINGS_TABLE_GRID,IDC_SETTINGS_RISK_ALERTS,IDC_SETTINGS_AUTOSAVE_PROMPT,
-        IDC_SETTINGS_COMMAND_PALETTE,IDC_SETTINGS_ADVANCED_FILTER};
-    y+=8;
-    for(int row=0;row<(int)std::size(toggles);row+=columns){
-        int rowH=Settings().layoutDensity==LayoutDensity::Compact?36:40;
-        for(int col=0;col<columns && row+col<(int)std::size(toggles);++col)
-            rowH=std::max(rowH,WrappedHeight(GetDlgItem(hwnd,toggles[row+col]),fieldWidth-36)+16);
-        for(int col=0;col<columns && row+col<(int)std::size(toggles);++col)
-            placements.push_back({toggles[row+col],pad+col*(fieldWidth+gap),y,fieldWidth,rowH,group});
-        y+=rowH+12;++group;
-    }
-    settingsLayout.window=hwnd;settingsLayout.width=width;settingsLayout.height=height;
-    settingsLayout.font=Ui().font;settingsLayout.language=Settings().language;
-    settingsLayout.scale=Settings().textScale;settingsLayout.density=Settings().layoutDensity;
-    settingsLayout.failed=Ui().settingsSaveFailed;settingsLayout.contentEnd=y;
-    settingsLayout.placements=std::move(placements);SetPropW(hwnd,L"Attendance.LayoutReady",(HANDLE)1);
-    PositionSettingsContent(hwnd,settingsLayout.placements,y);
-    Ui().settingsLayoutActive=false;
-}
-void EnsureSettingsControlVisible(HWND control){
-    HWND hwnd=Ui().settingsWindow;
-    if(!hwnd||!control||GetParent(control)!=hwnd)return;
-    int id=GetDlgCtrlID(control);
-    if(id==IDC_SETTINGS_CLOSE||id==IDC_SETTINGS_RESET||id==IDC_SETTINGS_RETRY)return;
-    RECT box{};GetWindowRect(control,&box);MapWindowPoints(nullptr,hwnd,(POINT*)&box,2);
-    int next=Ui().settingsScrollY;
-    if(box.top<Ui().settingsBodyTop+8)next+=box.top-Ui().settingsBodyTop-8;
-    else if(box.bottom>Ui().settingsBodyBottom-8)next+=box.bottom-Ui().settingsBodyBottom+8;
-    if(next!=Ui().settingsScrollY)ScrollSettingsTo(hwnd,next,false);
-}
-
-void ResetAppearanceValues(){
-    Settings().theme = UiTheme::Dark;
-    Settings().accentTone = AccentTone::Neutral;
-    Settings().textScale = TextScale::Standard;
-    Settings().layoutDensity = LayoutDensity::Comfortable;
-    Settings().showStatsCards = true;
-    Settings().showFooterHint = true;
-    Settings().showTableGrid = true;
-    Settings().autosaveIntervalSeconds = 30;
-    Settings().scrollAnimationFps.store(60);
-    SignalAnimationScheduler();
-}
-
-LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam){
-    switch (msg) {
-    case WM_CREATE: {
-        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_TITLE);
-        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_LANG_LABEL);
-        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_LANGUAGE);
-        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_FONT_LABEL);
-        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_FONT);
-        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_ANIMATION_LABEL);
-        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_ANIMATION_LEVEL);
-        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_PARTICLE_LABEL);
-        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_PARTICLE_LEVEL);
-        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_REPORT_LABEL);
-        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_REPORT_TEMPLATE);
-        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_PARTICLES);
-        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_RISK_ALERTS);
-        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_AUTOSAVE_PROMPT);
-        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_COMMAND_PALETTE);
-        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_ADVANCED_FILTER);
-        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_SMOOTH_SCROLL);
-
-        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_THEME_LABEL);
-        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_THEME);
-        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_ACCENT_LABEL);
-        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_ACCENT);
-        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_TEXT_SCALE_LABEL);
-        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_TEXT_SCALE);
-        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_DENSITY_LABEL);
-        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_DENSITY);
-        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_AUTOSAVE_LABEL);
-        MakeSettingsControl(hwnd, L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP, IDC_SETTINGS_AUTOSAVE_INTERVAL);
-        MakeSettingsControl(hwnd, L"STATIC", L"", 0, IDC_SETTINGS_SCROLL_FPS_LABEL);
-        HWND scrollFps = MakeSettingsControl(hwnd, L"EDIT", L"60",
-            ES_NUMBER | ES_AUTOHSCROLL | WS_TABSTOP, IDC_SETTINGS_SCROLL_FPS);
-        MakeSettingsControl(hwnd, L"STATIC", L"FPS", 0, IDC_SETTINGS_SCROLL_FPS_UNIT);
-        SendMessageW(scrollFps, EM_SETLIMITTEXT, 3, 0);
-        ConfigureEditMetrics(scrollFps);
-        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_SHOW_STATS);
-        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_SHOW_HINT);
-        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_TABLE_GRID);
-        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_RESET);
-        MakeSettingsControl(hwnd, L"BUTTON", L"", BS_PUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, IDC_SETTINGS_CLOSE);
-        // Tab follows the same row-major order as the unified form.
-        HWND after = HWND_TOP;
-        for (int id : {IDC_SETTINGS_LANGUAGE, IDC_SETTINGS_FONT, IDC_SETTINGS_THEME,
-            IDC_SETTINGS_ACCENT, IDC_SETTINGS_TEXT_SCALE, IDC_SETTINGS_DENSITY,
-            IDC_SETTINGS_ANIMATION_LEVEL, IDC_SETTINGS_PARTICLE_LEVEL,
-            IDC_SETTINGS_REPORT_TEMPLATE, IDC_SETTINGS_AUTOSAVE_INTERVAL,
-            IDC_SETTINGS_SCROLL_FPS, IDC_SETTINGS_PARTICLES, IDC_SETTINGS_SMOOTH_SCROLL,
-            IDC_SETTINGS_SHOW_STATS, IDC_SETTINGS_SHOW_HINT, IDC_SETTINGS_TABLE_GRID,
-            IDC_SETTINGS_RISK_ALERTS, IDC_SETTINGS_AUTOSAVE_PROMPT,
-            IDC_SETTINGS_COMMAND_PALETTE, IDC_SETTINGS_ADVANCED_FILTER,
-            IDC_SETTINGS_RESET, IDC_SETTINGS_CLOSE}) {
-            HWND control = GetDlgItem(hwnd, id);
-            SetWindowPos(control, after, 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOREDRAW);
-            after = control;
+        SetSettingsSaveResult(true);
+        if (previousTheme != UiTheme::Dark || Ui().themeTransition.active) {
+          BeginThemeTransition(UiTheme::Dark);
+          ApplyVisualSettings(true);
+        } else {
+          ApplyVisualSettings();
         }
-        SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), WM_SETFONT, (WPARAM)Ui().titleFont, TRUE);
-        MakeSettingsControl(hwnd,L"STATIC",L"",SS_LEFT|SS_NOPREFIX,IDC_SETTINGS_SAVE_STATUS);
-        MakeSettingsControl(hwnd,L"BUTTON",L"",BS_OWNERDRAW|WS_TABSTOP,IDC_SETTINGS_RETRY);
-        MakeSettingsControl(hwnd,L"STATIC",L"",SS_LEFT|SS_NOPREFIX,IDC_SETTINGS_FONT_LOADING);
+        EnumChildWindows(hwnd, ApplyFontToChild, 0);
+        SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), WM_SETFONT,
+                     (WPARAM)Ui().titleFont, TRUE);
         ApplySettingsLanguage(hwnd);
         ResizeSettingsLayout(hwnd);
-        return 0;
+        RefreshList();
+        FinishOperation(operation, OperationPhase::Success,
+                        Tr(L"Settings reset successfully.", L"设置已重置。"));
+        InvalidateRect(hwnd, nullptr, FALSE);
+      }
+      return 0;
     }
-    case WM_SIZE:
-        ResizeSettingsLayout(hwnd);
-        return 0;
-    case WM_VSCROLL: {
-        SCROLLINFO info{sizeof(info)};info.fMask=SIF_ALL;GetScrollInfo(hwnd,SB_VERT,&info);
-        int next=(int)Ui().settingsScrollTarget;bool smooth=true;
-        switch(LOWORD(wParam)){
-        case SB_LINEUP:next-=40;break;case SB_LINEDOWN:next+=40;break;
-        case SB_PAGEUP:next-=(int)info.nPage;break;case SB_PAGEDOWN:next+=(int)info.nPage;break;
-        case SB_THUMBTRACK:case SB_THUMBPOSITION:next=info.nTrackPos;smooth=false;break;
-        case SB_TOP:next=0;break;case SB_BOTTOM:next=info.nMax;break;default:return 0;}
-        ScrollSettingsTo(hwnd,next,smooth);return 0;
+    break;
+  case WM_MEASUREITEM: {
+    auto *measure = reinterpret_cast<MEASUREITEMSTRUCT *>(lParam);
+    if (measure->CtlType == ODT_COMBOBOX) {
+      measure->itemHeight = ComboItemHeight();
+      return TRUE;
     }
-    case WM_MOUSEWHEEL:
-        ScrollSettingsTo(hwnd,(int)Ui().settingsScrollTarget-(int)std::lround(GET_WHEEL_DELTA_WPARAM(wParam)/120.0*120),true);
-        return 0;
-    case WM_COMMAND:
-        if (LOWORD(wParam) == IDC_SETTINGS_SCROLL_FPS
-            && HIWORD(wParam) == EN_KILLFOCUS) {
-            if(!Ui().settingsClosing){NormalizeScrollFrameRateInput(hwnd);SaveSettingsWithFeedback(hwnd);}
-            return 0;
+    break;
+  }
+  case WM_DRAWITEM: {
+    auto *draw = reinterpret_cast<DRAWITEMSTRUCT *>(lParam);
+    if (DrawComboItem(draw))
+      return TRUE;
+    if (DrawParticleToggleItem(draw))
+      return TRUE;
+    if (DrawButtonItem(draw))
+      return TRUE;
+    break;
+  }
+  case WM_PAINT: {
+    PAINTSTRUCT ps{};
+    HDC hdc = BeginPaint(hwnd, &ps);
+    PaintAppBackground(hwnd, hdc);
+    EndPaint(hwnd, &ps);
+    return 0;
+  }
+  case WM_CTLCOLORSTATIC: {
+    HDC hdc = (HDC)wParam;
+    HWND control = (HWND)lParam;
+    int id = GetDlgCtrlID(control);
+    SetTextColor(hdc,
+                 id == IDC_SETTINGS_TITLE ? Ui().COLOR_TEXT : Ui().COLOR_MUTED);
+    SetBkMode(hdc, OPAQUE);
+    SetBkColor(hdc, Ui().COLOR_BG);
+    return (LRESULT)Ui().bgBrush;
+  }
+  case WM_CTLCOLORBTN: {
+    HDC hdc = (HDC)wParam;
+    SetTextColor(hdc, Ui().COLOR_TEXT);
+    SetBkMode(hdc, TRANSPARENT);
+    return (LRESULT)Ui().bgBrush;
+  }
+  case WM_CTLCOLOREDIT:
+  case WM_CTLCOLORLISTBOX: {
+    HDC hdc = (HDC)wParam;
+    SetTextColor(hdc, Ui().COLOR_TEXT);
+    SetBkColor(hdc, Ui().COLOR_INPUT);
+    return (LRESULT)Ui().inputBrush;
+  }
+  case WM_ERASEBKGND:
+    return 1;
+  case WM_KEYDOWN:
+    if (wParam == VK_ESCAPE) {
+      const int comboIds[] = {
+          IDC_SETTINGS_LANGUAGE,        IDC_SETTINGS_FONT,
+          IDC_SETTINGS_ANIMATION_LEVEL, IDC_SETTINGS_PARTICLE_LEVEL,
+          IDC_SETTINGS_REPORT_TEMPLATE, IDC_SETTINGS_THEME,
+          IDC_SETTINGS_ACCENT,          IDC_SETTINGS_TEXT_SCALE,
+          IDC_SETTINGS_DENSITY,         IDC_SETTINGS_AUTOSAVE_INTERVAL};
+      for (int id : comboIds) {
+        HWND combo = GetDlgItem(hwnd, id);
+        if (combo && SendMessageW(combo, CB_GETDROPPEDSTATE, 0, 0)) {
+          SendMessageW(combo, CB_SHOWDROPDOWN, FALSE, 0);
+          return 0;
         }
-        if (HIWORD(wParam) == CBN_DROPDOWN) {
-            RestartAnimation((HWND)lParam, AnimChannel::ComboOpen, 1.0, Visual::OpenMs);
-            ApplyComboDropDownTheme((HWND)lParam);
-            return 0;
-        }
-        if (HIWORD(wParam) == CBN_CLOSEUP) {
-            StartAnimation((HWND)lParam, AnimChannel::ComboOpen, 0.0, 220);
-            if (LOWORD(wParam) == IDC_SETTINGS_FONT && Fonts().fontComboRefreshPending) {
-                ApplyFontListToSettings(hwnd);
-            }
-            return 0;
-        }
-        if (LOWORD(wParam) == IDC_SETTINGS_LANGUAGE && HIWORD(wParam) == CBN_SELCHANGE) {
-            CommitComboSelectionNow((HWND)lParam);
-            int language = (int)SendMessageW((HWND)lParam, CB_GETCURSEL, 0, 0);
-            if (language >= 0 && language <= (int)UiLanguage::ChineseTraditionalHongKong
-                && Settings().language != (UiLanguage)language) {
-                Settings().language = (UiLanguage)language;
-                ApplyLanguageAtomically(hwnd);
-                SaveSettingsWithFeedback(hwnd);
-            }
-            return 0;
-        }
-        if (LOWORD(wParam) == IDC_SETTINGS_FONT && HIWORD(wParam) == CBN_SELCHANGE) {
-            CommitComboSelectionNow((HWND)lParam);
-            ApplySettingsFromWindow(hwnd);
-            return 0;
-        }
-        if ((LOWORD(wParam) == IDC_SETTINGS_ANIMATION_LEVEL
-            || LOWORD(wParam) == IDC_SETTINGS_PARTICLE_LEVEL
-            || LOWORD(wParam) == IDC_SETTINGS_REPORT_TEMPLATE
-            || LOWORD(wParam) == IDC_SETTINGS_THEME
-            || LOWORD(wParam) == IDC_SETTINGS_ACCENT
-            || LOWORD(wParam) == IDC_SETTINGS_TEXT_SCALE
-            || LOWORD(wParam) == IDC_SETTINGS_DENSITY
-            || LOWORD(wParam) == IDC_SETTINGS_AUTOSAVE_INTERVAL) && HIWORD(wParam) == CBN_SELCHANGE) {
-            CommitComboSelectionNow((HWND)lParam);
-            ApplySettingsFromWindow(hwnd);
-            return 0;
-        }
-        if ((LOWORD(wParam) == IDC_SETTINGS_PARTICLES
-            || LOWORD(wParam) == IDC_SETTINGS_RISK_ALERTS
-            || LOWORD(wParam) == IDC_SETTINGS_AUTOSAVE_PROMPT
-            || LOWORD(wParam) == IDC_SETTINGS_COMMAND_PALETTE
-            || LOWORD(wParam) == IDC_SETTINGS_ADVANCED_FILTER
-            || LOWORD(wParam) == IDC_SETTINGS_SMOOTH_SCROLL) && HIWORD(wParam) == BN_CLICKED) {
-            int id = LOWORD(wParam);
-            HWND toggle = GetDlgItem(hwnd, id);
-            bool* value = FindSettingToggleValue(id);
-            if (!value) return 0;
-            *value = !*value;
-            bool checked = *value;
-            SendMessageW(toggle, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
-            if (id == IDC_SETTINGS_PARTICLES) {
-                EnableWindow(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL), checked ? TRUE : FALSE);
-            }
-            if (id == IDC_SETTINGS_SMOOTH_SCROLL && !checked) {
-                StopSmoothScrollingNow();
-            }
-            if(id==IDC_SETTINGS_ADVANCED_FILTER||id==IDC_SETTINGS_RISK_ALERTS)RefreshList();
-            if(id==IDC_SETTINGS_SMOOTH_SCROLL && !checked)ScrollSettingsTo(hwnd,(int)Ui().settingsScrollTarget,false);
-            if(Settings().animationLevel==AnimationLevel::Off)RemoveAnimationState(hwnd);
-            SaveSettingsWithFeedback(hwnd);
-            InvalidateRect(toggle, nullptr, FALSE);
-            return 0;
-        }
-        if ((LOWORD(wParam) == IDC_SETTINGS_SHOW_STATS
-            || LOWORD(wParam) == IDC_SETTINGS_SHOW_HINT
-            || LOWORD(wParam) == IDC_SETTINGS_TABLE_GRID) && HIWORD(wParam) == BN_CLICKED) {
-            int id = LOWORD(wParam);
-            bool* value = FindSettingToggleValue(id);
-            if (!value) return 0;
-            *value = !*value;
-            bool checked = *value;
-            SendMessageW((HWND)lParam, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
-            if (id == IDC_SETTINGS_TABLE_GRID && Ui().list) {
-                ListView_SetExtendedListViewStyleEx(Ui().list, LVS_EX_GRIDLINES,
-                    checked ? LVS_EX_GRIDLINES : 0);
-                InvalidateRect(Ui().list, nullptr, FALSE);
-            } else if (Ui().hwnd) {
-                RedrawScope redraw(Ui().hwnd);
-                if (id == IDC_SETTINGS_SHOW_STATS) {
-                    for (int card : {IDC_STAT_TOTAL, IDC_STAT_ATTENDANCE, IDC_STAT_ISSUES, IDC_STAT_VISIBLE})
-                        ShowWindow(GetDlgItem(Ui().hwnd, card), checked ? SW_SHOW : SW_HIDE);
-                } else ShowWindow(GetDlgItem(Ui().hwnd, IDC_HINT), checked ? SW_SHOW : SW_HIDE);
-                ResizeLayout(Ui().hwnd);
-            }
-            SaveSettingsWithFeedback(hwnd);
-            InvalidateRect((HWND)lParam, nullptr, FALSE);
-            return 0;
-        }
-        if (LOWORD(wParam) == IDC_SETTINGS_RETRY) {
-            SaveSettingsWithFeedback(hwnd); return 0;
-        }
-        if (LOWORD(wParam) == IDC_SETTINGS_CLOSE) {
-            HideSettingsWindow();
-            return 0;
-        }
-        if (LOWORD(wParam) == IDC_SETTINGS_RESET) {
-            std::wstring resetMsg = Tr(L"Reset all settings? Attendance files will not be deleted.", L"重置所有设置？考勤文件不会被删除。");
-            std::wstring resetTitle = Tr(L"Reset Settings", L"\u91cd\u7f6e\u8bbe\u7f6e");
-            if (ThemedMessageBox(hwnd, resetMsg, resetTitle, true) == IDYES) {
-                UiTheme previousTheme = Settings().theme;
-                auto operation=BeginOperation(GetDlgItem(hwnd,IDC_SETTINGS_RESET),Tr(L"Reset All Settings",L"重置所有设置"));
-                if (!ResetSettings()) {
-                    FinishOperation(operation,OperationPhase::Failure,Tr(L"Could not save the settings file. Existing settings were kept.",L"无法保存配置文件，已保留原设置。"));return 0;
-                }
-                SetSettingsSaveResult(true);
-                if (previousTheme != UiTheme::Dark || Ui().themeTransition.active) {
-                    BeginThemeTransition(UiTheme::Dark);
-                    ApplyVisualSettings(true);
-                } else {
-                    ApplyVisualSettings();
-                }
-                EnumChildWindows(hwnd, ApplyFontToChild, 0);
-                SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), WM_SETFONT, (WPARAM)Ui().titleFont, TRUE);
-                ApplySettingsLanguage(hwnd);
-                ResizeSettingsLayout(hwnd);
-                RefreshList();
-                FinishOperation(operation,OperationPhase::Success,Tr(L"Settings reset successfully.",L"设置已重置。"));
-                InvalidateRect(hwnd, nullptr, FALSE);
-            }
-            return 0;
-        }
-        break;
-    case WM_MEASUREITEM: {
-        auto* measure = reinterpret_cast<MEASUREITEMSTRUCT*>(lParam);
-        if (measure->CtlType == ODT_COMBOBOX) {
-            measure->itemHeight = ComboItemHeight();
-            return TRUE;
-        }
-        break;
+      }
+      HideSettingsWindow();
+      return 0;
     }
-    case WM_DRAWITEM: {
-        auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
-        if (DrawComboItem(draw)) return TRUE;
-        if (DrawParticleToggleItem(draw)) return TRUE;
-        if (DrawButtonItem(draw)) return TRUE;
-        break;
-    }
-    case WM_PAINT: {
-        PAINTSTRUCT ps{};
-        HDC hdc = BeginPaint(hwnd, &ps);
-        PaintAppBackground(hwnd, hdc);
-        EndPaint(hwnd, &ps);
-        return 0;
-    }
-    case WM_CTLCOLORSTATIC: {
-        HDC hdc = (HDC)wParam;
-        HWND control = (HWND)lParam;
-        int id = GetDlgCtrlID(control);
-        SetTextColor(hdc, id == IDC_SETTINGS_TITLE ? Ui().COLOR_TEXT : Ui().COLOR_MUTED);
-        SetBkMode(hdc, OPAQUE);
-        SetBkColor(hdc, Ui().COLOR_BG);
-        return (LRESULT)Ui().bgBrush;
-    }
-    case WM_CTLCOLORBTN: {
-        HDC hdc = (HDC)wParam;
-        SetTextColor(hdc, Ui().COLOR_TEXT);
-        SetBkMode(hdc, TRANSPARENT);
-        return (LRESULT)Ui().bgBrush;
-    }
-    case WM_CTLCOLOREDIT:
-    case WM_CTLCOLORLISTBOX: {
-        HDC hdc = (HDC)wParam;
-        SetTextColor(hdc, Ui().COLOR_TEXT);
-        SetBkColor(hdc, Ui().COLOR_INPUT);
-        return (LRESULT)Ui().inputBrush;
-    }
-    case WM_ERASEBKGND:
-        return 1;
-    case WM_KEYDOWN:
-        if (wParam == VK_ESCAPE) {
-            const int comboIds[] = {
-                IDC_SETTINGS_LANGUAGE, IDC_SETTINGS_FONT, IDC_SETTINGS_ANIMATION_LEVEL,
-                IDC_SETTINGS_PARTICLE_LEVEL, IDC_SETTINGS_REPORT_TEMPLATE, IDC_SETTINGS_THEME,
-                IDC_SETTINGS_ACCENT, IDC_SETTINGS_TEXT_SCALE, IDC_SETTINGS_DENSITY,
-                IDC_SETTINGS_AUTOSAVE_INTERVAL
-            };
-            for (int id : comboIds) {
-                HWND combo = GetDlgItem(hwnd, id);
-                if (combo && SendMessageW(combo, CB_GETDROPPEDSTATE, 0, 0)) {
-                    SendMessageW(combo, CB_SHOWDROPDOWN, FALSE, 0);
-                    return 0;
-                }
-            }
-            HideSettingsWindow();
-            return 0;
-        }
-        break;
-    case WM_APP_ANIMATION_TICK: {
-        AcknowledgeAnimationTick(hwnd);
-        if(!IsWindowVisible(hwnd))return 0;
-        AdvanceSettingsScroll();
-        double reveal=GetAnimationValue(hwnd,AnimChannel::Reveal,1);
-        SetLayeredWindowAttributes(hwnd,0,(BYTE)std::lround(reveal*255),LWA_ALPHA);
-        ResizeSettingsLayout(hwnd);
-        InvalidateRect(hwnd,nullptr,FALSE);return 0;
-    }
-    case WM_SETREDRAW:
-        // A late redraw transaction must not make a cached hidden dialog visible.
-        if(wParam && GetPropW(hwnd,L"Attendance.SettingsHidden"))return 0;
-        break;
-    case WM_APP_ANIMATION_DONE:
-        if(Ui().settingsClosing && (UINT_PTR)lParam==Ui().settingsCloseSerial){
-            SetPropW(hwnd,L"Attendance.SettingsHidden",(HANDLE)1);
-            RemoveAnimationState(hwnd);
-            ShowWindow(hwnd,SW_HIDE);Ui().settingsClosing=false;
-            if(Ui().hwnd&&IsWindow(Ui().hwnd))SetFocus(Ui().hwnd);
-        }
-        return 0;
-    case WM_CLOSE:
-        HideSettingsWindow();
-        return 0;
-    case WM_DESTROY:
-        RemoveAnimationState(hwnd);
-        Ui().settingsWindow = nullptr;
-        return 0;
-    }
-    return DefWindowProcW(hwnd, msg, wParam, lParam);
-}
-
-HWND EnsureSettingsWindowCreated(){
-    if (Ui().settingsWindow && IsWindow(Ui().settingsWindow)) return Ui().settingsWindow;
-    HINSTANCE instance = GetModuleHandleW(nullptr);
-    const wchar_t* className = L"AttendanceSettingsWindow";
-    static bool registered = false;
-    if (!registered) {
-        WNDCLASSW wc{};
-        wc.style = 0;
-        wc.lpfnWndProc = SettingsProc;
-        wc.hInstance = instance;
-        wc.lpszClassName = className;
-        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_APP_ICON));
-        RegisterClassW(&wc);
-        registered = true;
-    }
-
-    std::wstring settingsTitle = Tr(L"Settings", L"\u8bbe\u7f6e");
-    Ui().settingsWindow = CreateWindowExW(
-        WS_EX_CONTROLPARENT | WS_EX_COMPOSITED | WS_EX_LAYERED,
-        className,
-        settingsTitle.c_str(),
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN | WS_VSCROLL,
-        CW_USEDEFAULT, CW_USEDEFAULT, 560, 730,
-        Ui().hwnd, nullptr, instance, nullptr
-    );
-    RECT work{};
-    MONITORINFO monitor{sizeof(monitor)};
-    GetMonitorInfoW(MonitorFromWindow(Ui().hwnd, MONITOR_DEFAULTTONEAREST), &monitor);
-    work = monitor.rcWork;
-    SetWindowPos(Ui().settingsWindow, nullptr, 0, 0,
-        std::min(1040, std::max(320, (int)(work.right - work.left) - 16)),
-        std::min(860, std::max(320, (int)(work.bottom - work.top) - 16)),
-        SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-    SetPropW(Ui().settingsWindow,L"Attendance.SettingsHidden",(HANDLE)1);
-    ApplyGlassTitleBar(Ui().settingsWindow);
-    ApplyThemedControls(Ui().settingsWindow);
-    CenterOwnedWindow(Ui().settingsWindow, Ui().hwnd);
-    return Ui().settingsWindow;
-}
-
-void SyncSettingsWindowState(HWND hwnd){
-    if (!hwnd || !IsWindow(hwnd)) return;
-    RedrawScope redraw(hwnd);
-    for (const auto& binding : SettingToggleBindings()) {
-        SendMessageW(GetDlgItem(hwnd, binding.id), BM_SETCHECK,
-            *binding.value ? BST_CHECKED : BST_UNCHECKED, 0);
-    }
-    FillSettingsCombos(hwnd, false);
-    SetText(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS), std::to_wstring(Settings().scrollAnimationFps.load()));
-    EnableWindow(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL), Settings().particlesEnabled ? TRUE : FALSE);
+    break;
+  case WM_APP_ANIMATION_TICK: {
+    AcknowledgeAnimationTick(hwnd);
+    if (!IsWindowVisible(hwnd))
+      return 0;
+    AdvanceSettingsScroll();
+    double reveal = GetAnimationValue(hwnd, AnimChannel::Reveal, 1);
+    BYTE alpha = (BYTE)std::lround(reveal * 255), previous = 255;
+    DWORD flags = 0;
+    COLORREF key = 0;
+    if (!GetLayeredWindowAttributes(hwnd, &key, &previous, &flags) ||
+        previous != alpha)
+      SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA);
     ResizeSettingsLayout(hwnd);
-    ApplyFontListToSettings(hwnd);
+    return 0;
+  }
+  case WM_SETREDRAW:
+    // A late redraw transaction must not make a cached hidden dialog visible.
+    if (wParam && GetPropW(hwnd, L"Attendance.SettingsHidden"))
+      return 0;
+    break;
+  case WM_APP_ANIMATION_DONE:
+    if (Ui().settingsClosing && (UINT_PTR)lParam == Ui().settingsCloseSerial) {
+      SetPropW(hwnd, L"Attendance.SettingsHidden", (HANDLE)1);
+      RemoveAnimationState(hwnd);
+      ShowWindow(hwnd, SW_HIDE);
+      Ui().settingsClosing = false;
+      if (Ui().hwnd && IsWindow(Ui().hwnd))
+        SetFocus(Ui().hwnd);
+    }
+    return 0;
+  case WM_CLOSE:
+    HideSettingsWindow();
+    return 0;
+  case WM_DESTROY:
+    RemoveAnimationState(hwnd);
+    Ui().settingsWindow = nullptr;
+    return 0;
+  }
+  return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-void PrewarmSettingsWindow(){
-    EnsureSettingsWindowCreated();
+HWND EnsureSettingsWindowCreated() {
+  if (Ui().settingsWindow && IsWindow(Ui().settingsWindow))
+    return Ui().settingsWindow;
+  HINSTANCE instance = GetModuleHandleW(nullptr);
+  const wchar_t *className = L"AttendanceSettingsWindow";
+  static bool registered = false;
+  if (!registered) {
+    WNDCLASSW wc{};
+    wc.style = 0;
+    wc.lpfnWndProc = SettingsProc;
+    wc.hInstance = instance;
+    wc.lpszClassName = className;
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_APP_ICON));
+    RegisterClassW(&wc);
+    registered = true;
+  }
+
+  std::wstring settingsTitle = Tr(L"Settings", L"\u8bbe\u7f6e");
+  Ui().settingsWindow = CreateWindowExW(
+      WS_EX_CONTROLPARENT | WS_EX_COMPOSITED | WS_EX_LAYERED, className,
+      settingsTitle.c_str(),
+      WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN | WS_VSCROLL,
+      CW_USEDEFAULT, CW_USEDEFAULT, 560, 730, Ui().hwnd, nullptr, instance,
+      nullptr);
+  RECT work{};
+  MONITORINFO monitor{sizeof(monitor)};
+  GetMonitorInfoW(MonitorFromWindow(Ui().hwnd, MONITOR_DEFAULTTONEAREST),
+                  &monitor);
+  work = monitor.rcWork;
+  SetWindowPos(
+      Ui().settingsWindow, nullptr, 0, 0,
+      std::min(1040, std::max(320, (int)(work.right - work.left) - 16)),
+      std::min(860, std::max(320, (int)(work.bottom - work.top) - 16)),
+      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+  SetPropW(Ui().settingsWindow, L"Attendance.SettingsHidden", (HANDLE)1);
+  ApplyGlassTitleBar(Ui().settingsWindow);
+  ApplyThemedControls(Ui().settingsWindow);
+  CenterOwnedWindow(Ui().settingsWindow, Ui().hwnd);
+  return Ui().settingsWindow;
 }
 
-void HideSettingsWindow(){
-    if (!Ui().settingsWindow || !IsWindow(Ui().settingsWindow)) return;
-    const int comboIds[] = {
-        IDC_SETTINGS_LANGUAGE, IDC_SETTINGS_FONT, IDC_SETTINGS_ANIMATION_LEVEL,
-        IDC_SETTINGS_PARTICLE_LEVEL, IDC_SETTINGS_REPORT_TEMPLATE, IDC_SETTINGS_THEME,
-        IDC_SETTINGS_ACCENT, IDC_SETTINGS_TEXT_SCALE, IDC_SETTINGS_DENSITY,
-        IDC_SETTINGS_AUTOSAVE_INTERVAL
-    };
-    for (int id : comboIds) {
-        HWND combo = GetDlgItem(Ui().settingsWindow, id);
-        if (combo) SendMessageW(combo, CB_SHOWDROPDOWN, FALSE, 0);
-    }
-    HWND hwnd=Ui().settingsWindow;
-    if(!IsWindowVisible(hwnd) || Ui().settingsClosing)return;
-    NormalizeScrollFrameRateInput(hwnd);SaveSettingsWithFeedback(hwnd);
-    Ui().settingsScrollStartMs=0;Ui().settingsClosing=true;
-    double visible=GetAnimationValue(hwnd,AnimChannel::Reveal,1);
-    ++Ui().settingsCloseSerial;
-    StartAnimation(hwnd,AnimChannel::Reveal,0,Visual::CloseMs,true,Ui().settingsCloseSerial);
-    if(Settings().animationLevel==AnimationLevel::Off || visible<=.001){
-        SetPropW(hwnd,L"Attendance.SettingsHidden",(HANDLE)1);
-        RemoveAnimationState(hwnd);ShowWindow(hwnd,SW_HIDE);Ui().settingsClosing=false;
-        if(Ui().hwnd)SetFocus(Ui().hwnd);
-    }
+void SyncSettingsWindowState(HWND hwnd) {
+  if (!hwnd || !IsWindow(hwnd))
+    return;
+  RedrawScope redraw(hwnd);
+  for (const auto &binding : SettingToggleBindings()) {
+    SendMessageW(GetDlgItem(hwnd, binding.id), BM_SETCHECK,
+                 *binding.value ? BST_CHECKED : BST_UNCHECKED, 0);
+  }
+  FillSettingsCombos(hwnd, false);
+  SetText(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS),
+          std::to_wstring(Settings().scrollAnimationFps.load()));
+  EnableWindow(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL),
+               Settings().particlesEnabled ? TRUE : FALSE);
+  ResizeSettingsLayout(hwnd);
+  ApplyFontListToSettings(hwnd);
 }
 
-void ShowSettingsWindow(){
-    HWND settings = EnsureSettingsWindowCreated();
-    if (!settings) return;
-    if (IsWindowVisible(settings)) {
-        if(Ui().settingsClosing){Ui().settingsClosing=false;StartAnimation(settings,AnimChannel::Reveal,1,Visual::OpenMs);}
-        SetForegroundWindow(settings);return;
+void PrewarmSettingsWindow() { EnsureSettingsWindowCreated(); }
+
+void HideSettingsWindow() {
+  if (!Ui().settingsWindow || !IsWindow(Ui().settingsWindow))
+    return;
+  const int comboIds[] = {
+      IDC_SETTINGS_LANGUAGE,        IDC_SETTINGS_FONT,
+      IDC_SETTINGS_ANIMATION_LEVEL, IDC_SETTINGS_PARTICLE_LEVEL,
+      IDC_SETTINGS_REPORT_TEMPLATE, IDC_SETTINGS_THEME,
+      IDC_SETTINGS_ACCENT,          IDC_SETTINGS_TEXT_SCALE,
+      IDC_SETTINGS_DENSITY,         IDC_SETTINGS_AUTOSAVE_INTERVAL};
+  for (int id : comboIds) {
+    HWND combo = GetDlgItem(Ui().settingsWindow, id);
+    if (combo)
+      SendMessageW(combo, CB_SHOWDROPDOWN, FALSE, 0);
+  }
+  HWND hwnd = Ui().settingsWindow;
+  if (!IsWindowVisible(hwnd) || Ui().settingsClosing)
+    return;
+  NormalizeScrollFrameRateInput(hwnd);
+  SaveSettingsWithFeedback(hwnd);
+  Ui().settingsScrollStartMs = 0;
+  Ui().settingsClosing = true;
+  double visible = GetAnimationValue(hwnd, AnimChannel::Reveal, 1);
+  ++Ui().settingsCloseSerial;
+  StartAnimation(hwnd, AnimChannel::Reveal, 0, Visual::CloseMs, true,
+                 Ui().settingsCloseSerial);
+  if (Settings().animationLevel == AnimationLevel::Off || visible <= .001) {
+    SetPropW(hwnd, L"Attendance.SettingsHidden", (HANDLE)1);
+    RemoveAnimationState(hwnd);
+    ShowWindow(hwnd, SW_HIDE);
+    Ui().settingsClosing = false;
+    if (Ui().hwnd)
+      SetFocus(Ui().hwnd);
+  }
+}
+
+void ShowSettingsWindow() {
+  HWND settings = EnsureSettingsWindowCreated();
+  if (!settings)
+    return;
+  if (IsWindowVisible(settings)) {
+    if (Ui().settingsClosing) {
+      Ui().settingsClosing = false;
+      StartAnimation(settings, AnimChannel::Reveal, 1, Visual::OpenMs);
     }
-    SetLayeredWindowAttributes(settings,0,0,LWA_ALPHA);
-    RemovePropW(settings,L"Attendance.SettingsHidden");
-    SendMessageW(settings,WM_SETREDRAW,TRUE,0);
-    ShowWindow(settings,SW_HIDE);
-    Ui().settingsClosing=false;Ui().settingsScrollY=0;
-    Ui().settingsScrollCurrent=Ui().settingsScrollStart=Ui().settingsScrollTarget=0;
-    Ui().settingsScrollStartMs=0;RemoveAnimationState(settings);
-    SyncSettingsWindowState(settings);
-    StartWindowReveal(settings,Visual::OpenMs);
-    SetLayeredWindowAttributes(settings,0,Settings().animationLevel==AnimationLevel::Off?255:0,LWA_ALPHA);
-    ShowWindow(Ui().settingsWindow, SW_SHOW);
-    RedrawWindow(Ui().settingsWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE | RDW_UPDATENOW);
-    SetForegroundWindow(Ui().settingsWindow);
+    SetForegroundWindow(settings);
+    return;
+  }
+  SetLayeredWindowAttributes(settings, 0, 0, LWA_ALPHA);
+  RemovePropW(settings, L"Attendance.SettingsHidden");
+  SendMessageW(settings, WM_SETREDRAW, TRUE, 0);
+  ShowWindow(settings, SW_HIDE);
+  Ui().settingsClosing = false;
+  Ui().settingsScrollY = 0;
+  Ui().settingsScrollCurrent = Ui().settingsScrollStart =
+      Ui().settingsScrollTarget = 0;
+  Ui().settingsScrollStartMs = 0;
+  RemoveAnimationState(settings);
+  SyncSettingsWindowState(settings);
+  StartWindowReveal(settings, Visual::OpenMs);
+  SetLayeredWindowAttributes(
+      settings, 0, Settings().animationLevel == AnimationLevel::Off ? 255 : 0,
+      LWA_ALPHA);
+  ShowWindow(Ui().settingsWindow, SW_SHOW);
+  RedrawWindow(Ui().settingsWindow, nullptr, nullptr,
+               RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE | RDW_UPDATENOW);
+  SetForegroundWindow(Ui().settingsWindow);
 }
 
 } // namespace attendance

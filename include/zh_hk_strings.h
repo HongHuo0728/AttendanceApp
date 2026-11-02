@@ -10,6 +10,9 @@ struct HongKongTranslation {
 };
 
 inline constexpr HongKongTranslation kHongKongTranslations[] = {
+    {L"Edit shortcuts as action=key; use Ctrl+letter or F keys:", L"請用 action=key 格式編輯快捷鍵，可用 Ctrl+字母或者 F 鍵："},
+    {L"Could not protect the existing autosave. The current data was not replaced.", L"無法保護現有自動儲存檔，目前資料未被取代。"},
+    {L"Autosave failed. Closing now may lose unsaved attendance data. Close anyway?", L"自動儲存失敗。依家關閉可能會遺失未儲存嘅考勤資料，仍然要關閉？"},
     {L"Retry", L"重試"},
     {L"Settings not saved. Active for this session only.", L"設定未儲存，只會喺今次使用期間生效。"},
     {L"Reset all settings? Attendance files will not be deleted.", L"重設所有設定？唔會刪除考勤檔案。"},

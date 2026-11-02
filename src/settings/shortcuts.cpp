@@ -142,6 +142,18 @@ bool ExecuteMainShortcut(WPARAM key){
 bool HandleMainShortcutMessage(const MSG& msg){
     if (msg.message != WM_KEYDOWN && msg.message != WM_SYSKEYDOWN) return false;
     if (!msg.hwnd || GetAncestor(msg.hwnd, GA_ROOT) != Ui().hwnd) return false;
+    if(msg.message==WM_KEYDOWN && msg.wParam==VK_TAB){
+        HWND next=GetNextDlgTabItem(Ui().hwnd,msg.hwnd,(GetKeyState(VK_SHIFT)&0x8000)!=0);
+        if(next){SetFocus(next);EnsureMainControlVisible(next);}return true;
+    }
+    if (msg.message == WM_KEYDOWN && msg.wParam == VK_RETURN) {
+        wchar_t className[32]{};
+        GetClassNameW(msg.hwnd, className, 32);
+        if (lstrcmpiW(className, L"Button") == 0) {
+            SendMessageW(msg.hwnd, BM_CLICK, 0, 0);
+            return true;
+        }
+    }
     return ExecuteMainShortcut(msg.wParam);
 }
 

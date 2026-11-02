@@ -3,6 +3,9 @@
 #include "localization/strings.h"
 #include "ui/common.h"
 #include "ui/controls.h"
+#include "ui/drawing.h"
+#include "ui/motion.h"
+#include "ui/redraw.h"
 #include "ui/state.h"
 #include "ui/theme.h"
 #include "ui/title_bar.h"
@@ -13,22 +16,44 @@ struct Choice {
   std::vector<int> visible;
   int selected = -1;
   bool done = false;
+  std::wstring lastQuery;
+  bool filtered = false;
 };
 void Filter(HWND hwnd, Choice &s) {
   auto list = GetDlgItem(hwnd, 8011);
   auto query = GetText(GetDlgItem(hwnd, 8010));
-  SendMessageW(list, WM_SETREDRAW, FALSE, 0);
+  if (s.filtered && query == s.lastQuery)
+    return;
+  int selected = (int)SendMessageW(list, LB_GETCURSEL, 0, 0);
+  int original = selected >= 0 && selected < (int)s.visible.size()
+                     ? s.visible[selected]
+                     : -1;
+  RedrawScope redraw(list);
   SendMessageW(list, LB_RESETCONTENT, 0, 0);
   s.visible.clear();
+  HDC dc = GetDC(list);
+  HGDIOBJ oldFont = SelectObject(dc, Ui().font);
+  int extent = 0;
   for (size_t i = 0; i < s.items->size(); ++i)
     if (query.empty() || ContainsText((*s.items)[i], query)) {
       SendMessageW(list, LB_ADDSTRING, 0,
                    reinterpret_cast<LPARAM>((*s.items)[i].c_str()));
       s.visible.push_back(static_cast<int>(i));
+      SIZE size{};
+      GetTextExtentPoint32W(dc, (*s.items)[i].c_str(),
+                            (int)(*s.items)[i].size(), &size);
+      extent = std::max(extent, (int)size.cx + 24);
     }
-  SendMessageW(list, LB_SETCURSEL, 0, 0);
-  SendMessageW(list, WM_SETREDRAW, TRUE, 0);
-  InvalidateRect(list, nullptr, TRUE);
+  SelectObject(dc, oldFont);
+  ReleaseDC(list, dc);
+  SendMessageW(list, LB_SETHORIZONTALEXTENT, extent, 0);
+  auto kept = std::find(s.visible.begin(), s.visible.end(), original);
+  int next = kept == s.visible.end() ? (s.visible.empty() ? -1 : 0)
+                                     : (int)(kept - s.visible.begin());
+  SendMessageW(list, LB_SETCURSEL, next, 0);
+  s.lastQuery = query;
+  s.filtered = true;
+  InvalidateRect(list, nullptr, FALSE);
   EnableWindow(GetDlgItem(hwnd, 8012), !s.visible.empty());
 }
 LRESULT CALLBACK ChoiceProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -43,14 +68,16 @@ LRESULT CALLBACK ChoiceProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     SendMessageW(search, EM_SETCUEBANNER, TRUE,
                  reinterpret_cast<LPARAM>(Tr(L"Search", L"搜索").c_str()));
     MakeSettingsControl(hwnd, L"LISTBOX", L"",
-                        WS_TABSTOP | WS_BORDER | WS_VSCROLL | LBS_NOTIFY |
-                            LBS_NOINTEGRALHEIGHT,
+                        WS_TABSTOP | WS_BORDER | WS_VSCROLL | WS_HSCROLL |
+                            LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
                         8011);
     SetAccessibleName(GetDlgItem(hwnd, 8011), Tr(L"Choose item", L"选择项目"));
     MakeSettingsControl(hwnd, L"BUTTON", Tr(L"OK", L"确定").c_str(),
-                        WS_TABSTOP | BS_DEFPUSHBUTTON, 8012);
+                        WS_TABSTOP | BS_OWNERDRAW, 8012);
     MakeSettingsControl(hwnd, L"BUTTON", Tr(L"Cancel", L"取消").c_str(),
-                        WS_TABSTOP, 8013);
+                        WS_TABSTOP | BS_OWNERDRAW, 8013);
+    SendMessageW(GetDlgItem(hwnd, 8011), LB_SETITEMHEIGHT, 0,
+                 MeasuredTextHeight(GetDlgItem(hwnd, 8011)) + 12);
     Filter(hwnd, *s);
     return 0;
   }
@@ -58,16 +85,26 @@ LRESULT CALLBACK ChoiceProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     RECT rc{};
     GetClientRect(hwnd, &rc);
     int w = rc.right, h = rc.bottom;
-    MoveWindow(GetDlgItem(hwnd, 8010), 20, 20, w - 40, 36, TRUE);
-    MoveWindow(GetDlgItem(hwnd, 8011), 20, 70, w - 40, std::max(30, h - 140),
-               TRUE);
-    MoveWindow(GetDlgItem(hwnd, 8012), w - 260, h - 54, 110, 34, TRUE);
-    MoveWindow(GetDlgItem(hwnd, 8013), w - 140, h - 54, 120, 34, TRUE);
+    int fieldH = std::max(40, MeasuredTextHeight(GetDlgItem(hwnd, 8010)) + 16);
+    int buttonH = std::max(40, MeasuredTextHeight(GetDlgItem(hwnd, 8012)) + 16);
+    int buttonW = std::max({100, MeasuredTextWidth(GetDlgItem(hwnd, 8012)) + 40,
+                            MeasuredTextWidth(GetDlgItem(hwnd, 8013)) + 40});
+    int buttonY = h - 20 - buttonH;
+    RedrawScope redraw(hwnd);
+    MoveWindow(GetDlgItem(hwnd, 8010), 20, 20, w - 40, fieldH, FALSE);
+    MoveWindow(GetDlgItem(hwnd, 8011), 20, 32 + fieldH, w - 40,
+               std::max(30, buttonY - fieldH - 48), FALSE);
+    MoveWindow(GetDlgItem(hwnd, 8012), w - 32 - buttonW * 2, buttonY, buttonW,
+               buttonH, FALSE);
+    MoveWindow(GetDlgItem(hwnd, 8013), w - 20 - buttonW, buttonY, buttonW,
+               buttonH, FALSE);
     return 0;
   }
   if (msg == WM_GETMINMAXINFO) {
     auto *mm = reinterpret_cast<MINMAXINFO *>(lp);
-    mm->ptMinTrackSize = {480, 320};
+    int buttonW = std::max({100, MeasuredTextWidth(GetDlgItem(hwnd, 8012)) + 40,
+                            MeasuredTextWidth(GetDlgItem(hwnd, 8013)) + 40});
+    mm->ptMinTrackSize = {std::max(480, buttonW * 2 + 68), 360};
     return 0;
   }
   if (msg == WM_COMMAND && s) {
@@ -100,12 +137,22 @@ LRESULT CALLBACK ChoiceProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     SetBkColor(dc, Ui().COLOR_INPUT);
     return reinterpret_cast<LRESULT>(Ui().inputBrush);
   }
-  if (msg == WM_ERASEBKGND) {
-    RECT r{};
-    GetClientRect(hwnd, &r);
-    FillRect(reinterpret_cast<HDC>(wp), &r, Ui().bgBrush);
-    return 1;
+  if (msg == WM_DRAWITEM &&
+      DrawButtonItem(reinterpret_cast<DRAWITEMSTRUCT *>(lp)))
+    return TRUE;
+  if (msg == WM_PAINT) {
+    PAINTSTRUCT ps{};
+    HDC dc = BeginPaint(hwnd, &ps);
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    BufferedPaint buffer(dc, rc);
+    FillRect(buffer.DC(), &rc, Ui().bgBrush);
+    buffer.Commit();
+    EndPaint(hwnd, &ps);
+    return 0;
   }
+  if (msg == WM_ERASEBKGND)
+    return 1;
   return DefWindowProcW(hwnd, msg, wp, lp);
 }
 } // namespace
@@ -119,7 +166,7 @@ int ChooseItem(const std::wstring &title,
   wc.lpszClassName = L"AttendanceChoice";
   wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
   RegisterClassW(&wc);
-  Choice state{&items, {}, -1, false};
+  Choice state{&items, {}, -1, false, {}, false};
   HWND hwnd = CreateWindowExW(
       WS_EX_CONTROLPARENT, wc.lpszClassName, title.c_str(),
       WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT, 680,

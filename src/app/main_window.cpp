@@ -103,6 +103,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam){
         Ui().list = MakeControl(WC_LISTVIEWW, L"",
             LVS_REPORT | LVS_OWNERDATA | LVS_SHOWSELALWAYS | WS_TABSTOP | WS_BORDER, IDC_LIST);
         EnableMouseWheelForward(Ui().list);
+        HWND after=HWND_TOP;
+        for(int id:{IDC_COURSE_COMBO,IDC_COURSE_OPTIONS,IDC_FILTER,IDC_CLEAR_FILTER,IDC_LIST,
+            IDC_DATE,IDC_NAME,IDC_OTHER,IDC_PRESENT,IDC_ABSENT,IDC_LATE,IDC_OTHER_STATUS,
+            IDC_LEAVE,IDC_PENDING,IDC_SAVE,IDC_EXPORT_CSV,IDC_ADD_UPDATE,IDC_EDIT_SELECTED,
+            IDC_ALL_PRESENT,IDC_NEW,IDC_IMPORT,IDC_DELETE,IDC_TOOLS,IDC_SETTINGS}){
+            HWND control=GetDlgItem(hwnd,id);SetWindowPos(control,after,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_NOREDRAW);after=control;
+        }
         InitListColumns();
         EnableHeaderPaint(ListView_GetHeader(Ui().list));
         EnsureSheets();
@@ -392,14 +399,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam){
         KillTimer(hwnd, 1);
         KillTimer(hwnd, 2);
         RemoveAnimationState(hwnd);
-        StopFontEnumerationThread();
-        StopAnimationThread();
-        if (Ui().font) DeleteObject(Ui().font);
-        if (Ui().titleFont) DeleteObject(Ui().titleFont);
-        if (Ui().smallFont) DeleteObject(Ui().smallFont);
-        if (Ui().bgBrush) DeleteObject(Ui().bgBrush);
-        if (Ui().inputBrush) DeleteObject(Ui().inputBrush);
-        if (Ui().panelBrush) DeleteObject(Ui().panelBrush);
         PostQuitMessage(0);
         return 0;
     }

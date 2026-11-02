@@ -1,5 +1,7 @@
 #include "version.h"
 #include "app/application.h"
+#include "animation/scheduler.h"
+#include "settings/fonts.h"
 #include "reports/jobs.h"
 #include "ui/title_bar.h"
 #include "core/text.h"
@@ -131,6 +133,17 @@ int RunApplication(
         if (exitCode != 0) AutoSaveNow();
         DestroyWindow(hwnd);
     }
+    // Destroying child controls can still emit focus/animation notifications.
+    // Join workers and release drawing resources after that entire lifecycle ends.
+    StopFontEnumerationThread();
+    StopAnimationThread();
+    Ui().hwnd = nullptr;
+    for (HFONT font : {Ui().font, Ui().titleFont, Ui().smallFont})
+        if (font) DeleteObject(font);
+    for (HBRUSH brush : {Ui().bgBrush, Ui().inputBrush, Ui().panelBrush})
+        if (brush) DeleteObject(brush);
+    Ui().font = Ui().titleFont = Ui().smallFont = nullptr;
+    Ui().bgBrush = Ui().inputBrush = Ui().panelBrush = nullptr;
     if (uninitializeCom) CoUninitialize();
     return exitCode;
 }

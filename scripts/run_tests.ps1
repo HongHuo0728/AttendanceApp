@@ -14,12 +14,19 @@ try {
   & (Join-Path $PSScriptRoot 'verify_reports.ps1') -DataRoot $data
   $snapshot=Get-TreeSnapshot $testRoot
   Assert-TestBudget $snapshot
-  $results+=[pscustomobject]@{Run=$i;Passed=$true;GeneratedBytes=$snapshot.Bytes;SampledBuildPeakBytes=$peak;Largest=$snapshot.Largest}
+  $results+=[pscustomobject]@{Run=$i;Passed=$true;GeneratedBytes=$snapshot.Bytes;SampledBuildPeakBytes=$peak;Largest=$snapshot.Largest;Diagnostics=@([IO.File]::ReadAllLines((Join-Path $testRoot 'regression.out.log'))|Select-Object -Last 40)}
   Write-Output "Run $i passed; test bytes: $($snapshot.Bytes)."
   Remove-ManagedTree $data
  }
 }catch{$failure=$_.Exception.Message;throw}finally{
  $final=Get-TreeSnapshot $testRoot
- [pscustomobject]@{Runs=$results;Failure=$failure;BeforeCleanup=$final;DataBudgetBytes=20MB;SingleFileBudgetBytes=5MB}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $script:ProjectRoot 'build\test-summary.json') -Encoding UTF8
- Remove-ManagedTree $testRoot
+ try {
+  $summaryPath=Join-Path $script:ProjectRoot 'build\test-summary.json'
+  $summaryJson=[pscustomobject]@{Runs=$results;Failure=$failure;BeforeCleanup=$final;DataBudgetBytes=20MB;SingleFileBudgetBytes=5MB}|ConvertTo-Json -Depth 8
+  $summaryBytes=[Text.Encoding]::UTF8.GetByteCount($summaryJson)
+  if($summaryBytes -gt 1MB){throw 'Test diagnostic summary exceeded 1 MiB; refusing oversized output.'}
+  $existingBytes=if(Test-Path -LiteralPath $summaryPath){(Get-Item -LiteralPath $summaryPath).Length}else{0}
+  if((Get-GeneratedBytes)-$existingBytes+$summaryBytes -ge 512MB){throw 'Test summary would exceed the generated-artifact budget.'}
+  [IO.File]::WriteAllText($summaryPath,$summaryJson,[Text.UTF8Encoding]::new($false))
+ } finally {Remove-ManagedTree $testRoot}
 }

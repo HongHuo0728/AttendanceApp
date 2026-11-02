@@ -6,6 +6,7 @@ namespace attendance {
 
 void ToggleFullscreen(HWND hwnd);
 void ResizeLayout(HWND hwnd);
+void EnsureMainControlVisible(HWND control);
 void ScrollMainWindow(HWND hwnd, int bar, int code, int wheelDelta = 0);
 
 } // namespace attendance

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased UI repair - 2026-11-02
+
+- Repair table/composer overlap, translated and scaled layouts, flat cards, shared button edges, Tab/Enter navigation and main/table wheel routing.
+- Reduce settings scroll work, prevent wheel input from changing closed combos, and preserve font hierarchy, input alignment and dropdown metrics.
+- Repair menu scrollbar input, popup frame invalidation, chart sizing/completion/close opacity, roll-call progress, and measured/scrollable dialogs.
+- Preserve all settings across saving/reloading, accept Windows BOM/CRLF files, complete physical animation lifetimes and preserve process quit messages.
+- Keep the withdrawn 2.1.1 release in draft. See [the UI repair audit](docs/V2.1.1_UI_REPAIR.md) for causes, regression coverage and desktop acceptance.
+
 ## 2.1.1 LTS - 2026-11-01
 
 - Remove Apply and keep Reset All Settings / Close in a fixed settings footer. Add continuous content scrolling and a fresh, reversible cached-window entrance on each opening.
