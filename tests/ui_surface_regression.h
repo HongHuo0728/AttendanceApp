@@ -438,6 +438,8 @@ void TestUiSurfaces() {
   DeleteDC(dc);
   ReleaseDC(root, digitsScreen);
 
+  Settings().animationLevel = AnimationLevel::Advanced;
+  TestSharedComboPopup(Ui().courseCombo, false);
   StopOperationFeedback();
   StopAnimationThread();
   KillTimer(root, 1);

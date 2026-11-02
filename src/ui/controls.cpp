@@ -164,9 +164,9 @@ LRESULT CALLBACK InteractiveControlProc(HWND hwnd, UINT msg, WPARAM wParam,
   case WM_MOUSEWHEEL:
     if (GetParent(hwnd) == Ui().quickRollCallWindow)
       return SendMessageW(GetParent(hwnd), msg, wParam, lParam);
-    if (GetParent(hwnd) == Ui().settingsWindow &&
+    if (IsSettingsControl(hwnd) &&
         !SendMessageW(hwnd, CB_GETDROPPEDSTATE, 0, 0))
-      return SendMessageW(GetParent(hwnd), msg, wParam, lParam);
+      return SendMessageW(Ui().settingsWindow, msg, wParam, lParam);
     if (GetParent(hwnd) == Ui().hwnd &&
         !SendMessageW(hwnd, CB_GETDROPPEDSTATE, 0, 0))
       return SendMessageW(Ui().hwnd, msg, wParam, lParam);

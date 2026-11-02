@@ -227,29 +227,11 @@ void PaintComboClosed(HWND hwnd, HDC hdc) {
                       : Ui().COLOR_PANEL;
   COLORREF border =
       BlendColor(Ui().COLOR_BORDER, Ui().COLOR_ACCENT, focused ? 1.0 : active);
-  COLORREF arrowFill =
-      BlendColor(Ui().COLOR_PANEL, Ui().COLOR_SELECTED, active);
   COLORREF textColor = enabled ? Ui().COLOR_TEXT : Ui().COLOR_MUTED;
-
-  HBRUSH bg = CreateSolidBrush(fill);
-  FillRect(hdc, &rc, bg);
-  DeleteObject(bg);
+  PaintRoundedControl(hdc, rc, fill, border);
 
   RECT arrowRc = rc;
   arrowRc.left = std::max(arrowRc.left, arrowRc.right - 34);
-  HBRUSH arrowBg = CreateSolidBrush(arrowFill);
-  FillRect(hdc, &arrowRc, arrowBg);
-  DeleteObject(arrowBg);
-
-  HPEN borderPen = CreatePen(PS_SOLID, 1, border);
-  HGDIOBJ oldPen = SelectObject(hdc, borderPen);
-  HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
-  Rectangle(hdc, rc.left, rc.top, rc.right, rc.bottom);
-  MoveToEx(hdc, arrowRc.left, arrowRc.top + 1, nullptr);
-  LineTo(hdc, arrowRc.left, arrowRc.bottom - 1);
-  SelectObject(hdc, oldBrush);
-  SelectObject(hdc, oldPen);
-  DeleteObject(borderPen);
 
   int selected = (int)SendMessageW(hwnd, CB_GETCURSEL, 0, 0);
   std::wstring text;
@@ -265,7 +247,7 @@ void PaintComboClosed(HWND hwnd, HDC hdc) {
   }
 
   RECT textRc = rc;
-  textRc.left += 10;
+  textRc.left += 14;
   textRc.right = arrowRc.left - 8;
   HGDIOBJ oldFont = SelectObject(hdc, Ui().font);
   SetBkMode(hdc, TRANSPARENT);
@@ -290,8 +272,8 @@ void PaintComboClosed(HWND hwnd, HDC hdc) {
   }
   HBRUSH arrowBrush = CreateSolidBrush(textColor);
   HPEN arrowPen = CreatePen(PS_SOLID, 1, textColor);
-  oldBrush = SelectObject(hdc, arrowBrush);
-  oldPen = SelectObject(hdc, arrowPen);
+  HGDIOBJ oldBrush = SelectObject(hdc, arrowBrush);
+  HGDIOBJ oldPen = SelectObject(hdc, arrowPen);
   Polygon(hdc, pts, 3);
   SelectObject(hdc, oldPen);
   SelectObject(hdc, oldBrush);

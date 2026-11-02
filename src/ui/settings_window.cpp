@@ -27,6 +27,122 @@
 
 namespace attendance {
 
+HWND SettingsControl(HWND window, int id) {
+  if (HWND direct = GetDlgItem(window, id))
+    return direct;
+  HWND content = (HWND)GetPropW(window, L"Attendance.SettingsContent");
+  return content ? GetDlgItem(content, id) : nullptr;
+}
+
+bool IsSettingsControl(HWND control) {
+  return Ui().settingsWindow && control &&
+         IsChild(Ui().settingsWindow, control);
+}
+
+void ApplySettingsOpacity(HWND window, BYTE alpha) {
+  LONG_PTR style = GetWindowLongPtrW(window, GWL_EXSTYLE);
+  if (alpha == 255 && !Ui().settingsClosing) {
+    if (style & WS_EX_LAYERED) {
+      SetWindowLongPtrW(window, GWL_EXSTYLE, style & ~WS_EX_LAYERED);
+      RedrawWindow(window, nullptr, nullptr,
+                   RDW_ERASE | RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN);
+    }
+    return;
+  }
+  if (!(style & WS_EX_LAYERED))
+    SetWindowLongPtrW(window, GWL_EXSTYLE, style | WS_EX_LAYERED);
+  BYTE previous = 255;
+  DWORD flags = 0;
+  COLORREF key = 0;
+  if (!GetLayeredWindowAttributes(window, &key, &previous, &flags) ||
+      previous != alpha)
+    SetLayeredWindowAttributes(window, 0, alpha, LWA_ALPHA);
+}
+
+namespace {
+LRESULT CALLBACK SettingsPaneProc(HWND window, UINT message, WPARAM wParam,
+                                  LPARAM lParam) {
+  HWND owner = (HWND)GetWindowLongPtrW(window, GWLP_USERDATA);
+  if (message == WM_NCCREATE) {
+    auto *create = (CREATESTRUCTW *)lParam;
+    SetWindowLongPtrW(window, GWLP_USERDATA, (LONG_PTR)create->lpCreateParams);
+    return TRUE;
+  }
+  switch (message) {
+  case WM_COMMAND:
+  case WM_NOTIFY:
+  case WM_DRAWITEM:
+  case WM_MEASUREITEM:
+  case WM_CTLCOLORSTATIC:
+  case WM_CTLCOLOREDIT:
+  case WM_CTLCOLORBTN:
+  case WM_CTLCOLORLISTBOX:
+  case WM_MOUSEWHEEL:
+    return SendMessageW(owner, message, wParam, lParam);
+  case WM_PAINT: {
+    PAINTSTRUCT paint{};
+    HDC dc = BeginPaint(window, &paint);
+    BufferedPaint buffer(dc, paint.rcPaint);
+    FillRect(buffer.DC(), &paint.rcPaint, Ui().bgBrush);
+    buffer.Commit();
+    EndPaint(window, &paint);
+    return 0;
+  }
+  case WM_ERASEBKGND:
+    return 1;
+  }
+  return DefWindowProcW(window, message, wParam, lParam);
+}
+
+bool CreateSettingsPanes(HWND owner) {
+  std::vector<HWND> fields;
+  for (HWND child = GetWindow(owner, GW_CHILD); child;
+       child = GetWindow(child, GW_HWNDNEXT)) {
+    int id = GetDlgCtrlID(child);
+    if (id != IDC_SETTINGS_TITLE && id != IDC_SETTINGS_RESET &&
+        id != IDC_SETTINGS_CLOSE && id != IDC_SETTINGS_SAVE_STATUS &&
+        id != IDC_SETTINGS_RETRY)
+      fields.push_back(child);
+  }
+  WNDCLASSW type{};
+  type.hInstance = GetModuleHandleW(nullptr);
+  type.lpfnWndProc = SettingsPaneProc;
+  type.lpszClassName = L"AttendanceSettingsPane";
+  type.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+  RegisterClassW(&type);
+  DWORD style = WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
+  HWND viewport =
+      CreateWindowExW(WS_EX_CONTROLPARENT, type.lpszClassName, L"", style, 0, 0,
+                      1, 1, owner, (HMENU)4090, type.hInstance, owner);
+  if (!viewport)
+    return false;
+  HWND content =
+      CreateWindowExW(WS_EX_CONTROLPARENT, type.lpszClassName, L"", style, 0, 0,
+                      1, 1, viewport, (HMENU)4091, type.hInstance, owner);
+  if (!content) {
+    DestroyWindow(viewport);
+    return false;
+  }
+  if (!SetPropW(owner, L"Attendance.SettingsViewport", viewport) ||
+      !SetPropW(owner, L"Attendance.SettingsContent", content)) {
+    RemovePropW(owner, L"Attendance.SettingsViewport");
+    RemovePropW(owner, L"Attendance.SettingsContent");
+    DestroyWindow(viewport);
+    return false;
+  }
+  HWND after = HWND_TOP;
+  for (HWND field : fields) {
+    SetParent(field, content);
+    SetWindowPos(field, after, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOREDRAW);
+    after = field;
+  }
+  SetWindowPos(viewport, HWND_TOP, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOREDRAW);
+  return true;
+}
+} // namespace
+
 void FillSettingsCombos(HWND hwnd, bool refillLanguageAndFont = true);
 void ApplySettingsLanguage(HWND hwnd);
 int NormalizeScrollFrameRateInput(HWND hwnd);
@@ -41,7 +157,7 @@ void HideSettingsWindow();
 void ApplyFontListToSettings(HWND hwnd) {
   if (!hwnd || !IsWindow(hwnd))
     return;
-  HWND font = GetDlgItem(hwnd, IDC_SETTINGS_FONT);
+  HWND font = SettingsControl(hwnd, IDC_SETTINGS_FONT);
   if (!font)
     return;
   bool cacheReady = false;
@@ -49,7 +165,7 @@ void ApplyFontListToSettings(HWND hwnd) {
     std::lock_guard<std::mutex> lock(Fonts().fontEnumerationMutex);
     cacheReady = Fonts().fontCacheReady;
   }
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_FONT_LOADING),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_FONT_LOADING),
           cacheReady ? L"" : Tr(L"Loading fonts...", L"正在加载字体…"));
   if (SendMessageW(font, CB_GETDROPPEDSTATE, 0, 0)) {
     Fonts().fontComboRefreshPending = true;
@@ -99,22 +215,22 @@ void ApplyFontListToSettings(HWND hwnd) {
     std::lock_guard<std::mutex> lock(Fonts().fontEnumerationMutex);
     ready = Fonts().fontCacheReady;
   }
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_FONT_LOADING),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_FONT_LOADING),
           ready ? L"" : Tr(L"Loading fonts...", L"正在加载字体…"));
 }
 
 void FillSettingsCombos(HWND hwnd, bool refillLanguageAndFont) {
   RedrawScope redraw(hwnd);
-  HWND language = GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE);
-  HWND font = GetDlgItem(hwnd, IDC_SETTINGS_FONT);
-  HWND animation = GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LEVEL);
-  HWND particle = GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL);
-  HWND report = GetDlgItem(hwnd, IDC_SETTINGS_REPORT_TEMPLATE);
-  HWND theme = GetDlgItem(hwnd, IDC_SETTINGS_THEME);
-  HWND accent = GetDlgItem(hwnd, IDC_SETTINGS_ACCENT);
-  HWND textScale = GetDlgItem(hwnd, IDC_SETTINGS_TEXT_SCALE);
-  HWND density = GetDlgItem(hwnd, IDC_SETTINGS_DENSITY);
-  HWND autosave = GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_INTERVAL);
+  HWND language = SettingsControl(hwnd, IDC_SETTINGS_LANGUAGE);
+  HWND font = SettingsControl(hwnd, IDC_SETTINGS_FONT);
+  HWND animation = SettingsControl(hwnd, IDC_SETTINGS_ANIMATION_LEVEL);
+  HWND particle = SettingsControl(hwnd, IDC_SETTINGS_PARTICLE_LEVEL);
+  HWND report = SettingsControl(hwnd, IDC_SETTINGS_REPORT_TEMPLATE);
+  HWND theme = SettingsControl(hwnd, IDC_SETTINGS_THEME);
+  HWND accent = SettingsControl(hwnd, IDC_SETTINGS_ACCENT);
+  HWND textScale = SettingsControl(hwnd, IDC_SETTINGS_TEXT_SCALE);
+  HWND density = SettingsControl(hwnd, IDC_SETTINGS_DENSITY);
+  HWND autosave = SettingsControl(hwnd, IDC_SETTINGS_AUTOSAVE_INTERVAL);
 
   if (refillLanguageAndFont) {
     SendMessageW(language, CB_RESETCONTENT, 0, 0);
@@ -216,92 +332,94 @@ void ApplySettingsLanguage(HWND hwnd) {
   RedrawScope redraw(hwnd);
   std::wstring settingsTitle = Tr(L"Settings", L"\u8bbe\u7f6e");
   SetWindowTextW(hwnd, settingsTitle.c_str());
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_TITLE),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_TITLE),
           Tr(L"Settings", L"\u8bbe\u7f6e"));
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_LANG_LABEL),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_LANG_LABEL),
           Tr(L"Language", L"\u8bed\u8a00"));
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_FONT_LABEL),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_FONT_LABEL),
           Tr(L"Interface Font", L"\u754c\u9762\u5b57\u4f53"));
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LABEL),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_ANIMATION_LABEL),
           Tr(L"Animation level", L"\u52a8\u753b\u5f3a\u5ea6"));
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LABEL),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_PARTICLE_LABEL),
           Tr(L"Particle density", L"\u7c92\u5b50\u5bc6\u5ea6"));
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_REPORT_LABEL),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_REPORT_LABEL),
           Tr(L"Report template", L"\u62a5\u544a\u6a21\u677f"));
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLES), ParticleEffectsLabel());
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_RISK_ALERTS),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_PARTICLES),
+          ParticleEffectsLabel());
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_RISK_ALERTS),
           Tr(L"Enable risk student reminders",
              L"\u542f\u7528\u98ce\u9669\u5b66\u751f\u63d0\u9192"));
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_PROMPT),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_AUTOSAVE_PROMPT),
           Tr(L"Prompt for autosave recovery",
              L"\u542f\u52a8\u65f6\u63d0\u793a\u6062\u590d\u81ea\u52a8\u4fdd"
              L"\u5b58"));
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_COMMAND_PALETTE),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_COMMAND_PALETTE),
           Tr(L"Enable Ctrl+K command palette",
              L"\u542f\u7528 Ctrl+K \u547d\u4ee4\u9762\u677f"));
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_ADVANCED_FILTER),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_ADVANCED_FILTER),
           Tr(L"Enable advanced filter syntax",
              L"\u542f\u7528\u9ad8\u7ea7\u7b5b\u9009\u8bed\u6cd5"));
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_SMOOTH_SCROLL),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_SMOOTH_SCROLL),
           SmoothDropdownScrollingLabel());
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_THEME_LABEL),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_THEME_LABEL),
           Tr(L"Theme", L"\u4e3b\u9898"));
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_ACCENT_LABEL),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_ACCENT_LABEL),
           Tr(L"Accent tone", L"\u5f3a\u8c03\u8272\u8c03"));
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_TEXT_SCALE_LABEL),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_TEXT_SCALE_LABEL),
           Tr(L"Text size", L"\u6587\u5b57\u5927\u5c0f"));
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_DENSITY_LABEL),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_DENSITY_LABEL),
           Tr(L"Interface density", L"\u754c\u9762\u5bc6\u5ea6"));
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_LABEL),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_AUTOSAVE_LABEL),
           Tr(L"Autosave interval", L"\u81ea\u52a8\u4fdd\u5b58\u95f4\u9694"));
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS_LABEL),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_SCROLL_FPS_LABEL),
           ScrollFrameRateLabel());
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS_UNIT), L"FPS");
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_SCROLL_FPS_UNIT), L"FPS");
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_SCROLL_FPS),
           std::to_wstring(Settings().scrollAnimationFps.load()));
-  ConfigureEditMetrics(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS));
+  ConfigureEditMetrics(SettingsControl(hwnd, IDC_SETTINGS_SCROLL_FPS));
   SetText(
-      GetDlgItem(hwnd, IDC_SETTINGS_SHOW_STATS),
+      SettingsControl(hwnd, IDC_SETTINGS_SHOW_STATS),
       Tr(L"Show statistics cards", L"\u663e\u793a\u7edf\u8ba1\u5361\u7247"));
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_SHOW_HINT),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_SHOW_HINT),
           Tr(L"Show bottom usage hint",
              L"\u663e\u793a\u5e95\u90e8\u4f7f\u7528\u63d0\u793a"));
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_TABLE_GRID),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_TABLE_GRID),
           Tr(L"Show table grid lines",
              L"\u663e\u793a\u8868\u683c\u7f51\u683c\u7ebf"));
 
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_CLOSE), Tr(L"Close", L"\u5173\u95ed"));
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_RESET),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_CLOSE),
+          Tr(L"Close", L"\u5173\u95ed"));
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_RESET),
           Tr(L"Reset All Settings", L"\u91cd\u7f6e\u6240\u6709\u8bbe\u7f6e"));
-  SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE),
+  SetAccessibleName(SettingsControl(hwnd, IDC_SETTINGS_LANGUAGE),
                     Tr(L"Language", L"\u8bed\u8a00"));
-  SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_FONT),
+  SetAccessibleName(SettingsControl(hwnd, IDC_SETTINGS_FONT),
                     Tr(L"Interface Font", L"\u754c\u9762\u5b57\u4f53"));
-  SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LEVEL),
+  SetAccessibleName(SettingsControl(hwnd, IDC_SETTINGS_ANIMATION_LEVEL),
                     Tr(L"Animation level", L"\u52a8\u753b\u5f3a\u5ea6"));
-  SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL),
+  SetAccessibleName(SettingsControl(hwnd, IDC_SETTINGS_PARTICLE_LEVEL),
                     Tr(L"Particle density", L"\u7c92\u5b50\u5bc6\u5ea6"));
-  SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_REPORT_TEMPLATE),
+  SetAccessibleName(SettingsControl(hwnd, IDC_SETTINGS_REPORT_TEMPLATE),
                     Tr(L"Report template", L"\u62a5\u544a\u6a21\u677f"));
-  SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_THEME),
+  SetAccessibleName(SettingsControl(hwnd, IDC_SETTINGS_THEME),
                     Tr(L"Theme", L"\u4e3b\u9898"));
-  SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_ACCENT),
+  SetAccessibleName(SettingsControl(hwnd, IDC_SETTINGS_ACCENT),
                     Tr(L"Accent tone", L"\u5f3a\u8c03\u8272\u8c03"));
-  SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_TEXT_SCALE),
+  SetAccessibleName(SettingsControl(hwnd, IDC_SETTINGS_TEXT_SCALE),
                     Tr(L"Text size", L"\u6587\u5b57\u5927\u5c0f"));
-  SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_DENSITY),
+  SetAccessibleName(SettingsControl(hwnd, IDC_SETTINGS_DENSITY),
                     Tr(L"Interface density", L"\u754c\u9762\u5bc6\u5ea6"));
   SetAccessibleName(
-      GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_INTERVAL),
+      SettingsControl(hwnd, IDC_SETTINGS_AUTOSAVE_INTERVAL),
       Tr(L"Autosave interval", L"\u81ea\u52a8\u4fdd\u5b58\u95f4\u9694"));
-  SetAccessibleName(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS),
+  SetAccessibleName(SettingsControl(hwnd, IDC_SETTINGS_SCROLL_FPS),
                     ScrollFrameRateLabel());
   for (const auto &binding : SettingToggleBindings()) {
-    SendMessageW(GetDlgItem(hwnd, binding.id), BM_SETCHECK,
+    SendMessageW(SettingsControl(hwnd, binding.id), BM_SETCHECK,
                  *binding.value ? BST_CHECKED : BST_UNCHECKED, 0);
   }
   FillSettingsCombos(hwnd, !Ui().languageUpdateActive);
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_RETRY), Tr(L"Retry", L"重试"));
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_RETRY), Tr(L"Retry", L"重试"));
   SetSettingsSaveResult(!Ui().settingsSaveFailed);
 }
 
@@ -348,31 +466,31 @@ void ApplyLanguageAtomically(HWND settingsWindow) {
   if (Ui().quickRollCallWindow && IsWindow(Ui().quickRollCallWindow)) {
     SetWindowTextW(Ui().quickRollCallWindow,
                    Tr(L"Quick roll call", L"\u5feb\u901f\u70b9\u540d").c_str());
-    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_TITLE),
+    SetText(SettingsControl(Ui().quickRollCallWindow, IDC_QUICK_TITLE),
             Tr(L"Quick roll call", L"\u5feb\u901f\u70b9\u540d"));
-    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_NOTES_LABEL),
+    SetText(SettingsControl(Ui().quickRollCallWindow, IDC_QUICK_NOTES_LABEL),
             Tr(L"Notes:", L"\u5907\u6ce8\uff1a"));
-    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_PRESENT),
+    SetText(SettingsControl(Ui().quickRollCallWindow, IDC_QUICK_PRESENT),
             Tr(L"Present", L"\u51fa\u5e2d"));
-    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_ABSENT),
+    SetText(SettingsControl(Ui().quickRollCallWindow, IDC_QUICK_ABSENT),
             Tr(L"Absent", L"\u7f3a\u5e2d"));
-    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_LATE),
+    SetText(SettingsControl(Ui().quickRollCallWindow, IDC_QUICK_LATE),
             Tr(L"Late", L"\u8fdf\u5230"));
-    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_OTHER),
+    SetText(SettingsControl(Ui().quickRollCallWindow, IDC_QUICK_OTHER),
             Tr(L"Other", L"\u5176\u4ed6"));
-    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_PREVIOUS),
+    SetText(SettingsControl(Ui().quickRollCallWindow, IDC_QUICK_PREVIOUS),
             Tr(L"Previous", L"\u4e0a\u4e00\u4f4d"));
-    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_SKIP),
+    SetText(SettingsControl(Ui().quickRollCallWindow, IDC_QUICK_SKIP),
             Tr(L"Skip", L"\u8df3\u8fc7"));
-    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_FINISH),
+    SetText(SettingsControl(Ui().quickRollCallWindow, IDC_QUICK_FINISH),
             Tr(L"Finish", L"\u5b8c\u6210"));
-    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_CANCEL),
+    SetText(SettingsControl(Ui().quickRollCallWindow, IDC_QUICK_CANCEL),
             Tr(L"Cancel", L"\u53d6\u6d88"));
-    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_LEAVE),
+    SetText(SettingsControl(Ui().quickRollCallWindow, IDC_QUICK_LEAVE),
             Tr(L"Leave", L"请假"));
-    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_PENDING),
+    SetText(SettingsControl(Ui().quickRollCallWindow, IDC_QUICK_PENDING),
             Tr(L"Pending", L"未点名"));
-    SetText(GetDlgItem(Ui().quickRollCallWindow, IDC_QUICK_HINT),
+    SetText(SettingsControl(Ui().quickRollCallWindow, IDC_QUICK_HINT),
             Tr(L"Keys 1-6: Present, Absent, Late, Other, Leave, Pending; "
                L"arrows: Previous / Skip",
                L"数字键1至6选择六种状态，方向键上一位或跳过"));
@@ -390,7 +508,7 @@ void ApplyLanguageAtomically(HWND settingsWindow) {
 }
 
 int NormalizeScrollFrameRateInput(HWND hwnd) {
-  HWND edit = GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS);
+  HWND edit = SettingsControl(hwnd, IDC_SETTINGS_SCROLL_FPS);
   int current = std::clamp(Settings().scrollAnimationFps.load(), 60, 360);
   int normalized = current;
   std::wstring value = TrimWide(GetText(edit));
@@ -423,26 +541,27 @@ void ApplySettingsFromWindow(HWND hwnd) {
   UiTheme previousTheme = Settings().theme;
   AccentTone previousAccent = Settings().accentTone;
   UiTheme requestedTheme = Settings().theme;
-  int language = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_LANGUAGE),
+  int language = (int)SendMessageW(SettingsControl(hwnd, IDC_SETTINGS_LANGUAGE),
                                    CB_GETCURSEL, 0, 0);
-  int fontIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_FONT),
+  int fontIndex = (int)SendMessageW(SettingsControl(hwnd, IDC_SETTINGS_FONT),
                                     CB_GETCURSEL, 0, 0);
   int animationIndex = (int)SendMessageW(
-      GetDlgItem(hwnd, IDC_SETTINGS_ANIMATION_LEVEL), CB_GETCURSEL, 0, 0);
+      SettingsControl(hwnd, IDC_SETTINGS_ANIMATION_LEVEL), CB_GETCURSEL, 0, 0);
   int particleIndex = (int)SendMessageW(
-      GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL), CB_GETCURSEL, 0, 0);
+      SettingsControl(hwnd, IDC_SETTINGS_PARTICLE_LEVEL), CB_GETCURSEL, 0, 0);
   int reportIndex = (int)SendMessageW(
-      GetDlgItem(hwnd, IDC_SETTINGS_REPORT_TEMPLATE), CB_GETCURSEL, 0, 0);
-  int themeIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_THEME),
+      SettingsControl(hwnd, IDC_SETTINGS_REPORT_TEMPLATE), CB_GETCURSEL, 0, 0);
+  int themeIndex = (int)SendMessageW(SettingsControl(hwnd, IDC_SETTINGS_THEME),
                                      CB_GETCURSEL, 0, 0);
-  int accentIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_ACCENT),
-                                      CB_GETCURSEL, 0, 0);
+  int accentIndex = (int)SendMessageW(
+      SettingsControl(hwnd, IDC_SETTINGS_ACCENT), CB_GETCURSEL, 0, 0);
   int textScaleIndex = (int)SendMessageW(
-      GetDlgItem(hwnd, IDC_SETTINGS_TEXT_SCALE), CB_GETCURSEL, 0, 0);
-  int densityIndex = (int)SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_DENSITY),
-                                       CB_GETCURSEL, 0, 0);
-  int autosaveIndex = (int)SendMessageW(
-      GetDlgItem(hwnd, IDC_SETTINGS_AUTOSAVE_INTERVAL), CB_GETCURSEL, 0, 0);
+      SettingsControl(hwnd, IDC_SETTINGS_TEXT_SCALE), CB_GETCURSEL, 0, 0);
+  int densityIndex = (int)SendMessageW(
+      SettingsControl(hwnd, IDC_SETTINGS_DENSITY), CB_GETCURSEL, 0, 0);
+  int autosaveIndex =
+      (int)SendMessageW(SettingsControl(hwnd, IDC_SETTINGS_AUTOSAVE_INTERVAL),
+                        CB_GETCURSEL, 0, 0);
 
   if (language < 0 || language > (int)UiLanguage::ChineseTraditionalHongKong)
     language = 0;
@@ -470,7 +589,7 @@ void ApplySettingsFromWindow(HWND hwnd) {
 
   if (fontIndex >= 0) {
     std::wstring fontName =
-        GetComboSelectedText(GetDlgItem(hwnd, IDC_SETTINGS_FONT));
+        GetComboSelectedText(SettingsControl(hwnd, IDC_SETTINGS_FONT));
     if (!fontName.empty())
       Settings().fontFamily = fontName;
   }
@@ -507,7 +626,7 @@ void ApplySettingsFromWindow(HWND hwnd) {
     Ui().settingsScrollY = (int)Ui().settingsScrollTarget;
     Ui().settingsScrollCurrent = Ui().settingsScrollTarget;
     RemoveAnimationState(hwnd);
-    SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+    ApplySettingsOpacity(hwnd, 255);
     ResizeSettingsLayout(hwnd);
   }
   SaveSettingsWithFeedback(hwnd);
@@ -528,16 +647,21 @@ struct SettingsLayoutCache {
   std::vector<SettingsPlacement> placements;
   struct Applied {
     HWND control = nullptr;
-    int x = 0, top = 0, width = 0, height = 0, actualHeight = 0;
-    RECT clip{};
-    bool clipped = true;
+    int x = 0, top = 0, width = 0, height = 0;
   };
   std::vector<Applied> applied;
+  RECT viewportBounds{};
+  int contentWidth = -1, contentHeight = -1, contentY = INT_MIN;
+  double itemsProgress = -1;
   int scrollMaximum = -1, scrollPage = -1, scrollPosition = -1;
 } settingsLayout;
 void PositionSettingsContent(HWND hwnd,
                              const std::vector<SettingsPlacement> &placements,
                              int contentEnd) {
+  HWND viewport = (HWND)GetPropW(hwnd, L"Attendance.SettingsViewport");
+  HWND content = (HWND)GetPropW(hwnd, L"Attendance.SettingsContent");
+  if (!viewport || !content)
+    return;
   int bodyH = std::max(1, Ui().settingsBodyBottom - Ui().settingsBodyTop);
   int maximum = std::max(0, contentEnd + 16 - bodyH);
   Ui().settingsScrollY = std::clamp(Ui().settingsScrollY, 0, maximum);
@@ -545,84 +669,76 @@ void PositionSettingsContent(HWND hwnd,
       std::clamp(Ui().settingsScrollCurrent, 0.0, (double)maximum);
   Ui().settingsScrollTarget =
       std::clamp(Ui().settingsScrollTarget, 0.0, (double)maximum);
-  bool changed = false;
-  if (settingsLayout.applied.size() != placements.size())
-    settingsLayout.applied.resize(placements.size());
-  HDWP batch = BeginDeferWindowPos((int)placements.size());
-  std::vector<size_t> moved;
-  for (size_t index = 0; index < placements.size(); ++index) {
-    const auto &p = placements[index];
-    auto &applied = settingsLayout.applied[index];
-    HWND control = GetDlgItem(hwnd, p.id);
-    if (!control)
-      continue;
-    int offset =
-        Settings().animationLevel == AnimationLevel::Advanced
-            ? (int)std::lround(
-                  (1 -
-                   ItemEntrance(GetAnimationValue(hwnd, AnimChannel::Items, 1),
-                                p.group)) *
-                  8)
-            : 0;
-    int top = Ui().settingsBodyTop + p.y - Ui().settingsScrollY + offset;
-    if (applied.control != control || applied.x != p.x || applied.top != top ||
-        applied.width != p.w || applied.height != p.h) {
-      wchar_t type[24]{};
-      GetClassNameW(control, type, 24);
-      bool combo = lstrcmpiW(type, L"ComboBox") == 0;
-      bool resized = applied.control != control || applied.width != p.w ||
-                     applied.height != p.h;
-      applied.control = control;
-      applied.x = p.x;
-      applied.top = top;
-      applied.width = p.w;
-      applied.height = p.h;
-      if (resized)
-        applied.actualHeight = 0;
-      if (batch)
-        batch = DeferWindowPos(batch, control, nullptr, p.x, top, p.w,
-                               combo ? 430 : p.h,
-                               SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW |
-                                   (resized ? 0 : SWP_NOSIZE));
-      moved.push_back(index);
-      changed = true;
-    }
+  RECT bounds{0, Ui().settingsBodyTop, settingsLayout.width,
+              Ui().settingsBodyBottom};
+  if (!EqualRect(&bounds, &settingsLayout.viewportBounds)) {
+    SetWindowPos(viewport, nullptr, 0, bounds.top, bounds.right, bodyH,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+    settingsLayout.viewportBounds = bounds;
   }
-  if (batch)
-    EndDeferWindowPos(batch);
-  else
-    for (size_t index : moved) {
+  int height = std::max(bodyH, contentEnd + 16);
+  bool resized = settingsLayout.contentWidth != bounds.right ||
+                 settingsLayout.contentHeight != height;
+  if (resized || settingsLayout.contentY != -Ui().settingsScrollY) {
+    // Native parent clipping and one move replace per-field regions and moves.
+    SetWindowPos(content, nullptr, 0, -Ui().settingsScrollY, bounds.right,
+                 height,
+                 SWP_NOZORDER | SWP_NOACTIVATE | (resized ? 0 : SWP_NOSIZE));
+    settingsLayout.contentWidth = bounds.right;
+    settingsLayout.contentHeight = height;
+    settingsLayout.contentY = -Ui().settingsScrollY;
+  }
+  double itemsProgress = Settings().animationLevel == AnimationLevel::Advanced
+                             ? GetAnimationValue(hwnd, AnimChannel::Items, 1)
+                             : 1;
+  if (settingsLayout.applied.empty() ||
+      itemsProgress != settingsLayout.itemsProgress) {
+    settingsLayout.itemsProgress = itemsProgress;
+    if (settingsLayout.applied.size() != placements.size())
+      settingsLayout.applied.resize(placements.size());
+    std::vector<size_t> moved;
+    HDWP batch = BeginDeferWindowPos((int)placements.size());
+    for (size_t index = 0; index < placements.size(); ++index) {
       const auto &p = placements[index];
       auto &applied = settingsLayout.applied[index];
+      HWND control = SettingsControl(hwnd, p.id);
+      if (!control)
+        continue;
+      int offset =
+          Settings().animationLevel == AnimationLevel::Advanced
+              ? (int)std::lround((1 - ItemEntrance(itemsProgress, p.group)) * 8)
+              : 0;
+      int top = p.y + offset;
+      if (applied.control == control && applied.x == p.x &&
+          applied.top == top && applied.width == p.w && applied.height == p.h)
+        continue;
+      bool fieldResized = applied.control != control || applied.width != p.w ||
+                          applied.height != p.h;
+      applied = {control, p.x, top, p.w, p.h};
       wchar_t type[24]{};
-      GetClassNameW(applied.control, type, 24);
-      SetWindowPos(applied.control, nullptr, p.x, applied.top, p.w,
-                   lstrcmpiW(type, L"ComboBox") == 0 ? 430 : p.h,
-                   SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
+      GetClassNameW(control, type, 24);
+      if (batch)
+        batch = DeferWindowPos(batch, control, nullptr, p.x, top, p.w,
+                               lstrcmpiW(type, L"ComboBox") == 0 ? 430 : p.h,
+                               SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW |
+                                   (fieldResized ? 0 : SWP_NOSIZE));
+      moved.push_back(index);
     }
-  for (auto &applied : settingsLayout.applied) {
-    if (!applied.control)
-      continue;
-    if (!applied.actualHeight) {
-      RECT actual{};
-      GetWindowRect(applied.control, &actual);
-      applied.actualHeight = actual.bottom - actual.top;
-    }
-    int clipTop =
-        std::clamp(Ui().settingsBodyTop - applied.top, 0, applied.actualHeight);
-    int clipBottom = std::clamp(Ui().settingsBodyBottom - applied.top, clipTop,
-                                applied.actualHeight);
-    RECT clip{0, clipTop, applied.width, clipBottom};
-    bool clipped = clipTop != 0 || clipBottom != applied.actualHeight;
-    if (clipped != applied.clipped ||
-        (clipped && !EqualRect(&clip, &applied.clip))) {
-      HRGN region = clipped ? CreateRectRgnIndirect(&clip) : nullptr;
-      if (!SetWindowRgn(applied.control, region, FALSE) && region)
-        DeleteObject(region);
-      applied.clip = clip;
-      applied.clipped = clipped;
-      changed = true;
-    }
+    if (batch)
+      EndDeferWindowPos(batch);
+    else
+      for (size_t index : moved) {
+        const auto &p = placements[index];
+        const auto &applied = settingsLayout.applied[index];
+        wchar_t type[24]{};
+        GetClassNameW(applied.control, type, 24);
+        SetWindowPos(applied.control, nullptr, p.x, applied.top, p.w,
+                     lstrcmpiW(type, L"ComboBox") == 0 ? 430 : p.h,
+                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
+      }
+    if (!moved.empty())
+      RedrawWindow(content, nullptr, nullptr,
+                   RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE);
   }
   if (settingsLayout.scrollMaximum != maximum ||
       settingsLayout.scrollPage != bodyH ||
@@ -636,12 +752,6 @@ void PositionSettingsContent(HWND hwnd,
     settingsLayout.scrollMaximum = maximum;
     settingsLayout.scrollPage = bodyH;
     settingsLayout.scrollPosition = Ui().settingsScrollY;
-  }
-  if (changed) {
-    RECT body{0, Ui().settingsBodyTop, settingsLayout.width,
-              Ui().settingsBodyBottom};
-    RedrawWindow(hwnd, &body, nullptr,
-                 RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE);
   }
 }
 int WrappedHeight(HWND control, int width) {
@@ -678,6 +788,9 @@ void ScrollSettingsTo(HWND hwnd, int next, bool smooth) {
   info.fMask = SIF_ALL;
   GetScrollInfo(hwnd, SB_VERT, &info);
   next = std::clamp(next, 0, std::max(0, info.nMax - (int)info.nPage + 1));
+  if (smooth && Ui().settingsScrollStartMs &&
+      next == (int)Ui().settingsScrollTarget)
+    return;
   AdvanceSettingsScroll();
   Ui().settingsScrollStart = Ui().settingsScrollCurrent;
   Ui().settingsScrollTarget = next;
@@ -696,14 +809,15 @@ void ScrollSettingsTo(HWND hwnd, int next, bool smooth) {
 void SetSettingsSaveResult(bool saved) {
   Ui().settingsSaveFailed = !saved;
   HWND hwnd = Ui().settingsWindow;
-  if (!hwnd || !GetDlgItem(hwnd, IDC_SETTINGS_SAVE_STATUS))
+  if (!hwnd || !SettingsControl(hwnd, IDC_SETTINGS_SAVE_STATUS))
     return;
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_SAVE_STATUS),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_SAVE_STATUS),
           saved ? L""
                 : Tr(L"Settings not saved. Active for this session only.",
                      L"设置未保存，仅在本次运行生效。"));
-  ShowWindow(GetDlgItem(hwnd, IDC_SETTINGS_RETRY), saved ? SW_HIDE : SW_SHOW);
-  ShowWindow(GetDlgItem(hwnd, IDC_SETTINGS_SAVE_STATUS),
+  ShowWindow(SettingsControl(hwnd, IDC_SETTINGS_RETRY),
+             saved ? SW_HIDE : SW_SHOW);
+  ShowWindow(SettingsControl(hwnd, IDC_SETTINGS_SAVE_STATUS),
              saved ? SW_HIDE : SW_SHOW);
   ResizeSettingsLayout(hwnd);
 }
@@ -729,23 +843,24 @@ void ResizeSettingsLayout(HWND hwnd) {
   }
   RedrawScope redraw(hwnd);
   const int pad = 24, gap = 24;
-  int resetWidth = MeasuredTextWidth(GetDlgItem(hwnd, IDC_SETTINGS_RESET)) + 40;
+  int resetWidth =
+      MeasuredTextWidth(SettingsControl(hwnd, IDC_SETTINGS_RESET)) + 40;
   int closeWidth = std::max(
-      100, MeasuredTextWidth(GetDlgItem(hwnd, IDC_SETTINGS_CLOSE)) + 40);
+      100, MeasuredTextWidth(SettingsControl(hwnd, IDC_SETTINGS_CLOSE)) + 40);
   bool stacked = resetWidth + closeWidth + 12 > width - pad * 2;
   int buttonH = std::max(
-      40, MeasuredTextHeight(GetDlgItem(hwnd, IDC_SETTINGS_RESET)) + 16);
+      40, MeasuredTextHeight(SettingsControl(hwnd, IDC_SETTINGS_RESET)) + 16);
   int footerH = 24 + buttonH * (stacked ? 2 : 1) + (stacked ? 8 : 0) +
                 (Ui().settingsSaveFailed ? 72 : 0);
   Ui().settingsBodyTop = std::max(
-      72, MeasuredTextHeight(GetDlgItem(hwnd, IDC_SETTINGS_TITLE)) + 40);
+      72, MeasuredTextHeight(SettingsControl(hwnd, IDC_SETTINGS_TITLE)) + 40);
   Ui().settingsBodyBottom =
       std::max(Ui().settingsBodyTop + 1, height - footerH);
   int columns = width >= 800 ? 2 : 1,
       fieldWidth =
           std::max(1, (width - pad * 2 - gap * (columns - 1)) / columns);
   auto fixed = [&](int id, int x, int y, int w, int h) {
-    HWND control = GetDlgItem(hwnd, id);
+    HWND control = SettingsControl(hwnd, id);
     if (!control)
       return;
     SetWindowRgn(control, nullptr, FALSE);
@@ -785,8 +900,8 @@ void ResizeSettingsLayout(HWND hwnd) {
     for (int col = 0; col < columns && row + col < (int)std::size(fields);
          ++col)
       labelH = std::max(
-          labelH,
-          WrappedHeight(GetDlgItem(hwnd, fields[row + col].first), fieldWidth));
+          labelH, WrappedHeight(SettingsControl(hwnd, fields[row + col].first),
+                                fieldWidth));
     int valueH = std::max(40, ComboItemHeight() + 12);
     for (int col = 0; col < columns && row + col < (int)std::size(fields);
          ++col) {
@@ -817,9 +932,10 @@ void ResizeSettingsLayout(HWND hwnd) {
     int rowH = Settings().layoutDensity == LayoutDensity::Compact ? 36 : 40;
     for (int col = 0; col < columns && row + col < (int)std::size(toggles);
          ++col)
-      rowH = std::max(rowH, WrappedHeight(GetDlgItem(hwnd, toggles[row + col]),
-                                          fieldWidth - 36) +
-                                16);
+      rowH = std::max(rowH,
+                      WrappedHeight(SettingsControl(hwnd, toggles[row + col]),
+                                    fieldWidth - 36) +
+                          16);
     for (int col = 0; col < columns && row + col < (int)std::size(toggles);
          ++col)
       placements.push_back({toggles[row + col], pad + col * (fieldWidth + gap),
@@ -838,6 +954,9 @@ void ResizeSettingsLayout(HWND hwnd) {
   settingsLayout.contentEnd = y;
   settingsLayout.placements = std::move(placements);
   settingsLayout.applied.clear();
+  settingsLayout.viewportBounds = {};
+  settingsLayout.contentWidth = settingsLayout.contentHeight = -1;
+  settingsLayout.contentY = INT_MIN;
   settingsLayout.scrollMaximum = settingsLayout.scrollPage =
       settingsLayout.scrollPosition = -1;
   SetPropW(hwnd, L"Attendance.LayoutReady", (HANDLE)1);
@@ -846,7 +965,7 @@ void ResizeSettingsLayout(HWND hwnd) {
 }
 void EnsureSettingsControlVisible(HWND control) {
   HWND hwnd = Ui().settingsWindow;
-  if (!hwnd || !control || GetParent(control) != hwnd)
+  if (!hwnd || !control || !IsChild(hwnd, control))
     return;
   int id = GetDlgCtrlID(control);
   if (id == IDC_SETTINGS_CLOSE || id == IDC_SETTINGS_RESET ||
@@ -978,12 +1097,12 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam,
                    IDC_SETTINGS_RISK_ALERTS,     IDC_SETTINGS_AUTOSAVE_PROMPT,
                    IDC_SETTINGS_COMMAND_PALETTE, IDC_SETTINGS_ADVANCED_FILTER,
                    IDC_SETTINGS_RESET,           IDC_SETTINGS_CLOSE}) {
-      HWND control = GetDlgItem(hwnd, id);
+      HWND control = SettingsControl(hwnd, id);
       SetWindowPos(control, after, 0, 0, 0, 0,
                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOREDRAW);
       after = control;
     }
-    SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), WM_SETFONT,
+    SendMessageW(SettingsControl(hwnd, IDC_SETTINGS_TITLE), WM_SETFONT,
                  (WPARAM)Ui().titleFont, TRUE);
     MakeSettingsControl(hwnd, L"STATIC", L"", SS_LEFT | SS_NOPREFIX,
                         IDC_SETTINGS_SAVE_STATUS);
@@ -991,6 +1110,8 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam,
                         IDC_SETTINGS_RETRY);
     MakeSettingsControl(hwnd, L"STATIC", L"", SS_LEFT | SS_NOPREFIX,
                         IDC_SETTINGS_FONT_LOADING);
+    if (!CreateSettingsPanes(hwnd))
+      return -1;
     ApplySettingsLanguage(hwnd);
     ResizeSettingsLayout(hwnd);
     return 0;
@@ -1051,9 +1172,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam,
       return 0;
     }
     if (HIWORD(wParam) == CBN_DROPDOWN) {
-      RestartAnimation((HWND)lParam, AnimChannel::ComboOpen, 1.0,
-                       Visual::OpenMs);
-      ApplyComboDropDownTheme((HWND)lParam);
+      StartAnimation((HWND)lParam, AnimChannel::ComboOpen, 1.0, Visual::OpenMs);
       return 0;
     }
     if (HIWORD(wParam) == CBN_CLOSEUP) {
@@ -1104,7 +1223,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam,
          LOWORD(wParam) == IDC_SETTINGS_SMOOTH_SCROLL) &&
         HIWORD(wParam) == BN_CLICKED) {
       int id = LOWORD(wParam);
-      HWND toggle = GetDlgItem(hwnd, id);
+      HWND toggle = SettingsControl(hwnd, id);
       bool *value = FindSettingToggleValue(id);
       if (!value)
         return 0;
@@ -1113,7 +1232,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam,
       SendMessageW(toggle, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED,
                    0);
       if (id == IDC_SETTINGS_PARTICLES) {
-        EnableWindow(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL),
+        EnableWindow(SettingsControl(hwnd, IDC_SETTINGS_PARTICLE_LEVEL),
                      checked ? TRUE : FALSE);
       }
       if (id == IDC_SETTINGS_SMOOTH_SCROLL && !checked) {
@@ -1149,10 +1268,10 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam,
         if (id == IDC_SETTINGS_SHOW_STATS) {
           for (int card : {IDC_STAT_TOTAL, IDC_STAT_ATTENDANCE, IDC_STAT_ISSUES,
                            IDC_STAT_VISIBLE})
-            ShowWindow(GetDlgItem(Ui().hwnd, card),
+            ShowWindow(SettingsControl(Ui().hwnd, card),
                        checked ? SW_SHOW : SW_HIDE);
         } else
-          ShowWindow(GetDlgItem(Ui().hwnd, IDC_HINT),
+          ShowWindow(SettingsControl(Ui().hwnd, IDC_HINT),
                      checked ? SW_SHOW : SW_HIDE);
         ResizeLayout(Ui().hwnd);
       }
@@ -1177,7 +1296,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam,
       if (ThemedMessageBox(hwnd, resetMsg, resetTitle, true) == IDYES) {
         UiTheme previousTheme = Settings().theme;
         auto operation =
-            BeginOperation(GetDlgItem(hwnd, IDC_SETTINGS_RESET),
+            BeginOperation(SettingsControl(hwnd, IDC_SETTINGS_RESET),
                            Tr(L"Reset All Settings", L"重置所有设置"));
         if (!ResetSettings()) {
           FinishOperation(operation, OperationPhase::Failure,
@@ -1194,7 +1313,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam,
           ApplyVisualSettings();
         }
         EnumChildWindows(hwnd, ApplyFontToChild, 0);
-        SendMessageW(GetDlgItem(hwnd, IDC_SETTINGS_TITLE), WM_SETFONT,
+        SendMessageW(SettingsControl(hwnd, IDC_SETTINGS_TITLE), WM_SETFONT,
                      (WPARAM)Ui().titleFont, TRUE);
         ApplySettingsLanguage(hwnd);
         ResizeSettingsLayout(hwnd);
@@ -1265,7 +1384,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam,
           IDC_SETTINGS_ACCENT,          IDC_SETTINGS_TEXT_SCALE,
           IDC_SETTINGS_DENSITY,         IDC_SETTINGS_AUTOSAVE_INTERVAL};
       for (int id : comboIds) {
-        HWND combo = GetDlgItem(hwnd, id);
+        HWND combo = SettingsControl(hwnd, id);
         if (combo && SendMessageW(combo, CB_GETDROPPEDSTATE, 0, 0)) {
           SendMessageW(combo, CB_SHOWDROPDOWN, FALSE, 0);
           return 0;
@@ -1281,12 +1400,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam,
       return 0;
     AdvanceSettingsScroll();
     double reveal = GetAnimationValue(hwnd, AnimChannel::Reveal, 1);
-    BYTE alpha = (BYTE)std::lround(reveal * 255), previous = 255;
-    DWORD flags = 0;
-    COLORREF key = 0;
-    if (!GetLayeredWindowAttributes(hwnd, &key, &previous, &flags) ||
-        previous != alpha)
-      SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA);
+    ApplySettingsOpacity(hwnd, (BYTE)std::lround(reveal * 255));
     ResizeSettingsLayout(hwnd);
     return 0;
   }
@@ -1309,6 +1423,9 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam,
     HideSettingsWindow();
     return 0;
   case WM_DESTROY:
+    Ui().settingsClosing = true;
+    RemovePropW(hwnd, L"Attendance.SettingsContent");
+    RemovePropW(hwnd, L"Attendance.SettingsViewport");
     RemoveAnimationState(hwnd);
     Ui().settingsWindow = nullptr;
     return 0;
@@ -1336,8 +1453,7 @@ HWND EnsureSettingsWindowCreated() {
 
   std::wstring settingsTitle = Tr(L"Settings", L"\u8bbe\u7f6e");
   Ui().settingsWindow = CreateWindowExW(
-      WS_EX_CONTROLPARENT | WS_EX_COMPOSITED | WS_EX_LAYERED, className,
-      settingsTitle.c_str(),
+      WS_EX_CONTROLPARENT, className, settingsTitle.c_str(),
       WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN | WS_VSCROLL,
       CW_USEDEFAULT, CW_USEDEFAULT, 560, 730, Ui().hwnd, nullptr, instance,
       nullptr);
@@ -1363,13 +1479,13 @@ void SyncSettingsWindowState(HWND hwnd) {
     return;
   RedrawScope redraw(hwnd);
   for (const auto &binding : SettingToggleBindings()) {
-    SendMessageW(GetDlgItem(hwnd, binding.id), BM_SETCHECK,
+    SendMessageW(SettingsControl(hwnd, binding.id), BM_SETCHECK,
                  *binding.value ? BST_CHECKED : BST_UNCHECKED, 0);
   }
   FillSettingsCombos(hwnd, false);
-  SetText(GetDlgItem(hwnd, IDC_SETTINGS_SCROLL_FPS),
+  SetText(SettingsControl(hwnd, IDC_SETTINGS_SCROLL_FPS),
           std::to_wstring(Settings().scrollAnimationFps.load()));
-  EnableWindow(GetDlgItem(hwnd, IDC_SETTINGS_PARTICLE_LEVEL),
+  EnableWindow(SettingsControl(hwnd, IDC_SETTINGS_PARTICLE_LEVEL),
                Settings().particlesEnabled ? TRUE : FALSE);
   ResizeSettingsLayout(hwnd);
   ApplyFontListToSettings(hwnd);
@@ -1387,7 +1503,7 @@ void HideSettingsWindow() {
       IDC_SETTINGS_ACCENT,          IDC_SETTINGS_TEXT_SCALE,
       IDC_SETTINGS_DENSITY,         IDC_SETTINGS_AUTOSAVE_INTERVAL};
   for (int id : comboIds) {
-    HWND combo = GetDlgItem(Ui().settingsWindow, id);
+    HWND combo = SettingsControl(Ui().settingsWindow, id);
     if (combo)
       SendMessageW(combo, CB_SHOWDROPDOWN, FALSE, 0);
   }
@@ -1399,6 +1515,8 @@ void HideSettingsWindow() {
   Ui().settingsScrollStartMs = 0;
   Ui().settingsClosing = true;
   double visible = GetAnimationValue(hwnd, AnimChannel::Reveal, 1);
+  if (Settings().animationLevel != AnimationLevel::Off && visible > .001)
+    ApplySettingsOpacity(hwnd, (BYTE)std::lround(visible * 255));
   ++Ui().settingsCloseSerial;
   StartAnimation(hwnd, AnimChannel::Reveal, 0, Visual::CloseMs, true,
                  Ui().settingsCloseSerial);
@@ -1424,7 +1542,7 @@ void ShowSettingsWindow() {
     SetForegroundWindow(settings);
     return;
   }
-  SetLayeredWindowAttributes(settings, 0, 0, LWA_ALPHA);
+  ApplySettingsOpacity(settings, 0);
   RemovePropW(settings, L"Attendance.SettingsHidden");
   SendMessageW(settings, WM_SETREDRAW, TRUE, 0);
   ShowWindow(settings, SW_HIDE);
@@ -1436,9 +1554,8 @@ void ShowSettingsWindow() {
   RemoveAnimationState(settings);
   SyncSettingsWindowState(settings);
   StartWindowReveal(settings, Visual::OpenMs);
-  SetLayeredWindowAttributes(
-      settings, 0, Settings().animationLevel == AnimationLevel::Off ? 255 : 0,
-      LWA_ALPHA);
+  ApplySettingsOpacity(
+      settings, Settings().animationLevel == AnimationLevel::Off ? 255 : 0);
   ShowWindow(Ui().settingsWindow, SW_SHOW);
   RedrawWindow(Ui().settingsWindow, nullptr, nullptr,
                RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE | RDW_UPDATENOW);

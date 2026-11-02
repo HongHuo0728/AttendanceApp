@@ -9,6 +9,7 @@
 #include "ui/popup_exit.h"
 #include "ui/popup_menu.h"
 #include "ui/redraw.h"
+#include "ui/settings_window.h"
 #include "ui/state.h"
 #include "ui/theme.h"
 
@@ -26,6 +27,7 @@ void AdvanceComboListScroll(HWND list, ComboListScrollState &state,
 int ComboListIndexAtPoint(HWND list, const ComboListScrollState &state, int y);
 void PaintSmoothComboList(HWND list, HDC target, ComboListScrollState &state);
 void NotifyComboSelection(HWND combo, int index);
+void ShowThemedComboPopup(HWND combo);
 LRESULT CALLBACK ComboListScrollProc(HWND hwnd, UINT msg, WPARAM wParam,
                                      LPARAM lParam, UINT_PTR, DWORD_PTR);
 void EnableComboListSmoothScroll(HWND combo, HWND list);
@@ -494,11 +496,45 @@ void StopSmoothScrollingNow() {
 
 LRESULT CALLBACK ComboPaintProc(HWND hwnd, UINT msg, WPARAM wParam,
                                 LPARAM lParam, UINT_PTR, DWORD_PTR) {
+  bool themed = (GetWindowLongPtrW(hwnd, GWL_STYLE) & 3) == CBS_DROPDOWNLIST;
   switch (msg) {
+  case CB_GETDROPPEDSTATE:
+    if (themed)
+      return GetPropW(hwnd, L"Attendance.ComboPopupOpen") != nullptr;
+    break;
+  case CB_SHOWDROPDOWN:
+    if (themed) {
+      if (wParam)
+        ShowThemedComboPopup(hwnd);
+      else if (HWND popup = (HWND)GetPropW(hwnd, L"Attendance.ComboPopup"))
+        SendMessageW(popup, WM_CANCELMODE, 0, 0);
+      return 0;
+    }
+    break;
+  case WM_LBUTTONDOWN:
+  case WM_LBUTTONDBLCLK:
+    if (themed) {
+      ShowThemedComboPopup(hwnd);
+      return 0;
+    }
+    break;
+  case WM_KEYDOWN:
+  case WM_SYSKEYDOWN:
+    if (themed && (wParam == VK_F4 || wParam == VK_SPACE ||
+                   ((GetKeyState(VK_MENU) & 0x8000) &&
+                    (wParam == VK_DOWN || wParam == VK_UP)))) {
+      ShowThemedComboPopup(hwnd);
+      return 0;
+    }
+    break;
+  case WM_CHAR:
+    if (themed && (wParam == VK_SPACE || wParam == VK_RETURN))
+      return 0;
+    break;
   case WM_MOUSEWHEEL:
-    if (GetParent(hwnd) == Ui().settingsWindow &&
+    if (IsSettingsControl(hwnd) &&
         !SendMessageW(hwnd, CB_GETDROPPEDSTATE, 0, 0))
-      return SendMessageW(GetParent(hwnd), msg, wParam, lParam);
+      return SendMessageW(Ui().settingsWindow, msg, wParam, lParam);
     break;
   case WM_APP_COMMIT_COMBO_SELECTION:
     SendMessageW(hwnd, CB_SHOWDROPDOWN, FALSE, 0);
@@ -556,6 +592,49 @@ LRESULT CALLBACK ComboPaintProc(HWND hwnd, UINT msg, WPARAM wParam,
   return DefSubclassProc(hwnd, msg, wParam, lParam);
 }
 
+void ShowThemedComboPopup(HWND combo) {
+  if (!IsWindowEnabled(combo) || GetPropW(combo, L"Attendance.ComboPopupOpen"))
+    return;
+  int count = (int)SendMessageW(combo, CB_GETCOUNT, 0, 0);
+  if (count <= 0)
+    return;
+  std::vector<ThemedMenuItem> items;
+  items.reserve(count);
+  for (int index = 0; index < count; ++index) {
+    int length = (int)SendMessageW(combo, CB_GETLBTEXTLEN, index, 0);
+    if (length < 0)
+      return;
+    std::wstring text((size_t)length + 1, L'\0');
+    SendMessageW(combo, CB_GETLBTEXT, index, (LPARAM)text.data());
+    text.resize(length);
+    items.push_back({index + 1, std::move(text), false});
+  }
+  SetFocus(combo);
+  RemovePropW(combo, L"Attendance.ComboFocusMoved");
+  SetPropW(combo, L"Attendance.ComboPopupOpen", (HANDLE)1);
+  NotifyWinEvent(EVENT_OBJECT_STATECHANGE, combo, OBJID_CLIENT, CHILDID_SELF);
+  HWND parent = GetParent(combo);
+  int id = GetDlgCtrlID(combo);
+  StartAnimation(combo, AnimChannel::ComboOpen, 1, Visual::OpenMs);
+  SendMessageW(parent, WM_COMMAND, MAKEWPARAM(id, CBN_DROPDOWN), (LPARAM)combo);
+  int selected = ShowThemedPopupMenu(
+      combo, items, {true, (int)SendMessageW(combo, CB_GETCURSEL, 0, 0)});
+  if (!IsWindow(combo))
+    return;
+  RemovePropW(combo, L"Attendance.ComboPopupOpen");
+  NotifyWinEvent(EVENT_OBJECT_STATECHANGE, combo, OBJID_CLIENT, CHILDID_SELF);
+  // Commit against the same item list before a deferred font-cache refresh.
+  if (selected > 0)
+    NotifyComboSelection(combo, selected - 1);
+  SendMessageW(parent, WM_COMMAND,
+               MAKEWPARAM(id, selected > 0 ? CBN_SELENDOK : CBN_SELENDCANCEL),
+               (LPARAM)combo);
+  SendMessageW(parent, WM_COMMAND, MAKEWPARAM(id, CBN_CLOSEUP), (LPARAM)combo);
+  if (!RemovePropW(combo, L"Attendance.ComboFocusMoved") &&
+      IsWindowVisible(combo) && IsWindowEnabled(combo))
+    SetFocus(combo);
+}
+
 void ApplyComboDropDownTheme(HWND combo) {
   if (!combo)
     return;
@@ -565,6 +644,8 @@ void ApplyComboDropDownTheme(HWND combo) {
     return;
 
   ApplyNativeControlTheme(combo);
+  if ((GetWindowLongPtrW(combo, GWL_STYLE) & 3) == CBS_DROPDOWNLIST)
+    return;
   if (info.hwndItem)
     ApplyNativeControlTheme(info.hwndItem);
   if (info.hwndList) {

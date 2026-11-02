@@ -56,6 +56,8 @@ RECT ThemedMenuScrollThumb(const ThemedMenuState *state) {
   return RECT{state->width - 9, top, state->width - 5, top + height};
 }
 int ThemedMenuItemTop(const ThemedMenuState *state, int index) {
+  if (index >= 0 && index < (int)state->itemTops.size())
+    return state->itemTops[index];
   int y = THEMED_MENU_PAD_Y;
   for (int i = 0; i < index; ++i) {
     y += MenuRowHeight(state, i);
@@ -295,17 +297,17 @@ void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState *state) {
   const int contentTop = ThemedMenuContentTop(state);
   const int contentBottom = ThemedMenuContentBottom(state);
   const int slideOffset = 0;
+  const double itemsProgress = GetAnimationValue(hwnd, AnimChannel::Items, 1);
   SaveDC(hdc);
   IntersectClipRect(hdc, 0, contentTop, rc.right, contentBottom);
   for (int i = 0; i < (int)state->items.size(); ++i) {
-    double itemProgress =
-        ItemEntrance(GetAnimationValue(hwnd, AnimChannel::Items, 1),
-                     std::max(0, i - state->scrollY / THEMED_MENU_ITEM_H));
     int top =
         ThemedMenuItemTop(state, i) - state->scrollY + contentTop + slideOffset;
     int itemHeight = MenuRowHeight(state, i);
     if (top + itemHeight <= contentTop || top >= contentBottom)
       continue;
+    double itemProgress = ItemEntrance(
+        itemsProgress, std::max(0, i - state->scrollY / THEMED_MENU_ITEM_H));
     if (state->items[i].separator) {
       DrawSoftDivider(hdc, 12, rc.right - 12, top + 6);
       continue;
@@ -326,6 +328,19 @@ void PaintThemedPopupMenuContent(HWND hwnd, HDC hdc, ThemedMenuState *state) {
     RECT textRc = itemRc;
     textRc.left += 16;
     textRc.right -= state->scrollable ? 26 : 16;
+    if (state->comboAnchor) {
+      textRc.left += 20;
+      if (i == state->checkedIndex) {
+        HPEN tick = CreatePen(PS_SOLID, 2, Ui().COLOR_ACCENT);
+        HGDIOBJ old = SelectObject(hdc, tick);
+        int middle = top + itemHeight / 2;
+        MoveToEx(hdc, 15, middle, nullptr);
+        LineTo(hdc, 19, middle + 4);
+        LineTo(hdc, 26, middle - 4);
+        SelectObject(hdc, old);
+        DeleteObject(tick);
+      }
+    }
     SetTextColor(hdc,
                  BlendColor(Ui().COLOR_MUTED, Ui().COLOR_TEXT, itemProgress));
     RECT measured{0, 0, textRc.right - textRc.left, 0};
@@ -416,6 +431,9 @@ void CloseThemedPopupMenu(HWND hwnd, ThemedMenuState *state, int selected) {
     return;
   state->selected = selected;
   state->closing = true;
+  if (state->comboAnchor && IsWindow(state->comboAnchor))
+    StartAnimation(state->comboAnchor, AnimChannel::ComboOpen, 0,
+                   Visual::CloseMs);
   ReleaseCapture();
   BeginAnimatedClose(hwnd, Visual::CloseMs);
 }
@@ -550,6 +568,20 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam,
       return 0;
     }
     if (state && !state->closing) {
+      if (state->comboAnchor && (wParam == VK_F4 || wParam == VK_TAB)) {
+        CloseThemedPopupMenu(hwnd, state, 0);
+        if (wParam == VK_TAB) {
+          HWND owner = GetAncestor(state->comboAnchor, GA_ROOT);
+          HWND next = GetNextDlgTabItem(owner, state->comboAnchor,
+                                        (GetKeyState(VK_SHIFT) & 0x8000) != 0);
+          if (next) {
+            SetPropW(state->comboAnchor, L"Attendance.ComboFocusMoved",
+                     (HANDLE)1);
+            SetFocus(next);
+          }
+        }
+        return 0;
+      }
       if (wParam == VK_RETURN || wParam == VK_SPACE) {
         if (state->hover >= 0 && state->hover < (int)state->items.size() &&
             !state->items[state->hover].separator) {
@@ -586,6 +618,37 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam,
       }
     }
     break;
+  case WM_SYSKEYDOWN:
+    if (state && state->comboAnchor &&
+        (wParam == VK_UP || wParam == VK_DOWN || wParam == VK_F4)) {
+      CloseThemedPopupMenu(hwnd, state, 0);
+      return 0;
+    }
+    break;
+  case WM_CHAR:
+    if (state && state->comboAnchor && !state->closing && wParam >= 32) {
+      uint64_t now = AnimationNowMs();
+      if (now - state->typeAheadMs > 1000 || state->typeAhead.size() >= 64)
+        state->typeAhead.clear();
+      state->typeAheadMs = now;
+      state->typeAhead.push_back((wchar_t)towupper((wchar_t)wParam));
+      for (int attempt = 0; attempt < (int)state->items.size(); ++attempt) {
+        int index =
+            (std::max(0, state->hover) + attempt) % (int)state->items.size();
+        auto text = state->items[index].text;
+        std::transform(text.begin(), text.end(), text.begin(),
+                       [](wchar_t ch) { return (wchar_t)towupper(ch); });
+        if (text.rfind(state->typeAhead, 0) == 0) {
+          SelectThemedMenuItem(hwnd, state, index);
+          break;
+        }
+      }
+      return 0;
+    }
+    break;
+  case WM_CANCELMODE:
+    CloseThemedPopupMenu(hwnd, state, 0);
+    return 0;
   case WM_ACTIVATE:
     if (LOWORD(wParam) == WA_INACTIVE && state && !state->done &&
         !state->closing) {
@@ -660,11 +723,16 @@ int MeasureThemedMenuWidth(const std::vector<ThemedMenuItem> &items) {
       std::max(160, (int)(monitor.rcWork.right - monitor.rcWork.left) - 32));
 }
 
-int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem> &items) {
+int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem> &items,
+                        const ThemedMenuOptions &options) {
   if (!button || items.empty())
     return 0;
   ThemedMenuState state;
   state.items = items;
+  state.comboAnchor = options.comboChoice ? button : nullptr;
+  state.checkedIndex = options.selectedIndex;
+  state.hover = options.selectedIndex;
+  state.keyboardMode = options.selectedIndex >= 0;
   state.mainScrollX = Ui().scrollX;
   state.mainScrollY = Ui().scrollY;
   ++Ui().openThemedPopupMenus;
@@ -673,10 +741,12 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem> &items) {
   RECT buttonRc{};
   GetWindowRect(button, &buttonRc);
   int width = MeasureThemedMenuWidth(items);
+  if (options.comboChoice)
+    width = std::max(width + 20, (int)(buttonRc.right - buttonRc.left));
   HDC measureDc = GetDC(button);
   HGDIOBJ oldFont = SelectObject(measureDc, Ui().font);
   for (const auto &item : items) {
-    RECT text{0, 0, std::max(1, width - 40), 0};
+    RECT text{0, 0, std::max(1, width - (options.comboChoice ? 76 : 40)), 0};
     DrawTextW(measureDc, item.text.c_str(), -1, &text,
               DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
     state.itemHeights.push_back(
@@ -685,9 +755,16 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem> &items) {
   }
   SelectObject(measureDc, oldFont);
   ReleaseDC(button, measureDc);
+  int rowTop = THEMED_MENU_PAD_Y;
+  for (int index = 0; index < (int)items.size(); ++index) {
+    state.itemTops.push_back(rowTop);
+    rowTop += MenuRowHeight(&state, index);
+  }
   state.contentHeight = ThemedMenuTotalHeight(&state);
   int height = state.contentHeight;
   int x = buttonRc.right - width;
+  if (options.comboChoice)
+    x = buttonRc.left;
   int y = buttonRc.bottom + 4;
 
   HMONITOR monitor = MonitorFromRect(&buttonRc, MONITOR_DEFAULTTONEAREST);
@@ -715,10 +792,11 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem> &items) {
   state.width = width;
   state.height = height;
 
-  HWND popup = CreateWindowExW(
-      WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
-      L"AttendanceThemedPopupMenu", L"", WS_POPUP, state.finalX, state.finalY,
-      width, height, Ui().hwnd, nullptr, GetModuleHandleW(nullptr), &state);
+  HWND popup =
+      CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+                      L"AttendanceThemedPopupMenu", L"", WS_POPUP, state.finalX,
+                      state.finalY, width, height, GetAncestor(button, GA_ROOT),
+                      nullptr, GetModuleHandleW(nullptr), &state);
   if (!popup) {
     --Ui().openThemedPopupMenus;
     return 0;
@@ -727,6 +805,10 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem> &items) {
   if (y < buttonRc.top)
     SetPropW(popup, L"Attendance.PopupUp", (HANDLE)1);
   StartWindowReveal(popup, Visual::OpenMs);
+  if (options.comboChoice) {
+    SetPropW(button, L"Attendance.ComboPopup", popup);
+    EnsureThemedMenuItemVisible(popup, &state, options.selectedIndex);
+  }
   ShowWindow(popup, SW_SHOWNOACTIVATE);
   ApplyThemedMenuReveal(popup, &state);
   SetCapture(popup);
@@ -742,8 +824,11 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem> &items) {
     if (messageResult == -1)
       break;
     if ((msg.message == WM_KEYDOWN || msg.message == WM_SYSKEYDOWN ||
-         msg.message == WM_MOUSEWHEEL) &&
+         msg.message == WM_MOUSEWHEEL || msg.message == WM_CHAR) &&
         msg.hwnd != popup) {
+      if (state.comboAnchor && msg.message == WM_KEYDOWN &&
+          msg.wParam != VK_RETURN && msg.wParam != VK_SPACE)
+        TranslateMessage(&msg);
       SendMessageW(popup, msg.message, msg.wParam, msg.lParam);
       continue;
     }
@@ -753,6 +838,10 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem> &items) {
   --Ui().openThemedPopupMenus;
   if (IsWindow(popup))
     DestroyWindow(popup);
+  if (options.comboChoice && IsWindow(button)) {
+    RemovePropW(button, L"Attendance.ComboPopup");
+    StartAnimation(button, AnimChannel::ComboOpen, 0, Visual::CloseMs);
+  }
   InvalidateRect(button, nullptr, FALSE);
   if (Ui().scrollX != state.mainScrollX || Ui().scrollY != state.mainScrollY) {
     Ui().scrollX = state.mainScrollX;

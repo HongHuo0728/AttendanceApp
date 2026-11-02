@@ -18,6 +18,81 @@ void SyncSettingsWindowState(HWND);
 struct PaintProbe {
   int text = 0, paint = 0, reset = 0, theme = 0, position = 0;
 };
+
+struct ComboPopupProbe {
+  HWND combo = nullptr;
+  bool commit = false, shared = false, nativeHidden = false;
+  bool opened = false, closed = false, timedOut = false;
+  int phase = 0;
+  uint64_t deadline = 0;
+  double closeStart = 0;
+};
+void CALLBACK ObserveComboPopup(HWND owner, UINT, UINT_PTR, DWORD) {
+  auto *probe = (ComboPopupProbe *)GetPropW(owner, L"Test.ComboPopupProbe");
+  if (!probe)
+    return;
+  HWND popup = (HWND)GetPropW(probe->combo, L"Attendance.ComboPopup");
+  if (!popup || !IsWindow(popup))
+    return;
+  if (AnimationNowMs() > probe->deadline) {
+    probe->timedOut = true;
+    DestroyWindow(popup);
+    return;
+  }
+  double arrow = GetAnimationValue(probe->combo, AnimChannel::ComboOpen, 0);
+  if (probe->phase == 0) {
+    if (arrow == 0)
+      return;
+    wchar_t type[64]{};
+    GetClassNameW(popup, type, 64);
+    probe->shared =
+        lstrcmpW(type, L"AttendanceThemedPopupMenu") == 0 &&
+        GetWindow(popup, GW_OWNER) == GetAncestor(probe->combo, GA_ROOT);
+    COMBOBOXINFO info{sizeof(info)};
+    probe->nativeHidden = GetComboBoxInfo(probe->combo, &info) &&
+                          info.hwndList && !IsWindowVisible(info.hwndList);
+    probe->opened = arrow > 0 && arrow < 1 &&
+                    SendMessageW(probe->combo, CB_GETDROPPEDSTATE, 0, 0);
+    if (probe->commit) {
+      SendMessageW(popup, WM_KEYDOWN, VK_END, 0);
+      SendMessageW(popup, WM_KEYDOWN, VK_RETURN, 0);
+    } else
+      SendMessageW(popup, WM_KEYDOWN, VK_ESCAPE, 0);
+    probe->closeStart =
+        GetAnimationValue(probe->combo, AnimChannel::ComboOpen, 0);
+    probe->phase = 1;
+  } else if (arrow > 0 && arrow < probe->closeStart)
+    probe->closed = true;
+}
+void TestSharedComboPopup(HWND combo, bool commit) {
+  HWND owner = GetAncestor(combo, GA_ROOT);
+  int previous = (int)SendMessageW(combo, CB_GETCURSEL, 0, 0);
+  auto motion = Settings().animationLevel;
+  Settings().animationLevel = AnimationLevel::Advanced;
+  RemoveAnimationState(combo);
+  ComboPopupProbe probe;
+  probe.combo = combo;
+  probe.commit = commit;
+  probe.deadline = AnimationNowMs() + 3000;
+  SetPropW(owner, L"Test.ComboPopupProbe", &probe);
+  SetTimer(owner, 904, 16, ObserveComboPopup);
+  SendMessageW(combo, CB_SHOWDROPDOWN, TRUE, 0);
+  KillTimer(owner, 904);
+  RemovePropW(owner, L"Test.ComboPopupProbe");
+  Check(probe.shared && probe.nativeHidden && !probe.timedOut,
+        "combos use the Tools popup class and their own top-level owner");
+  Check(probe.opened && probe.closed,
+        "combo arrows have real intermediate values on opening and closing");
+  Check(!SendMessageW(combo, CB_GETDROPPEDSTATE, 0, 0),
+        "shared combo clears expanded state on dismissal");
+  int expected =
+      commit ? (int)SendMessageW(combo, CB_GETCOUNT, 0, 0) - 1 : previous;
+  Check(SendMessageW(combo, CB_GETCURSEL, 0, 0) == expected,
+        "shared combo keyboard selection commits and Escape cancels");
+  Settings().animationLevel = motion;
+  std::cout << "shared combo popup, owner, selection and two-way arrow "
+               "animation passed\n";
+}
 LRESULT CALLBACK ProbeControl(HWND hwnd, UINT msg, WPARAM w, LPARAM l,
                               UINT_PTR id, DWORD_PTR data) {
   auto &probe = *reinterpret_cast<PaintProbe *>(data);
@@ -171,21 +246,21 @@ void TestUiRedraw() {
     throw std::runtime_error("settings creation failed");
   Check(settings && !(GetWindowLongPtrW(settings, GWL_STYLE) & WS_VISIBLE),
         "settings prewarm stays hidden after creation and layout");
-  Check(GetText(GetDlgItem(settings, IDC_SETTINGS_TITLE)) == L"Settings",
+  Check(GetText(SettingsControl(settings, IDC_SETTINGS_TITLE)) == L"Settings",
         "single settings title");
-  HWND fpsInput = GetDlgItem(settings, IDC_SETTINGS_SCROLL_FPS);
+  HWND fpsInput = SettingsControl(settings, IDC_SETTINGS_SCROLL_FPS);
   RECT fpsText{}, fpsClient{};
   SendMessageW(fpsInput, EM_GETRECT, 0, (LPARAM)&fpsText);
   GetClientRect(fpsInput, &fpsClient);
   std::cout << "FPS text rect=" << fpsText.top << "," << fpsText.bottom
-            << " client=" << fpsClient.bottom << " style="
-            << GetWindowLongPtrW(fpsInput, GWL_STYLE) << "\n";
-  Check(
-      fpsText.top > 2 && fpsText.bottom < fpsClient.bottom &&
-          (GetWindowLongPtrW(GetDlgItem(settings, IDC_SETTINGS_SCROLL_FPS_UNIT),
-                             GWL_STYLE) &
-           SS_CENTERIMAGE),
-      "numeric settings input and its unit share vertical alignment");
+            << " client=" << fpsClient.bottom
+            << " style=" << GetWindowLongPtrW(fpsInput, GWL_STYLE) << "\n";
+  Check(fpsText.top > 2 && fpsText.bottom < fpsClient.bottom &&
+            (GetWindowLongPtrW(
+                 SettingsControl(settings, IDC_SETTINGS_SCROLL_FPS_UNIT),
+                 GWL_STYLE) &
+             SS_CENTERIMAGE),
+        "numeric settings input and its unit share vertical alignment");
   bool obsoleteTitle = false;
   EnumChildWindows(
       settings,
@@ -214,7 +289,7 @@ void TestUiRedraw() {
                    IDC_SETTINGS_RISK_ALERTS,     IDC_SETTINGS_AUTOSAVE_PROMPT,
                    IDC_SETTINGS_COMMAND_PALETTE, IDC_SETTINGS_ADVANCED_FILTER,
                    IDC_SETTINGS_RESET,           IDC_SETTINGS_CLOSE}) {
-      HWND child = GetDlgItem(settings, id);
+      HWND child = SettingsControl(settings, id);
       RECT box{};
       GetWindowRect(child, &box);
       MapWindowPoints(nullptr, settings, reinterpret_cast<POINT *>(&box), 2);
@@ -228,8 +303,8 @@ void TestUiRedraw() {
     Check(info.nMax >= (int)info.nPage,
           "settings overflow remains reachable by scrolling");
     RECT firstReset{}, firstClose{};
-    GetWindowRect(GetDlgItem(settings, IDC_SETTINGS_RESET), &firstReset);
-    GetWindowRect(GetDlgItem(settings, IDC_SETTINGS_CLOSE), &firstClose);
+    GetWindowRect(SettingsControl(settings, IDC_SETTINGS_RESET), &firstReset);
+    GetWindowRect(SettingsControl(settings, IDC_SETTINGS_CLOSE), &firstClose);
     MapWindowPoints(nullptr, settings, (POINT *)&firstReset, 2);
     MapWindowPoints(nullptr, settings, (POINT *)&firstClose, 2);
     Check(firstReset.top >= Ui().settingsBodyBottom &&
@@ -237,7 +312,7 @@ void TestUiRedraw() {
           "settings actions visible before scrolling");
     SendMessageW(settings, WM_VSCROLL, SB_BOTTOM, 0);
     RECT close{};
-    GetWindowRect(GetDlgItem(settings, IDC_SETTINGS_CLOSE), &close);
+    GetWindowRect(SettingsControl(settings, IDC_SETTINGS_CLOSE), &close);
     MapWindowPoints(nullptr, settings, reinterpret_cast<POINT *>(&close), 2);
     Check(close.top >= 0 && close.bottom <= client.bottom,
           "fixed settings actions remain visible during scrolling");
@@ -266,7 +341,7 @@ void TestUiRedraw() {
   StopAnimationThread();
   Check(Ui().settingsScrollY == 0 && !Ui().settingsScrollStartMs,
         "smooth scrolling off immediately reaches its target");
-  HWND cacheCombo = GetDlgItem(settings, IDC_SETTINGS_THEME);
+  HWND cacheCombo = SettingsControl(settings, IDC_SETTINGS_THEME);
   PaintProbe scrollProbe;
   RemoveAnimationState(settings);
   ResizeSettingsLayout(settings);
@@ -276,6 +351,10 @@ void TestUiRedraw() {
   ValidateRect(cacheCombo, nullptr);
   for (int frame = 0; frame < 5; ++frame)
     SendMessageW(settings, WM_APP_ANIMATION_TICK, 0, 0);
+  Check(!(GetWindowLongPtrW(settings, GWL_EXSTYLE) &
+          (WS_EX_COMPOSITED | WS_EX_LAYERED)),
+        "settled settings release layered/composited redirection before "
+        "scrolling");
   Check(
       scrollProbe.position == 0 && !GetUpdateRect(cacheCombo, nullptr, FALSE),
       "settled reveal ticks neither move controls nor invalidate form fields");
@@ -290,6 +369,13 @@ void TestUiRedraw() {
   GetScrollInfo(settings, SB_VERT, &scrollRange);
   int scrollMax = std::max(0, scrollRange.nMax - (int)scrollRange.nPage + 1);
   uint64_t scrollStart = PerformanceNowUs(), scrollPeak = 0;
+  HWND content = GetParent(cacheCombo);
+  Check(
+      GetParent(GetParent(content)) == settings,
+      "settings fields live inside a clipped viewport and one content window");
+  PaintProbe contentProbe;
+  scrollProbe.position = 0;
+  SetWindowSubclass(content, ProbeControl, 96, (DWORD_PTR)&contentProbe);
   for (int frame = 0; frame < 120; ++frame) {
     Ui().settingsScrollY = scrollMax * frame / 119;
     uint64_t frameStart = PerformanceNowUs();
@@ -299,6 +385,12 @@ void TestUiRedraw() {
   std::cout << "settings positioning mean_us="
             << (PerformanceNowUs() - scrollStart) / 120
             << " max_us=" << scrollPeak << "\n";
+  Check(scrollProbe.position == 0 && contentProbe.position > 0,
+        "settings scroll moves the content window without moving individual "
+        "fields");
+  std::cout << "settings scroll content_moves=" << contentProbe.position
+            << " field_moves=" << scrollProbe.position << "\n";
+  RemoveWindowSubclass(content, ProbeControl, 96);
   SendMessageW(settings, WM_VSCROLL, SB_TOP, 0);
   RemoveWindowSubclass(cacheCombo, ProbeControl, 97);
   Settings().animationLevel = previousMotion;
@@ -319,35 +411,36 @@ void TestUiRedraw() {
           "language refresh preserves cached window visibility");
   }
   HWND tab = GetNextDlgTabItem(settings, nullptr, FALSE);
-  Check(GetText(GetDlgItem(settings, IDC_SETTINGS_THEME_LABEL)) == L"Design" &&
+  Check(GetText(SettingsControl(settings, IDC_SETTINGS_THEME_LABEL)) ==
+                L"Design" &&
             Tr(L"Untranslated test label", L"测试回退") ==
                 L"Untranslated test label",
         "German settings labels translate and missing keys use English");
-  SendMessageW(GetDlgItem(settings, IDC_SETTINGS_LANGUAGE), CB_SETCURSEL,
+  SendMessageW(SettingsControl(settings, IDC_SETTINGS_LANGUAGE), CB_SETCURSEL,
                static_cast<WPARAM>(UiLanguage::ChineseSimplified), 0);
   ApplySettingsFromWindow(settings);
   Check(Settings().language == UiLanguage::ChineseSimplified &&
-            GetText(GetDlgItem(settings, IDC_SETTINGS_TITLE)) == L"设置" &&
+            GetText(SettingsControl(settings, IDC_SETTINGS_TITLE)) == L"设置" &&
             !(GetWindowLongPtrW(settings, GWL_STYLE) & WS_VISIBLE),
         "Apply refreshes changed language and preserves hidden visibility");
   for (int id : {IDC_SETTINGS_LANGUAGE, IDC_SETTINGS_FONT, IDC_SETTINGS_THEME,
                  IDC_SETTINGS_ACCENT, IDC_SETTINGS_TEXT_SCALE,
                  IDC_SETTINGS_DENSITY, IDC_SETTINGS_ANIMATION_LEVEL}) {
-    Check(tab == GetDlgItem(settings, id),
+    Check(tab == SettingsControl(settings, id),
           "settings tab order follows the unified form");
     tab = GetNextDlgTabItem(settings, tab, FALSE);
   }
   Ui().settingsScrollY = 0;
   ResizeSettingsLayout(settings);
-  EnsureSettingsControlVisible(GetDlgItem(settings, IDC_SETTINGS_CLOSE));
+  EnsureSettingsControlVisible(SettingsControl(settings, IDC_SETTINGS_CLOSE));
   RECT action{}, viewport{};
-  GetWindowRect(GetDlgItem(settings, IDC_SETTINGS_CLOSE), &action);
+  GetWindowRect(SettingsControl(settings, IDC_SETTINGS_CLOSE), &action);
   GetClientRect(settings, &viewport);
   MapWindowPoints(nullptr, settings, reinterpret_cast<POINT *>(&action), 2);
   Check(action.top >= 0 && action.bottom <= viewport.bottom,
         "keyboard focus scrolls actions into view");
   PaintProbe comboProbe, positionProbe;
-  HWND theme = GetDlgItem(settings, IDC_SETTINGS_THEME);
+  HWND theme = SettingsControl(settings, IDC_SETTINGS_THEME);
   SetWindowSubclass(theme, ProbeControl, 99,
                     reinterpret_cast<DWORD_PTR>(&comboProbe));
   SetWindowSubclass(settings, ProbeControl, 99,
@@ -388,6 +481,9 @@ void TestUiRedraw() {
   ApplyNativeControlTheme(theme);
   Check(comboProbe.theme == firstTheme,
         "identical native theme does not trigger another theme change");
+  SendMessageW(theme, CB_SETCURSEL, 0, 0);
+  TestSharedComboPopup(theme, true);
+  SendMessageW(theme, WM_APP_COMMIT_COMBO_SELECTION, 0, 0);
   auto oldAnimation = Settings().animationLevel;
   Settings().animationLevel = AnimationLevel::Advanced;
   DWORD warmedGdi = 0;
@@ -489,13 +585,13 @@ void TestUiRedraw() {
           GetClientRect(settings, &area);
           for (int id : {IDC_SETTINGS_RESET, IDC_SETTINGS_CLOSE}) {
             RECT box{};
-            GetWindowRect(GetDlgItem(settings, id), &box);
+            GetWindowRect(SettingsControl(settings, id), &box);
             MapWindowPoints(nullptr, settings, (POINT *)&box, 2);
             Check(box.left >= 0 && box.right <= area.right &&
                       box.top >= Ui().settingsBodyBottom &&
                       box.bottom <= area.bottom,
                   "all-language footer geometry");
-            Check(MeasuredTextWidth(GetDlgItem(settings, id)) + 16 <=
+            Check(MeasuredTextWidth(SettingsControl(settings, id)) + 16 <=
                       box.right - box.left,
                   "translated actions fit without truncation");
           }

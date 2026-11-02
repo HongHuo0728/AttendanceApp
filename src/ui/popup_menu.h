@@ -5,6 +5,11 @@
 namespace attendance {
 
 int WheelScrollLineCount();
-int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem>& items);
+struct ThemedMenuOptions {
+  bool comboChoice = false;
+  int selectedIndex = -1;
+};
+int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem> &items,
+                        const ThemedMenuOptions &options = {});
 
 } // namespace attendance

@@ -2,6 +2,7 @@
 
 ## Unreleased UI repair - 2026-11-02
 
+- Follow-up: move settings through one clipped content viewport and release opaque-window layering; share the Tools popup implementation with settings dropdowns and the main course selector, including continuous two-way arrow motion. See [the settings/dropdown follow-up](docs/V2.1.1_SETTINGS_POPUPS.md).
 - Repair table/composer overlap, translated and scaled layouts, flat cards, shared button edges, Tab/Enter navigation and main/table wheel routing.
 - Reduce settings scroll work, prevent wheel input from changing closed combos, and preserve font hierarchy, input alignment and dropdown metrics.
 - Repair menu scrollbar input, popup frame invalidation, chart sizing/completion/close opacity, roll-call progress, and measured/scrollable dialogs.

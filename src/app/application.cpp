@@ -14,6 +14,7 @@
 #include "app/main_window.h"
 #include "settings/state.h"
 #include "ui/state.h"
+#include "ui/settings_window.h"
 #include "core/constants.h"
 
 namespace attendance {
@@ -113,7 +114,7 @@ int RunApplication(
         if (Ui().settingsWindow && IsWindow(Ui().settingsWindow)
             && (msg.hwnd == Ui().settingsWindow || IsChild(Ui().settingsWindow, msg.hwnd))) {
             if (msg.message == WM_KEYDOWN && msg.wParam == VK_RETURN
-                && GetFocus() == GetDlgItem(Ui().settingsWindow, IDC_SETTINGS_SCROLL_FPS)) {
+                && GetFocus() == SettingsControl(Ui().settingsWindow, IDC_SETTINGS_SCROLL_FPS)) {
                 SendMessageW(Ui().settingsWindow, WM_COMMAND,
                     MAKEWPARAM(IDC_SETTINGS_SCROLL_FPS, EN_KILLFOCUS),
                     (LPARAM)GetFocus());

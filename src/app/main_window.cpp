@@ -156,8 +156,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam){
     case WM_COMMAND: {
         if(Document().loading && LOWORD(wParam)!=IDC_SETTINGS)return 0;
         if (HIWORD(wParam) == CBN_DROPDOWN) {
-            RestartAnimation((HWND)lParam, AnimChannel::ComboOpen, 1.0, 240);
-            ApplyComboDropDownTheme((HWND)lParam);
+            StartAnimation((HWND)lParam, AnimChannel::ComboOpen, 1.0, 240);
             return 0;
         }
         if (HIWORD(wParam) == CBN_CLOSEUP) {

@@ -176,6 +176,11 @@ struct ThemedMenuItem {
 struct ThemedMenuState {
   std::vector<ThemedMenuItem> items;
   std::vector<int> itemHeights;
+  std::vector<int> itemTops;
+  HWND comboAnchor = nullptr;
+  int checkedIndex = -1;
+  std::wstring typeAhead;
+  uint64_t typeAheadMs = 0;
   int hover = -1;
   int selected = 0;
   int finalX = 0;
