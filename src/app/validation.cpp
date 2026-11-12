@@ -5,6 +5,7 @@
 #include "ui/dialogs.h"
 #include "model/state.h"
 #include "core/constants.h"
+#include "model/operations.h"
 
 namespace attendance {
 
@@ -24,6 +25,20 @@ void ShowWorkbookValidationError(WorkbookValidationIssue issue){
 bool ValidateInputField(const std::wstring& value, size_t maximumBytes){
     if (WorkbookFieldIsValid(value, maximumBytes)) return true;
     ShowWorkbookValidationError(WorkbookValidationIssue::FieldTooLarge);
+    return false;
+}
+
+bool ValidateWorkbookInput(const std::vector<AttendanceSheet>& sheets){
+    auto issue = ValidateWorkbookModel(sheets);
+    if (issue == WorkbookValidationIssue::None) return true;
+    ShowWorkbookValidationError(issue);
+    return false;
+}
+
+bool ValidateCourseNameInput(const std::wstring& name, int except){
+    if (CourseNameAvailable(name, except)) return true;
+    ShowMessage(Tr(L"No changes: invalid input, duplicate target or data limit.",
+                   L"未修改：输入无效、目标重复或超过数据限制。"));
     return false;
 }
 

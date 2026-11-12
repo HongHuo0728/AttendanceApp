@@ -160,8 +160,12 @@ bool RecordMatchesFilter(const AttendanceRecord& record){
 
     std::wstring date = RecordDateKey(record);
     if (!exactDate.empty() && !ContainsText(LowerText(record.dateTime), exactDate)) return false;
-    if (!fromDate.empty() && date < fromDate) return false;
-    if (!toDate.empty() && date > toDate) return false;
+    if (!fromDate.empty() || !toDate.empty()) {
+        FILETIME checked{};
+        if (!DateKeyToFileTime(date, checked)) return false;
+        if (!fromDate.empty() && (!DateKeyToFileTime(fromDate, checked) || date < fromDate)) return false;
+        if (!toDate.empty() && (!DateKeyToFileTime(toDate, checked) || date > toDate)) return false;
+    }
     if (!nameFilter.empty() && !ContainsText(record.name, nameFilter)) return false;
     if (!statusFilter.empty()
         && !ContainsText(record.status, statusFilter)

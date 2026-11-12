@@ -55,7 +55,7 @@ The ordinary small regression executable also creates disposable off-screen Win3
 
 verify_release.ps1 checks the current VERSION and executable metadata, built-in parser checks and local include architecture. check_localization.mjs checks 31 feature keys, 23 settings keys and 14 maintenance keys across all 20 languages, plus Hong Kong call-site keys; it requires Node only for development. package_release.ps1 creates a versioned ZIP containing the app, license, usage guide, small CSV example and optional association helper. It excludes object files, libraries, debug caches, tests and user data.
 
-Actual pass/fail results, before/after sizes and unavailable environments belong in [the current audit](V2.1.0_AUDIT.md), not inferred from historical results.
+Actual pass/fail results, before/after sizes and unavailable environments belong in [the current audit](V2.1.2_AUDIT.md), not inferred from historical results.
 
 
 ## 2.1.1 validation
@@ -65,3 +65,9 @@ The expanded suite checks atomic reset success and injected failure, scoped back
 Moving a source folder can leave a CMake cache pointing to its former location. The build wrapper removes only the current project's generated CMake configuration in that case, after the same path/link validation used by cleanup. It does not clean the former source folder.
 
 See [the 2.1.1 audit](V2.1.1_AUDIT.md) for results obtained for this version.
+
+## 2.1.2 validation
+
+The maintenance cases in `tests/maintenance_212.h` exercise strict transactional roster parsing, spreadsheet-facing CSV prefixes, NUL rejection, XML validity, real calendar filter bounds, shared course-name validation and popup typing. Native fixtures check IME event routing, focused Cancel, edit-safe custom shortcuts, oversized popup bounds and measured long rows. Cached settings cycles also monitor USER objects alongside GDI objects. The legacy PowerShell smoke harness resolves controls through the nested Settings content property; its execution status is reported separately.
+
+See [the 2.1.2 audit](V2.1.2_AUDIT.md) for current results and the user-requested exclusion of system scaling changes.

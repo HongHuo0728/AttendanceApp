@@ -1,4 +1,4 @@
-# AttendanceApp 2.1.1 LTS usage
+# AttendanceApp 2.1.2 LTS usage
 
 ## Getting started
 
@@ -7,6 +7,8 @@
 3. Create a lesson through Tools. Choose a unique label, preferably starting with YYYY-MM-DD, such as 2026-10-20 09:00 Math.
 4. Use Quick roll call or select/edit records in the main window.
 5. Save the workbook with Save .attd or Ctrl+S.
+
+Roster import accepts UTF-8 CSV (optional BOM, Windows or Unix line endings), one student per physical line, using the first nonempty column. Only the first nonblank row can be a name header. Malformed quotes or UTF-8 reject the entire import; no partial roster is committed.
 
 Roster import and lesson creation produce Pending records. Existing historical Absent records are never inferred to be Pending. Course-local student identity is the exact name; this release does not introduce student IDs or merge people across courses. Avoid using the same name for different students in one roster.
 
@@ -50,7 +52,7 @@ Use date-leading labels for date-based reports. Free-text labels can still ident
 
 ## Search, statistics and student profiles
 
-Text search checks date, name, status and notes. With advanced syntax enabled, name:Alice, status:Absent, from:2026-10-01, to:2026-10-31, thisweek and thismonth are available. Multiple conditions narrow the result. The separate exact lesson filter applies in addition to the text filter.
+Text search checks date, name, status and notes. With advanced syntax enabled, name:Alice, status:Absent, from:2026-10-01, to:2026-10-31, thisweek and thismonth are available. Multiple conditions narrow the result. Date bounds must be valid YYYY-MM-DD calendar dates; undated or invalid-date lessons do not match from:/to:. The separate exact lesson filter applies in addition to the text filter.
 
 This week means Monday through the following Sunday in local calendar dates; This month means the local calendar month. Summary cards and exports use the selected statistics period. Student profiles use an exact name within the current course and display up to 12 records in descending date-label order. Risk summaries use the current course and statistics period.
 
@@ -61,6 +63,8 @@ Normal save writes V6, preserving all six statuses. Opening V1-V5 does not rewri
 Tools > Export V5 compatible file creates a separate copy for older programs. Leave/Pending become Other with notes beginning [2.1.0 status: ...]. Old versions calculate these as Other; original semantics and rates are not preserved. Reimporting the downgraded file does not automatically reconstruct the new statuses.
 
 CSV, printable HTML/PDF and PowerPoint capture the current course and statistics period. PowerPoint contains a six-status summary, bars and recent date groups; report templates retain their metadata/roster emphasis. Print/PDF opens HTML in the browser. The database mirror exports all courses to attendance.attddb as tab-separated text. Export workers use immutable snapshots; accepted writes finish during shutdown.
+
+CSV report cells that begin with formula-like characters receive a quoted apostrophe prefix for spreadsheet import. This affects the exported display text, not saved workbook data; use .attd or the database mirror when exact text round-tripping matters. Spreadsheet software may reinterpret text after later edits or re-saving. PPTX replaces XML-forbidden control characters with the Unicode replacement character.
 
 ## Recovery and backup
 
@@ -80,7 +84,7 @@ Save, export, backup and reset show non-modal task feedback. Visible action butt
 
 Import temporarily disables document-changing controls until validated data can replace the workbook; a failed import keeps the existing data. Save uses a captured revision: edits made during a save remain unsaved after that older snapshot finishes. Wait for document file operations to finish before closing. Reports capture course, language and statistics period at the time they are requested.
 
-Default shortcuts: Ctrl+S Save, Ctrl+O Import, Ctrl+Z Undo, Ctrl+Y Redo, Ctrl+K command palette, F11 fullscreen. Tools > Shortcut center changes them.
+Default shortcuts: Ctrl+S Save, Ctrl+O Import, Ctrl+Z Undo, Ctrl+Y Redo, Ctrl+K command palette, F11 fullscreen. Tools > Shortcut center changes them. Unmodified letter/number shortcuts do not fire while typing in an edit field. Shift-modified combinations do not match shortcuts configured without Shift. IME confirmation keys belong to the composing field until composition ends.
 
 To register .attd double-click opening for the current Windows user, run register_attd_filetype.bat after placing the program in its intended location. It discovers an adjacent release executable or the project build output and uses the embedded file icon. Registration changes that user's file association; moving the executable later requires registering again.
 

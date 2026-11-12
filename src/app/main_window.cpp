@@ -204,11 +204,15 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam){
             std::wstring sheetName = Tr(L"Attendance Sheet", L"\u70b9\u540d\u8868") + L" " + std::to_wstring(Document().sheets.size() + 1);
             std::wstring newTitle = Tr(L"New Attendance", L"\u65b0\u5efa\u70b9\u540d");
             if (!PromptText(newTitle, Tr(L"New attendance sheet name:", L"\u65b0\u70b9\u540d\u8868\u540d\u79f0\uff1a"), sheetName)) return 0;
-            if (sheetName.empty()) return 0;
+            sheetName = TrimWide(sheetName);
+            if (sheetName.empty() || !ValidateCourseNameInput(sheetName)) return 0;
             if (!ValidateInputField(sheetName, MAX_METADATA_FIELD_BYTES) || !CanAppendSheets(1)) return 0;
+            auto next = Document().sheets;
+            next.push_back(MakeSheet(sheetName));
+            if (!ValidateWorkbookInput(next)) return 0;
             PushUndo();
+            Document().sheets = std::move(next);
             MarkDirty();
-            Document().sheets.push_back(MakeSheet(sheetName));
             Document().activeSheet = (int)Document().sheets.size() - 1;
             Document().Records().clear();
             Document().visibleRows.clear();

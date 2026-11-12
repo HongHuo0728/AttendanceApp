@@ -41,6 +41,14 @@ public static class AttendanceSmokeNative
     public static extern IntPtr GetDlgItem(IntPtr parent, int id);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr GetProp(IntPtr window, string name);
+
+    public static IntPtr SettingsControl(IntPtr window, int id) {
+        IntPtr direct = GetDlgItem(window, id);
+        return direct != IntPtr.Zero ? direct : GetDlgItem(GetProp(window, "Attendance.SettingsContent"), id);
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern bool SetWindowText(IntPtr hwnd, string text);
 
     [DllImport("user32.dll")]
@@ -339,7 +347,7 @@ try {
         throw 'The settings window did not open for title-bar verification.'
     }
     $settingsTitleBar = Assert-AppTitleBarMaterial $settingsWindow 3 'Settings window' 1
-    $fontCombo = [AttendanceSmokeNative]::GetDlgItem($settingsWindow, 4003)
+    $fontCombo = [AttendanceSmokeNative]::SettingsControl($settingsWindow, 4003)
     Wait-Until {
         return [AttendanceSmokeNative]::SendMessage(
             $fontCombo, 0x0146, [IntPtr]::Zero, [IntPtr]::Zero).ToInt32() -gt 1
@@ -378,7 +386,7 @@ try {
         throw 'The atomic language-switch test hook did not run.'
     }
     $englishDateName = Get-AccessibleName ([AttendanceSmokeNative]::GetDlgItem($main, 1001))
-    $englishSettingsLanguageName = Get-AccessibleName ([AttendanceSmokeNative]::GetDlgItem($settingsWindow, 4001))
+    $englishSettingsLanguageName = Get-AccessibleName ([AttendanceSmokeNative]::SettingsControl($settingsWindow, 4001))
     if ($englishDateName -ne 'Date/Time' -or $englishSettingsLanguageName -ne 'Language') {
         throw "Language switch did not update open windows atomically: '$englishDateName', '$englishSettingsLanguageName'."
     }

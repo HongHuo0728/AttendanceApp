@@ -55,9 +55,13 @@ void CreateTodayLessonFromRoster(){
     }
     if (!additions.empty()) {
         if (!CanAppendRecords(additions.size())) return;
+        auto next = Document().sheets;
+        auto& records = next[Document().activeSheet].records;
+        records.insert(records.end(), additions.begin(), additions.end());
+        if (!ValidateWorkbookInput(next)) return;
         PushUndo();
+        Document().sheets = std::move(next);
         MarkDirty();
-        Document().Records().insert(Document().Records().end(), additions.begin(), additions.end());
         RefreshList();
     }
     SetText(Ui().dateEdit, lesson);

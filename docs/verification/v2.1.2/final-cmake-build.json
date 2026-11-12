@@ -1,0 +1,56 @@
+{
+  "Before": {
+    "Bytes": 225294468,
+    "Files": 281,
+    "Largest": [
+      {
+        "Path": "${PROJECT_ROOT}\\build\\AttendanceApp.dir\\Release\\AttendanceApp.iobj",
+        "Length": 6941002
+      },
+      {
+        "Path": "${PROJECT_ROOT}\\build\\AttendanceTests.dir\\Release\\AttendanceTests.iobj",
+        "Length": 6894367
+      },
+      {
+        "Path": "${PROJECT_ROOT}\\build\\AttendanceRuntime.dir\\Release\\insights.obj",
+        "Length": 4146123
+      },
+      {
+        "Path": "${PROJECT_ROOT}\\build\\AttendanceRuntime.dir\\Release\\roll_call.obj",
+        "Length": 4045161
+      },
+      {
+        "Path": "${PROJECT_ROOT}\\build\\AttendanceRuntime.dir\\Release\\courses.obj",
+        "Length": 3944995
+      }
+    ]
+  },
+  "After": {
+    "Bytes": 225292564,
+    "Files": 277,
+    "Largest": [
+      {
+        "Path": "${PROJECT_ROOT}\\build\\AttendanceApp.dir\\Release\\AttendanceApp.iobj",
+        "Length": 6941002
+      },
+      {
+        "Path": "${PROJECT_ROOT}\\build\\AttendanceTests.dir\\Release\\AttendanceTests.iobj",
+        "Length": 6894367
+      },
+      {
+        "Path": "${PROJECT_ROOT}\\build\\AttendanceRuntime.dir\\Release\\insights.obj",
+        "Length": 4146123
+      },
+      {
+        "Path": "${PROJECT_ROOT}\\build\\AttendanceRuntime.dir\\Release\\roll_call.obj",
+        "Length": 4045161
+      },
+      {
+        "Path": "${PROJECT_ROOT}\\build\\AttendanceRuntime.dir\\Release\\courses.obj",
+        "Length": 3944995
+      }
+    ]
+  },
+  "SampledPeakBytes": 225294468,
+  "BudgetBytes": 536870912
+}

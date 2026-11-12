@@ -24,6 +24,7 @@ public:
 };
 
 bool WorkbookFieldIsValid(const std::wstring& value, size_t maximumBytes){
+    if (value.find(L'\0') != std::wstring::npos) return false;
     if (value.empty()) return true;
     if (value.size() > maximumBytes || value.size() > INT_MAX) return false;
     const int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,

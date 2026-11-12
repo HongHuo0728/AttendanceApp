@@ -486,7 +486,7 @@ void TestUiRedraw() {
   SendMessageW(theme, WM_APP_COMMIT_COMBO_SELECTION, 0, 0);
   auto oldAnimation = Settings().animationLevel;
   Settings().animationLevel = AnimationLevel::Advanced;
-  DWORD warmedGdi = 0;
+  DWORD warmedGdi = 0, warmedUser = 0;
   for (int cycle = 0; cycle < 30; ++cycle) {
     ShowSettingsWindow();
     StopAnimationThread();
@@ -544,11 +544,15 @@ void TestUiRedraw() {
       throw std::runtime_error(
           "close completion hides without destroying settings");
     }
-    if (cycle == 0)
+    if (cycle == 0) {
       warmedGdi = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
+      warmedUser = GetGuiResources(GetCurrentProcess(), GR_USEROBJECTS);
+    }
   }
   Check(GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS) <= warmedGdi + 4,
         "cached settings cycles do not accumulate GDI objects");
+  Check(GetGuiResources(GetCurrentProcess(), GR_USEROBJECTS) <= warmedUser + 2,
+        "cached settings cycles do not accumulate USER objects");
   Settings().animationLevel = AnimationLevel::Off;
   RestartAnimation(settings, AnimChannel::Reveal, 1, 240);
   Check(GetAnimationValue(settings, AnimChannel::Reveal, 0) == 1,

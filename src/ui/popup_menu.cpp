@@ -217,6 +217,36 @@ int LastThemedMenuItem(const ThemedMenuState *state) {
   return state ? FindThemedMenuItem(state, (int)state->items.size(), -1) : -1;
 }
 
+int UpdateThemedMenuTypeAhead(ThemedMenuState& state, wchar_t character,
+                             uint64_t now) {
+  if (state.items.empty()) return -1;
+  character = (wchar_t)towupper(character);
+  bool fresh = now - state.typeAheadMs > 1000 || state.typeAhead.size() >= 64;
+  bool cycle = state.typeAhead.size() == 1 && state.typeAhead.front() == character;
+  if (fresh || cycle) state.typeAhead.clear();
+  state.typeAheadMs = now;
+  state.typeAhead.push_back(character);
+  auto find = [&](bool next) {
+    int count = (int)state.items.size();
+    int start = std::max(0, state.hover + (next ? 1 : 0));
+    for (int attempt = 0; attempt < count; ++attempt) {
+      int index = (start + attempt) % count;
+      if (state.items[index].separator) continue;
+      auto text = state.items[index].text;
+      std::transform(text.begin(), text.end(), text.begin(),
+                     [](wchar_t ch) { return (wchar_t)towupper(ch); });
+      if (text.rfind(state.typeAhead, 0) == 0) return index;
+    }
+    return -1;
+  };
+  int match = find(state.typeAhead.size() == 1);
+  if (match < 0 && state.typeAhead.size() > 1) {
+    state.typeAhead.assign(1, character);
+    match = find(true);
+  }
+  return match;
+}
+
 void EnsureThemedMenuItemVisible(HWND hwnd, ThemedMenuState *state, int index) {
   if (!hwnd || !state || index < 0 || index >= (int)state->items.size() ||
       !state->scrollable)
@@ -582,7 +612,7 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam,
         }
         return 0;
       }
-      if (wParam == VK_RETURN || wParam == VK_SPACE) {
+      if (wParam == VK_RETURN || (wParam == VK_SPACE && !state->comboAnchor)) {
         if (state->hover >= 0 && state->hover < (int)state->items.size() &&
             !state->items[state->hover].separator) {
           CloseThemedPopupMenu(hwnd, state, state->items[state->hover].command);
@@ -627,22 +657,8 @@ LRESULT CALLBACK ThemedMenuProc(HWND hwnd, UINT msg, WPARAM wParam,
     break;
   case WM_CHAR:
     if (state && state->comboAnchor && !state->closing && wParam >= 32) {
-      uint64_t now = AnimationNowMs();
-      if (now - state->typeAheadMs > 1000 || state->typeAhead.size() >= 64)
-        state->typeAhead.clear();
-      state->typeAheadMs = now;
-      state->typeAhead.push_back((wchar_t)towupper((wchar_t)wParam));
-      for (int attempt = 0; attempt < (int)state->items.size(); ++attempt) {
-        int index =
-            (std::max(0, state->hover) + attempt) % (int)state->items.size();
-        auto text = state->items[index].text;
-        std::transform(text.begin(), text.end(), text.begin(),
-                       [](wchar_t ch) { return (wchar_t)towupper(ch); });
-        if (text.rfind(state->typeAhead, 0) == 0) {
-          SelectThemedMenuItem(hwnd, state, index);
-          break;
-        }
-      }
+      int match = UpdateThemedMenuTypeAhead(*state, (wchar_t)wParam, AnimationNowMs());
+      if (match >= 0) SelectThemedMenuItem(hwnd, state, match);
       return 0;
     }
     break;
@@ -715,12 +731,7 @@ int MeasureThemedMenuWidth(const std::vector<ThemedMenuItem> &items) {
   }
   SelectObject(hdc, oldFont);
   ReleaseDC(Ui().hwnd, hdc);
-  MONITORINFO monitor{sizeof(monitor)};
-  GetMonitorInfoW(MonitorFromWindow(Ui().hwnd, MONITOR_DEFAULTTONEAREST),
-                  &monitor);
-  return std::min(
-      width,
-      std::max(160, (int)(monitor.rcWork.right - monitor.rcWork.left) - 32));
+  return width;
 }
 
 int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem> &items,
@@ -740,13 +751,19 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem> &items,
 
   RECT buttonRc{};
   GetWindowRect(button, &buttonRc);
+  MONITORINFO mi{sizeof(mi)};
+  bool haveWorkArea = GetMonitorInfoW(
+      MonitorFromRect(&buttonRc, MONITOR_DEFAULTTONEAREST), &mi) != FALSE;
   int width = MeasureThemedMenuWidth(items);
   if (options.comboChoice)
     width = std::max(width + 20, (int)(buttonRc.right - buttonRc.left));
+  if (haveWorkArea)
+    width = std::min(width, std::max(1, (int)(mi.rcWork.right - mi.rcWork.left) - 8));
   HDC measureDc = GetDC(button);
   HGDIOBJ oldFont = SelectObject(measureDc, Ui().font);
   for (const auto &item : items) {
-    RECT text{0, 0, std::max(1, width - (options.comboChoice ? 76 : 40)), 0};
+    // Reserve the checkmark, both margins and the scrollbar before measuring.
+    RECT text{0, 0, std::max(1, width - (options.comboChoice ? 76 : 56)), 0};
     DrawTextW(measureDc, item.text.c_str(), -1, &text,
               DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
     state.itemHeights.push_back(
@@ -767,12 +784,9 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem> &items,
     x = buttonRc.left;
   int y = buttonRc.bottom + 4;
 
-  HMONITOR monitor = MonitorFromRect(&buttonRc, MONITOR_DEFAULTTONEAREST);
-  MONITORINFO mi{};
-  mi.cbSize = sizeof(mi);
-  if (GetMonitorInfoW(monitor, &mi)) {
+  if (haveWorkArea) {
     int workHeight = (int)(mi.rcWork.bottom - mi.rcWork.top);
-    int maxHeight = std::max(160, std::min(THEMED_MENU_MAX_H, workHeight - 16));
+    int maxHeight = std::max(1, std::min(THEMED_MENU_MAX_H, workHeight - 8));
     if (height > maxHeight) {
       state.scrollable = true;
       height = maxHeight;
@@ -827,7 +841,7 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem> &items,
          msg.message == WM_MOUSEWHEEL || msg.message == WM_CHAR) &&
         msg.hwnd != popup) {
       if (state.comboAnchor && msg.message == WM_KEYDOWN &&
-          msg.wParam != VK_RETURN && msg.wParam != VK_SPACE)
+          msg.wParam != VK_RETURN)
         TranslateMessage(&msg);
       SendMessageW(popup, msg.message, msg.wParam, msg.lParam);
       continue;
@@ -842,6 +856,8 @@ int ShowThemedPopupMenu(HWND button, const std::vector<ThemedMenuItem> &items,
     RemovePropW(button, L"Attendance.ComboPopup");
     StartAnimation(button, AnimChannel::ComboOpen, 0, Visual::CloseMs);
   }
+  if (!options.comboChoice && IsWindow(button) &&
+      GetActiveWindow() == GetAncestor(button, GA_ROOT)) SetFocus(button);
   InvalidateRect(button, nullptr, FALSE);
   if (Ui().scrollX != state.mainScrollX || Ui().scrollY != state.mainScrollY) {
     Ui().scrollX = state.mainScrollX;

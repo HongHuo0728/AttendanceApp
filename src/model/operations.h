@@ -2,6 +2,7 @@
 #include "core/types.h"
 namespace attendance {
 enum class NoteMode { Preserve, Replace, Append };
+bool CourseNameAvailable(const std::wstring& name, int except = -1);
 std::vector<int> CurrentScopeRows();
 bool ChangeRecords(std::vector<int> rows, const std::wstring &status,
                    const std::wstring &note, NoteMode mode);

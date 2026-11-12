@@ -187,6 +187,7 @@ int ChooseItem(const std::wstring &title,
         PostQuitMessage(static_cast<int>(msg.wParam));
       break;
     }
+    if (DispatchImeInput(msg)) continue;
     if (!IsDialogMessageW(hwnd, &msg)) {
       TranslateMessage(&msg);
       DispatchMessageW(&msg);

@@ -4,7 +4,7 @@
 
 Files contain ATTD1: followed by Base64 of XOR-obfuscated UTF-8 workbook text. This is obfuscation, not strong encryption. Use appropriate external disk/file protection for sensitive information.
 
-The 2.1 LTS series (including 2.1.1) writes ATTENDANCE_V6. V1-V5 remain readable. The V6 body keeps the V5 layout:
+The 2.1 LTS series (including 2.1.2) writes ATTENDANCE_V6. V1-V5 remain readable. The V6 body keeps the V5 layout:
 
 ~~~text
 ATTENDANCE_V6
@@ -21,7 +21,7 @@ records: date or lesson label<TAB>name<TAB>status<TAB>notes
 ... repeat course block
 ~~~
 
-Fields use the existing backslash escaping for tabs, CR/LF and backslashes. Counts and indices are strictly parsed, input sizes/counts are bounded and trailing non-whitespace is rejected. Malformed imports preserve the current workbook. Date/lesson labels remain text; calendar statistics require a valid leading YYYY-MM-DD.
+Fields use the existing backslash escaping for tabs, CR/LF and backslashes. Counts and indices are strictly parsed, input sizes/counts are bounded and trailing non-whitespace is rejected. Malformed imports preserve the current workbook. Embedded NUL characters are rejected because native text controls cannot represent them without truncation. Date/lesson labels remain text; calendar statistics require a valid leading YYYY-MM-DD.
 
 ## State semantics
 

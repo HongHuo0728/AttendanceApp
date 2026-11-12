@@ -336,8 +336,11 @@ void FinishQuickRollCall(HWND hwnd) {
 
   bool changed = state->changed;
   if (changed) {
+    auto next = Document().sheets;
+    next[Document().activeSheet].records = state->workingRecords;
+    if (!ValidateWorkbookInput(next)) return;
     PushUndo();
-    Document().Records() = std::move(state->workingRecords);
+    Document().sheets = std::move(next);
     MarkDirty();
     SyncActiveSheet();
     RefreshList();

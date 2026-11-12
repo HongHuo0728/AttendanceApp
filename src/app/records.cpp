@@ -28,11 +28,11 @@ void AddOrUpdateRecord(const std::wstring& status){
     std::wstring name = GetText(Ui().nameEdit);
     std::wstring other = GetText(Ui().otherEdit);
 
-    if (dateTime.empty()) {
+    if (TrimWide(dateTime).empty()) {
         ShowMessage(Tr(L"Please enter a date and time.", L"\u8bf7\u8f93\u5165\u65e5\u671f\u548c\u65f6\u95f4\u3002"));
         return;
     }
-    if (name.empty()) {
+    if (TrimWide(name).empty()) {
         ShowMessage(Tr(L"Please enter a name.", L"\u8bf7\u8f93\u5165\u59d3\u540d\u3002"));
         return;
     }
@@ -47,13 +47,14 @@ void AddOrUpdateRecord(const std::wstring& status){
     int selected = VisibleToRecordIndex(ListView_GetNextItem(Ui().list, -1, LVNI_SELECTED));
     if (selected < 0 && !CanAppendRecords(1)) return;
     AttendanceRecord record{dateTime, name, status, other};
+    auto next = Document().sheets;
+    auto& records = next[Document().activeSheet].records;
+    if (selected >= 0 && selected < (int)records.size()) records[selected] = record;
+    else records.push_back(record);
+    if (!ValidateWorkbookInput(next)) return;
     PushUndo();
+    Document().sheets = std::move(next);
     MarkDirty();
-    if (selected >= 0 && selected < (int)Document().Records().size()) {
-        Document().Records()[selected] = record;
-    } else {
-        Document().Records().push_back(record);
-    }
     RefreshList();
 }
 
@@ -85,11 +86,11 @@ void UpdateSelectedRecord(){
     std::wstring dateTime = GetText(Ui().dateEdit);
     std::wstring name = GetText(Ui().nameEdit);
     std::wstring other = GetText(Ui().otherEdit);
-    if (dateTime.empty()) {
+    if (TrimWide(dateTime).empty()) {
         ShowMessage(Tr(L"Please enter a date and time.", L"\u8bf7\u8f93\u5165\u65e5\u671f\u548c\u65f6\u95f4\u3002"));
         return;
     }
-    if (name.empty()) {
+    if (TrimWide(name).empty()) {
         ShowMessage(Tr(L"Please enter a name.", L"\u8bf7\u8f93\u5165\u59d3\u540d\u3002"));
         return;
     }
@@ -98,11 +99,15 @@ void UpdateSelectedRecord(){
         || !ValidateInputField(other, MAX_RECORD_FIELD_BYTES)) return;
 
     if(!ValidStatusNote(Document().Records()[selected].status,other)) {ShowMessage(Tr(L"A note is required for Other and Leave.",L"其他和请假必须填写备注。"));return;}
+    auto next = Document().sheets;
+    auto& record = next[Document().activeSheet].records[selected];
+    record.dateTime = dateTime;
+    record.name = name;
+    record.other = other;
+    if (!ValidateWorkbookInput(next)) return;
     PushUndo();
+    Document().sheets = std::move(next);
     MarkDirty();
-    Document().Records()[selected].dateTime = dateTime;
-    Document().Records()[selected].name = name;
-    Document().Records()[selected].other = other;
     RefreshList();
     int visibleIndex = RecordToVisibleIndex(selected);
     if (visibleIndex >= 0) {

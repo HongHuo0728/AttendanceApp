@@ -29,6 +29,12 @@ bool Commit(std::vector<AttendanceSheet> next, int active = -1) {
   return true;
 }
 } // namespace
+bool CourseNameAvailable(const std::wstring& name, int except) {
+  if (TrimWide(name).empty()) return false;
+  for (size_t i = 0; i < Document().sheets.size(); ++i)
+    if ((int)i != except && Document().sheets[i].name == name) return false;
+  return true;
+}
 std::vector<int> CurrentScopeRows() {
   std::vector<int> rows;
   const auto &records = Document().Records();

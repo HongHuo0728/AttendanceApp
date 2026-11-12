@@ -26,6 +26,14 @@ LRESULT CALLBACK InteractiveControlProc(HWND hwnd, UINT msg, WPARAM wParam,
                                         LPARAM lParam, UINT_PTR, DWORD_PTR);
 void EnableInteractiveAnimation(HWND hwnd);
 
+bool DispatchImeInput(const MSG& message) {
+  if (message.message < WM_KEYFIRST || message.message > WM_KEYLAST ||
+      !GetPropW(message.hwnd, L"Attendance.ImeComposing")) return false;
+  TranslateMessage(&message);
+  DispatchMessageW(&message);
+  return true;
+}
+
 bool PasteSingleLineClipboardText(HWND hwnd) {
   if (!IsClipboardFormatAvailable(CF_UNICODETEXT) || !OpenClipboard(hwnd))
     return false;
@@ -49,9 +57,14 @@ bool PasteSingleLineClipboardText(HWND hwnd) {
 LRESULT CALLBACK EditShortcutProc(HWND hwnd, UINT msg, WPARAM wParam,
                                   LPARAM lParam, UINT_PTR, DWORD_PTR) {
   if (msg == WM_NCDESTROY) {
+    RemovePropW(hwnd, L"Attendance.ImeComposing");
     RemoveWindowSubclass(hwnd, EditShortcutProc, 1);
     return DefSubclassProc(hwnd, msg, wParam, lParam);
   }
+  if (msg == WM_IME_STARTCOMPOSITION)
+    SetPropW(hwnd, L"Attendance.ImeComposing", (HANDLE)1);
+  if (msg == WM_IME_ENDCOMPOSITION || msg == WM_KILLFOCUS)
+    RemovePropW(hwnd, L"Attendance.ImeComposing");
   if (msg == WM_KEYDOWN && wParam == 'A' &&
       (GetKeyState(VK_CONTROL) & 0x8000)) {
     SendMessageW(hwnd, EM_SETSEL, 0, -1);

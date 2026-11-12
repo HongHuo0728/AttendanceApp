@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.1.2 LTS - 2026-11-12
+
+- Bound shared menus to their anchor monitor after sizing, reserve scrollbar/checkmark space when wrapping, restore command focus, and repair repeated-letter and space-containing prefix selection.
+- Keep IME confirmation and unmodified typing inside edit controls; honor focused Cancel and exact shortcut modifiers.
+- Validate complete candidate workbooks before growing UI mutations, reject blank/duplicate course targets, and keep undo/data unchanged on rejection.
+- Parse roster CSV transactionally, preserve header-like student names after the header, reject malformed text and embedded NUL, harden spreadsheet CSV cells and repair XML control-character output.
+- Require valid calendar dates in from:/to: filters.
+- Repair nested Settings lookup in the legacy smoke harness and update architecture/usage documentation.
+- Rebuild the generic English README with real 2.1.2 English screenshots, consistent badges and clear LTS source/download links.
+
+See [release notes](docs/RELEASE_NOTES_2.1.2.md) and [the current audit](docs/V2.1.2_AUDIT.md) for evidence and coverage limits.
+
 ## 2.1.1 LTS UI repair - 2026-11-02
 
 - Follow-up: move settings through one clipped content viewport and release opaque-window layering; share the Tools popup implementation with settings dropdowns and the main course selector, including continuous two-way arrow motion. See [the settings/dropdown follow-up](docs/V2.1.1_SETTINGS_POPUPS.md).

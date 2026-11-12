@@ -1,0 +1,226 @@
+{
+  "Runs": [
+    {
+      "Run": 1,
+      "Passed": true,
+      "GeneratedBytes": 130326,
+      "SampledBuildPeakBytes": 423677066,
+      "Largest": [
+        {
+          "Path": "${PROJECT_ROOT}\\build\\test-work\\data\\report.pptx",
+          "Length": 72035
+        },
+        {
+          "Path": "${PROJECT_ROOT}\\build\\test-work\\data\\snapshot.pptx",
+          "Length": 48891
+        },
+        {
+          "Path": "${PROJECT_ROOT}\\build\\test-work\\data\\atomic.txt",
+          "Length": 4096
+        },
+        {
+          "Path": "${PROJECT_ROOT}\\build\\test-work\\regression.out.log",
+          "Length": 2002
+        },
+        {
+          "Path": "${PROJECT_ROOT}\\build\\test-work\\data\\snapshot.html",
+          "Length": 901
+        }
+      ],
+      "Diagnostics": [
+        "2.1.2 CSV, input boundaries, XML, date-filter and menu typing regressions passed",
+        "FPS text rect=16,38 client=52 style=1409360260",
+        "settings positioning mean_us=427 max_us=975",
+        "settings scroll content_moves=120 field_moves=0",
+        "shared combo popup, owner, selection and two-way arrow animation passed",
+        "UI redraw, hidden settings, buffered paint and unified layout checks passed",
+        "shared combo popup, owner, selection and two-way arrow animation passed",
+        "2.1.2 native popup bounds, wrapping, IME and focused-Cancel regressions passed",
+        "UI surface geometry: 540 main layouts; 60 roll calls/charts; dialogs, progress, settings persistence and motion regressions passed",
+        "translation 0 8660438191792216853",
+        "translation 1 16678940841669837178",
+        "translation 2 3257070743289857531",
+        "translation 3 14887658312274475548",
+        "translation 4 6742240375365860252",
+        "translation 5 13910518873522822448",
+        "translation 6 11967113498475274176",
+        "translation 7 3498846070098019424",
+        "translation 8 2760828426675436404",
+        "translation 9 9231033672274249074",
+        "translation 10 11833928305498939676",
+        "translation 11 15159320694828521062",
+        "translation 12 4956487889270869619",
+        "translation 13 11379384898693562867",
+        "translation 14 12285291978371889394",
+        "translation 15 6199371988164854214",
+        "translation 16 192898065594872018",
+        "translation 17 15834675145602734891",
+        "translation 18 2759641957046473484",
+        "translation 19 9834587871354189035",
+        "benchmark students=1 records=10 serialize_ms=0.0056 encode_ms=0.0119 decode_ms=0.0041 parse_ms=0.0141 search_ms=0.0025 pptx_ms=26.2105",
+        "benchmark students=10 records=100 serialize_ms=0.0279 encode_ms=0.0619 decode_ms=0.0227 parse_ms=0.0677 search_ms=0.0163 pptx_ms=52.0526",
+        "benchmark students=100 records=1000 serialize_ms=0.5146 encode_ms=1.2075 decode_ms=0.3492 parse_ms=1.195 search_ms=0.2582 pptx_ms=51.1626",
+        "scheduler fps=60 ticks=26 median_ms=16.6028",
+        "scheduler fps=120 ticks=51 median_ms=8.2871",
+        "scheduler fps=240 ticks=100 median_ms=4.1639",
+        "scheduler fps=360 ticks=150 median_ms=2.7539",
+        "All regression checks passed"
+      ]
+    },
+    {
+      "Run": 2,
+      "Passed": true,
+      "GeneratedBytes": 130322,
+      "SampledBuildPeakBytes": 423677058,
+      "Largest": [
+        {
+          "Path": "${PROJECT_ROOT}\\build\\test-work\\data\\report.pptx",
+          "Length": 72035
+        },
+        {
+          "Path": "${PROJECT_ROOT}\\build\\test-work\\data\\snapshot.pptx",
+          "Length": 48891
+        },
+        {
+          "Path": "${PROJECT_ROOT}\\build\\test-work\\data\\atomic.txt",
+          "Length": 4096
+        },
+        {
+          "Path": "${PROJECT_ROOT}\\build\\test-work\\regression.out.log",
+          "Length": 1998
+        },
+        {
+          "Path": "${PROJECT_ROOT}\\build\\test-work\\data\\snapshot.html",
+          "Length": 901
+        }
+      ],
+      "Diagnostics": [
+        "2.1.2 CSV, input boundaries, XML, date-filter and menu typing regressions passed",
+        "FPS text rect=16,38 client=52 style=1409360260",
+        "settings positioning mean_us=395 max_us=807",
+        "settings scroll content_moves=120 field_moves=0",
+        "shared combo popup, owner, selection and two-way arrow animation passed",
+        "UI redraw, hidden settings, buffered paint and unified layout checks passed",
+        "shared combo popup, owner, selection and two-way arrow animation passed",
+        "2.1.2 native popup bounds, wrapping, IME and focused-Cancel regressions passed",
+        "UI surface geometry: 540 main layouts; 60 roll calls/charts; dialogs, progress, settings persistence and motion regressions passed",
+        "translation 0 8660438191792216853",
+        "translation 1 16678940841669837178",
+        "translation 2 3257070743289857531",
+        "translation 3 14887658312274475548",
+        "translation 4 6742240375365860252",
+        "translation 5 13910518873522822448",
+        "translation 6 11967113498475274176",
+        "translation 7 3498846070098019424",
+        "translation 8 2760828426675436404",
+        "translation 9 9231033672274249074",
+        "translation 10 11833928305498939676",
+        "translation 11 15159320694828521062",
+        "translation 12 4956487889270869619",
+        "translation 13 11379384898693562867",
+        "translation 14 12285291978371889394",
+        "translation 15 6199371988164854214",
+        "translation 16 192898065594872018",
+        "translation 17 15834675145602734891",
+        "translation 18 2759641957046473484",
+        "translation 19 9834587871354189035",
+        "benchmark students=1 records=10 serialize_ms=0.0056 encode_ms=0.012 decode_ms=0.0042 parse_ms=0.0133 search_ms=0.0028 pptx_ms=4.4442",
+        "benchmark students=10 records=100 serialize_ms=0.0494 encode_ms=0.1072 decode_ms=0.0363 parse_ms=0.1136 search_ms=0.0354 pptx_ms=3.8344",
+        "benchmark students=100 records=1000 serialize_ms=0.4873 encode_ms=1.1191 decode_ms=0.3694 parse_ms=1.2341 search_ms=0.3572 pptx_ms=5.1503",
+        "scheduler fps=60 ticks=25 median_ms=16.6281",
+        "scheduler fps=120 ticks=51 median_ms=8.3116",
+        "scheduler fps=240 ticks=99 median_ms=4.2016",
+        "scheduler fps=360 ticks=150 median_ms=2.7215",
+        "All regression checks passed"
+      ]
+    },
+    {
+      "Run": 3,
+      "Passed": true,
+      "GeneratedBytes": 130327,
+      "SampledBuildPeakBytes": 423677058,
+      "Largest": [
+        {
+          "Path": "${PROJECT_ROOT}\\build\\test-work\\data\\report.pptx",
+          "Length": 72035
+        },
+        {
+          "Path": "${PROJECT_ROOT}\\build\\test-work\\data\\snapshot.pptx",
+          "Length": 48891
+        },
+        {
+          "Path": "${PROJECT_ROOT}\\build\\test-work\\data\\atomic.txt",
+          "Length": 4096
+        },
+        {
+          "Path": "${PROJECT_ROOT}\\build\\test-work\\regression.out.log",
+          "Length": 2003
+        },
+        {
+          "Path": "${PROJECT_ROOT}\\build\\test-work\\data\\snapshot.html",
+          "Length": 901
+        }
+      ],
+      "Diagnostics": [
+        "2.1.2 CSV, input boundaries, XML, date-filter and menu typing regressions passed",
+        "FPS text rect=16,38 client=52 style=1409360260",
+        "settings positioning mean_us=555 max_us=1064",
+        "settings scroll content_moves=120 field_moves=0",
+        "shared combo popup, owner, selection and two-way arrow animation passed",
+        "UI redraw, hidden settings, buffered paint and unified layout checks passed",
+        "shared combo popup, owner, selection and two-way arrow animation passed",
+        "2.1.2 native popup bounds, wrapping, IME and focused-Cancel regressions passed",
+        "UI surface geometry: 540 main layouts; 60 roll calls/charts; dialogs, progress, settings persistence and motion regressions passed",
+        "translation 0 8660438191792216853",
+        "translation 1 16678940841669837178",
+        "translation 2 3257070743289857531",
+        "translation 3 14887658312274475548",
+        "translation 4 6742240375365860252",
+        "translation 5 13910518873522822448",
+        "translation 6 11967113498475274176",
+        "translation 7 3498846070098019424",
+        "translation 8 2760828426675436404",
+        "translation 9 9231033672274249074",
+        "translation 10 11833928305498939676",
+        "translation 11 15159320694828521062",
+        "translation 12 4956487889270869619",
+        "translation 13 11379384898693562867",
+        "translation 14 12285291978371889394",
+        "translation 15 6199371988164854214",
+        "translation 16 192898065594872018",
+        "translation 17 15834675145602734891",
+        "translation 18 2759641957046473484",
+        "translation 19 9834587871354189035",
+        "benchmark students=1 records=10 serialize_ms=0.0058 encode_ms=0.0123 decode_ms=0.0042 parse_ms=0.0132 search_ms=0.0023 pptx_ms=119.095",
+        "benchmark students=10 records=100 serialize_ms=0.0471 encode_ms=0.0966 decode_ms=0.0323 parse_ms=0.1021 search_ms=0.0284 pptx_ms=77.3841",
+        "benchmark students=100 records=1000 serialize_ms=0.4478 encode_ms=1.129 decode_ms=0.3883 parse_ms=1.2635 search_ms=0.2517 pptx_ms=82.6088",
+        "scheduler fps=60 ticks=26 median_ms=16.6338",
+        "scheduler fps=120 ticks=51 median_ms=8.3101",
+        "scheduler fps=240 ticks=101 median_ms=4.1835",
+        "scheduler fps=360 ticks=150 median_ms=2.7813",
+        "All regression checks passed"
+      ]
+    }
+  ],
+  "Failure": null,
+  "BeforeCleanup": {
+    "Bytes": 2031,
+    "Files": 3,
+    "Largest": [
+      {
+        "Path": "${PROJECT_ROOT}\\build\\test-work\\regression.out.log",
+        "Length": 2003
+      },
+      {
+        "Path": "${PROJECT_ROOT}\\build\\test-work\\.attendance-test-root",
+        "Length": 28
+      },
+      {
+        "Path": "${PROJECT_ROOT}\\build\\test-work\\regression.err.log",
+        "Length": 0
+      }
+    ]
+  },
+  "DataBudgetBytes": 20971520,
+  "SingleFileBudgetBytes": 5242880
+}

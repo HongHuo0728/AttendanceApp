@@ -1,0 +1,34 @@
+{
+  "course-menu.jpg": {
+    "bytes": 152899,
+    "sha256": "82693563b849ab47b7e31152b059ce04c67d518865a8aecd06d710b135def2c9"
+  },
+  "font-menu.jpg": {
+    "bytes": 64834,
+    "sha256": "ea768c3a608b992c537ebb68fb5b2fb56610b3778e7e7585baea4c508e53aa88"
+  },
+  "main-dark.jpg": {
+    "bytes": 147563,
+    "sha256": "48295ac82d5f2ee579b4c206ad368cea7527415a953e7077e40296c74b93b590"
+  },
+  "main-light.jpg": {
+    "bytes": 148061,
+    "sha256": "0162b3403fbabdddb84c34bc2193b6ec9b8ba2f7ab7540012c07a3553c1a41d0"
+  },
+  "quick-roll-call.jpg": {
+    "bytes": 44072,
+    "sha256": "f79f0e282f93260e78f2d35622962a977319c537d3d6b918a6e0c6d9360c5b9b"
+  },
+  "report.jpg": {
+    "bytes": 73303,
+    "sha256": "0543993a0ad8f8d988798526261acf0c00d7bb3a866ce72cb7bee72180fbb938"
+  },
+  "settings-menu.jpg": {
+    "bytes": 63829,
+    "sha256": "88835a93de37fb1225ab1cfee694bdd89f286a90e4fd11f75f62e71fbc5d573d"
+  },
+  "statistics.jpg": {
+    "bytes": 30502,
+    "sha256": "ccdbdc66012f240b4fb793353d48f3b51afd2ec571e054fe6b2d096b113961eb"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "zip": "AttendanceApp.v2.1.2.zip",
+  "zip_bytes": 534303,
+  "sha256": "f50ec83e30bd72652dcc7f0edcbe4696562f123e94147fb5b21e986583372768",
+  "exe_bytes": 1145856,
+  "exe_sha256": "d2e4976d5bdf7878df9835dbfeb8abb338e1fb109085783497675261a9f788f4",
+  "direct_exe_bytes": 1145344,
+  "direct_exe_sha256": "48d9f1f3349fc6df985d53b873c00c5d40295fed4d181661b27eca6e9c8932e5",
+  "contents": [
+    "AttendanceApp.v2.1.2/AttendanceApp.exe",
+    "AttendanceApp.v2.1.2/LICENSE",
+    "AttendanceApp.v2.1.2/QUICK_START.md",
+    "AttendanceApp.v2.1.2/register_attd_filetype.bat",
+    "AttendanceApp.v2.1.2/sample_roster.csv"
+  ],
+  "crc_ok": true,
+  "embedded_exe_matches_cmake": true
+}

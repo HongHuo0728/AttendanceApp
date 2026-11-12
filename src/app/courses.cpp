@@ -38,11 +38,15 @@ void AddCourse(){
     SyncActiveSheet();
     std::wstring name = L"Course " + std::to_wstring(Document().sheets.size() + 1);
     if (!PromptText(Tr(L"Add Course/Class", L"\u65b0\u589e\u8bfe\u7a0b/\u73ed\u7ea7"), Tr(L"Course or class name:", L"\u8bfe\u7a0b\u6216\u73ed\u7ea7\u540d\u79f0\uff1a"), name)) return;
+    name = TrimWide(name);
     if (name.empty()) return;
-    if (!ValidateInputField(name, MAX_METADATA_FIELD_BYTES) || !CanAppendSheets(1)) return;
+    if (!ValidateCourseNameInput(name) || !ValidateInputField(name, MAX_METADATA_FIELD_BYTES) || !CanAppendSheets(1)) return;
+    auto next = Document().sheets;
+    next.push_back(MakeSheet(name));
+    if (!ValidateWorkbookInput(next)) return;
     PushUndo();
+    Document().sheets = std::move(next);
     MarkDirty();
-    Document().sheets.push_back(MakeSheet(name));
     Document().activeSheet = (int)Document().sheets.size() - 1;
     Document().visibleRows.clear();
     Document().lessonFilter.clear();
@@ -55,11 +59,16 @@ void RenameCurrentCourse(){
     EnsureSheets();
     std::wstring name = Document().sheets[Document().activeSheet].name;
     if (!PromptText(Tr(L"Rename Course/Class", L"\u91cd\u547d\u540d\u8bfe\u7a0b/\u73ed\u7ea7"), Tr(L"New course or class name:", L"\u65b0\u8bfe\u7a0b\u6216\u73ed\u7ea7\u540d\u79f0\uff1a"), name)) return;
+    name = TrimWide(name);
     if (name.empty()) return;
-    if (!ValidateInputField(name, MAX_METADATA_FIELD_BYTES)) return;
+    if (name == Document().sheets[Document().activeSheet].name) return;
+    if (!ValidateCourseNameInput(name, Document().activeSheet) || !ValidateInputField(name, MAX_METADATA_FIELD_BYTES)) return;
+    auto next = Document().sheets;
+    next[Document().activeSheet].name = name;
+    if (!ValidateWorkbookInput(next)) return;
     PushUndo();
+    Document().sheets = std::move(next);
     MarkDirty();
-    Document().sheets[Document().activeSheet].name = name;
     RefreshCourseCombo();
 }
 
@@ -106,39 +115,14 @@ void ImportRosterCsv(){
         ShowMessage(Tr(L"Could not open the roster file.", L"\u65e0\u6cd5\u6253\u5f00\u540d\u5355\u6587\u4ef6\u3002"));
         return;
     }
-    std::istringstream file(csvData);
-    std::string line;
-    std::vector<AttendanceRecord> imported;
-    std::unordered_set<std::wstring> importedNames;
-    const std::wstring importDateTime = CurrentDateTimeText();
-    while (std::getline(file, line)) {
-        if (line.size() > MAX_RECORD_FIELD_BYTES * 4 + 3) {
-            ShowMessage(Tr(L"The roster file is too large or contains invalid data.", L"\u540d\u55ae\u6a94\u6848\u904e\u5927\u6216\u5305\u542b\u7121\u6548\u8cc7\u6599\u3002"));
-            return;
-        }
-        if (line.rfind("\xEF\xBB\xBF", 0) == 0) line = line.substr(3);
-        if (line.empty()) continue;
-        auto cells = ParseCsvLine(line);
-        std::wstring name;
-        for (const auto& cell : cells) {
-            std::string trimmed = TrimUtf8(cell);
-            if (!trimmed.empty()) {
-                if (!DecodeUtf8Field(trimmed, MAX_RECORD_FIELD_BYTES, name)) {
-                    ShowMessage(Tr(L"The roster file is too large or contains invalid data.", L"\u540d\u55ae\u6a94\u6848\u904e\u5927\u6216\u5305\u542b\u7121\u6548\u8cc7\u6599\u3002"));
-                    return;
-                }
-                break;
-            }
-        }
-        name = TrimWide(name);
-        if (name.empty() || LooksLikeNameHeader(name)) continue;
-        if (!importedNames.insert(name).second) continue;
-        if (imported.size() >= MAX_RECORDS_PER_SHEET) {
-            ShowMessage(Tr(L"The roster file is too large or contains invalid data.", L"\u540d\u55ae\u6a94\u6848\u904e\u5927\u6216\u5305\u542b\u7121\u6548\u8cc7\u6599\u3002"));
-            return;
-        }
-        imported.push_back({importDateTime, name, L"Pending", L""});
+    std::vector<std::wstring> names;
+    if (!ParseRosterCsv(csvData, names)) {
+        ShowMessage(Tr(L"The roster file is too large or contains invalid data.", L"名單檔案過大或包含無效資料。"));
+        return;
     }
+    const std::wstring importDateTime = CurrentDateTimeText();
+    std::vector<AttendanceRecord> imported;
+    for (const auto& name : names) imported.push_back({importDateTime, name, L"Pending", L""});
     if (!imported.empty()) {
         SyncActiveSheet();
         auto& students = Document().sheets[Document().activeSheet].students;
@@ -156,10 +140,14 @@ void ImportRosterCsv(){
         if ((!newStudents.empty() && !CanAppendStudents(newStudents.size()))
             || (!newRecords.empty() && !CanAppendRecords(newRecords.size()))) return;
         if (!newStudents.empty() || !newRecords.empty()) {
+            auto next = Document().sheets;
+            auto& target = next[Document().activeSheet];
+            target.students.insert(target.students.end(), newStudents.begin(), newStudents.end());
+            target.records.insert(target.records.end(), newRecords.begin(), newRecords.end());
+            if (!ValidateWorkbookInput(next)) return;
             PushUndo();
+            Document().sheets = std::move(next);
             MarkDirty();
-            students.insert(students.end(), newStudents.begin(), newStudents.end());
-            Document().Records().insert(Document().Records().end(), newRecords.begin(), newRecords.end());
             RefreshList();
         }
     }
@@ -181,9 +169,12 @@ void AddStudentToRoster(){
     auto& students = Document().sheets[Document().activeSheet].students;
     if (std::find(students.begin(), students.end(), name) == students.end()) {
         if (!CanAppendStudents(1)) return;
+        auto next = Document().sheets;
+        next[Document().activeSheet].students.push_back(name);
+        if (!ValidateWorkbookInput(next)) return;
         PushUndo();
+        Document().sheets = std::move(next);
         MarkDirty();
-        students.push_back(name);
         ShowMessage(Tr(L"Student added.", L"\u5b66\u751f\u5df2\u6dfb\u52a0\u3002"));
     }
 }
@@ -229,9 +220,13 @@ void CreateRecordsFromRoster(){
     }
     if (!additions.empty()) {
         if (!CanAppendRecords(additions.size())) return;
+        auto next = Document().sheets;
+        auto& records = next[Document().activeSheet].records;
+        records.insert(records.end(), additions.begin(), additions.end());
+        if (!ValidateWorkbookInput(next)) return;
         PushUndo();
+        Document().sheets = std::move(next);
         MarkDirty();
-        Document().Records().insert(Document().Records().end(), additions.begin(), additions.end());
         RefreshList();
     }
     std::wstringstream ss;
@@ -252,11 +247,15 @@ void EditCourseDetails(){
     if (!ValidateInputField(teacher, MAX_METADATA_FIELD_BYTES)
         || !ValidateInputField(location, MAX_METADATA_FIELD_BYTES)
         || !ValidateInputField(notes, MAX_METADATA_FIELD_BYTES)) return;
+    auto next = Document().sheets;
+    auto& target = next[Document().activeSheet];
+    target.teacher = teacher;
+    target.location = location;
+    target.notes = notes;
+    if (!ValidateWorkbookInput(next)) return;
     PushUndo();
+    Document().sheets = std::move(next);
     MarkDirty();
-    sheet.teacher = teacher;
-    sheet.location = location;
-    sheet.notes = notes;
 }
 
 } // namespace attendance

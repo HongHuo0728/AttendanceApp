@@ -1,4 +1,4 @@
-# Architecture: AttendanceApp 2.1.0
+# Architecture: AttendanceApp 2.1 LTS
 
 The application is a C++17 / Win32 executable backed by independently compiled object modules in AttendanceRuntime. main.cpp delegates to the application entry point. Implementations do not include other .cpp files.
 
@@ -25,7 +25,7 @@ Normal serialization is V6. Its structure matches V5, while its header identifie
 
 ## Workers and reports
 
-Font enumeration publishes a synchronized cache. Animation workers coalesce posted messages and never draw native controls directly. The lazy report worker accepts at most two outstanding snapshots and returns completion on the UI thread. CSV/HTML/database generation and report file writes run on that worker; PPTX XML assembly and snapshot capture remain synchronous. Shutdown finishes accepted writes before joining workers.
+Font enumeration publishes a synchronized cache. Animation workers coalesce posted messages and never draw native controls directly. The lazy report worker accepts at most two outstanding snapshots and returns completion on the UI thread. CSV/HTML/database/PPTX generation and report file writes run on that worker; snapshot capture remains on the UI thread. Shutdown finishes accepted writes before joining workers.
 
 Report labels are captured with the data. CSV/HTML/PPTX use the statistics period; the database mirror intentionally includes the full workbook. PowerPoint chart arithmetic uses 64-bit products and is tested with synthetic counts without large files.
 
@@ -33,7 +33,7 @@ Report labels are captured with the data. CSV/HTML/PPTX use the statistics perio
 
 ui/redraw owns UI-thread redraw transactions and buffered control frames. RedrawScope preserves a hidden window's visibility and counts nested scopes per HWND, so an inner layout cannot resume an outer update. Changed text is scheduled once; unchanged text is ignored. It deliberately never sends WM_SETREDRAW(TRUE) to an initially hidden window, as documented by [Microsoft's WM_SETREDRAW contract](https://learn.microsoft.com/en-us/windows/win32/gdi/wm-setredraw).
 
-Settings composes its child painting. The main window uses per-control buffers because whole-window WS_EX_COMPOSITED caused missing native controls on the validation host. First showing either window explicitly repaints its complete child tree after hidden initialization. The application and test executable share the Common Controls v6 manifest, which enables native list-view double buffering. Owner-drawn buttons, toggles, statistics, headers and closed combos complete background/text/effect painting in a temporary buffer before presenting it. Native edit hover animation draws the border without invalidating the text client. Routine table changes preserve content instead of restarting a whole-list reveal. Theme ticks queue painting and update DWM caption attributes without forcing frame/client reconstruction; native light/dark theme calls are cached per HWND.
+Settings uses buffered child painting and a clipped viewport, without steady-state WS_EX_COMPOSITED or WS_EX_LAYERED. The main window uses per-control buffers because whole-window WS_EX_COMPOSITED caused missing native controls on the validation host. First showing either window explicitly repaints its complete child tree after hidden initialization. The application and test executable share the Common Controls v6 manifest, which enables native list-view double buffering. Owner-drawn buttons, toggles, statistics, headers and closed combos complete background/text/effect painting in a temporary buffer before presenting it. Native edit hover animation draws the border without invalidating the text client. Routine table changes preserve content instead of restarting a whole-list reveal. Theme ticks queue painting and update DWM caption attributes without forcing frame/client reconstruction; native light/dark theme calls are cached per HWND.
 
 Settings is a single row-major responsive form with labels above values, deferred layout positioning, one heading, shared actions, keyboard order and focus scrolling. Hidden prewarming finishes creation/theme/layout before the explicit ShowSettingsWindow call. There is no basic/advanced expansion state. Appearance preferences retain their existing persistence keys.
 
@@ -43,15 +43,23 @@ VERSION is the numeric version source. CMake and the direct MSVC generator deriv
 
 catalog.json is the editable translation source. Node regenerates catalog_data.h; --check performs no rewrite. Hong Kong vocabulary is also maintained in the independent zh_hk_strings.h dictionary. New feature phrases and the unified-settings appearance options are supplied for all 20 languages; missing legacy phrases use English outside Simplified Chinese; linguistic/visual review coverage is recorded separately from mechanical key coverage.
 
-See [Testing and storage](TESTING_AND_STORAGE.md) for generated-file ownership, budgets and cleanup, and [the 2.1.0 audit](V2.1.0_AUDIT.md) for actual validation.
+See [Testing and storage](TESTING_AND_STORAGE.md) for generated-file ownership, budgets and cleanup, and [the 2.1.2 audit](V2.1.2_AUDIT.md) for actual validation.
 
 
 ## 2.1.1 LTS maintenance
 
-Settings keeps native controls directly parented to the settings window. Content controls are clipped to a measured viewport, while the title, persistence warning and footer remain fixed. Layout uses actual translated text metrics. Cached hide/show and temporary-popup destruction have separate lifecycles.
+Settings owns a fixed title, persistence warning and footer plus a clipped viewport. The viewport contains one movable content window; option controls belong to that nested content window. Scrolling moves that container, not every individual field. Test lookup follows the Attendance.SettingsContent property. Layout uses actual translated text metrics. Cached hide/show and temporary-popup destruction have separate lifecycles.
 
-Shared motion helpers define cubic Bezier curves, rounded surfaces, paper clipping, 20 ms item staggering and stable-width numeric drawing. Native ComboBox/ListBox selection semantics are retained. A single bounded, input-transparent exit surface lets a native dropdown close decoratively after selection is already committed.
+Shared motion helpers define cubic Bezier curves, rounded surfaces, paper clipping, 20 ms item staggering and stable-width numeric drawing. Native ComboBox data/selection messages are retained, while the shared Tools popup renders and handles settings/course choices. The native list is hidden. The shared popup owns reveal, closing, scrolling, selected-item visibility and continuous arrow motion. Popup dimensions are bounded after anchor sizing against the anchor monitor work area.
 
 Operation feedback has per-operation IDs and working/success/warning/failure/cancelled states. Working indicators appear after 150 ms; a success result alone enables the completion check. Windows and painting are handled on the UI thread.
 
 Document save/import and backup writes use the bounded worker queue. The UI owns document mutation and revision checks; workers own immutable payloads. The pure workbook decoder returns its active-course index instead of modifying Document. Background report rendering uses a scoped thread-local translation language and captured date/range/template values rather than the live settings. Each queued completion retains its original window and a window-generation token; retired windows do not receive callbacks.
+
+## 2.1.2 LTS maintenance
+
+Growing UI mutations validate a copied whole workbook before adding undo history or committing live data. Course creation/rename reject duplicate names consistently with templates. Existing V1-V6 parsing and V5 downgrade semantics remain intact. Embedded NUL is rejected at text boundaries.
+
+Roster CSV parsing is transactional and bounded. Only the first nonblank record can be a header; malformed quotes/UTF-8 reject the complete input. Spreadsheet-facing CSV quotes and prefixes formula-like text; database and workbook serialization stay lossless. PPTX XML replaces XML 1.0 forbidden control characters.
+
+Edit controls track IME composition. Main and modal loops dispatch composing key events before shortcuts/default dialog handling. Enter activates focused Cancel correctly; unmodified letter/number shortcuts do not interrupt text entry. Combo type-ahead supports spaces and repeated-letter cycling.

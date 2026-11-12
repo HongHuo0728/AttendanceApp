@@ -53,6 +53,7 @@ std::string Unescape(std::string_view input){
 
 bool DecodeUtf8Field(std::string_view decoded, size_t maximumBytes, std::wstring& output){
     output.clear();
+    if (decoded.find('\0') != std::string_view::npos) return false;
     if (decoded.size() > maximumBytes) return false;
     if (decoded.empty()) return true;
     if (decoded.size() > static_cast<size_t>(INT_MAX)) return false;
@@ -104,7 +105,12 @@ std::string HtmlCell(const std::wstring& value){
 }
 
 std::string XmlCell(const std::wstring& value){
-    return HtmlCell(value);
+    std::wstring safe = value;
+    for (auto& ch : safe) {
+        if ((ch < 0x20 && ch != L'\t' && ch != L'\r' && ch != L'\n')
+            || ch == 0xFFFE || ch == 0xFFFF) ch = 0xFFFD;
+    }
+    return HtmlCell(safe);
 }
 
 } // namespace attendance

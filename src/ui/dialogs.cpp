@@ -294,6 +294,7 @@ int ThemedMessageBox(HWND owner, const std::wstring &message,
     }
     if (messageResult == -1)
       break;
+    if (DispatchImeInput(msg)) continue;
     if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE) {
       SendMessageW(dialog, WM_CLOSE, 0, 0);
       continue;
@@ -411,7 +412,11 @@ LRESULT CALLBACK InputDialogProc(HWND hwnd, UINT msg, WPARAM wParam,
     break;
   case WM_KEYDOWN:
     if (wParam == VK_RETURN) {
-      SendMessageW(hwnd, WM_COMMAND, IDC_INPUT_OK, 0);
+      HWND focus = GetFocus();
+      if (GetPropW(focus, L"Attendance.ImeComposing")) return 0;
+      int command = focus == GetDlgItem(hwnd, IDC_INPUT_CANCEL)
+                        ? IDC_INPUT_CANCEL : IDC_INPUT_OK;
+      SendMessageW(hwnd, WM_COMMAND, command, 0);
       return 0;
     }
     if (wParam == VK_ESCAPE) {
@@ -524,6 +529,7 @@ bool PromptText(const std::wstring &title, const std::wstring &prompt,
       break;
     if (msg.message == WM_KEYDOWN &&
         (msg.hwnd == dialog || IsChild(dialog, msg.hwnd))) {
+      if (DispatchImeInput(msg)) continue;
       if (msg.wParam == VK_RETURN || msg.wParam == VK_ESCAPE) {
         SendMessageW(dialog, WM_KEYDOWN, msg.wParam, msg.lParam);
         continue;

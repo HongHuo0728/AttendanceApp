@@ -69,7 +69,7 @@ bool ShortcutKeyPartMatches(const std::wstring& key, WPARAM wParam){
 
 bool ShortcutMatches(const std::wstring& shortcut, WPARAM key){
     std::wstring normalized = NormalizeShortcut(shortcut, L"");
-    if (normalized.empty()) return false;
+    if (normalized.empty() || (GetKeyState(VK_SHIFT) & 0x8000)) return false;
     bool ctrlDown = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
     bool altDown = (GetKeyState(VK_MENU) & 0x8000) != 0;
     if (normalized.rfind(L"Ctrl+", 0) == 0) {
@@ -154,6 +154,11 @@ bool HandleMainShortcutMessage(const MSG& msg){
             return true;
         }
     }
+    wchar_t className[32]{};
+    GetClassNameW(msg.hwnd, className, 32);
+    if (lstrcmpiW(className, L"Edit") == 0 &&
+        !(GetKeyState(VK_CONTROL) & 0x8000) &&
+        msg.wParam >= L'0' && msg.wParam <= L'Z') return false;
     return ExecuteMainShortcut(msg.wParam);
 }
 

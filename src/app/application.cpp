@@ -15,6 +15,7 @@
 #include "settings/state.h"
 #include "ui/state.h"
 #include "ui/settings_window.h"
+#include "ui/controls.h"
 #include "core/constants.h"
 
 namespace attendance {
@@ -94,6 +95,7 @@ int RunApplication(
             exitCode = 1;
             break;
         }
+        if (DispatchImeInput(msg)) continue;
         if (HandleMainShortcutMessage(msg)) continue;
         if (Ui().quickRollCallWindow && IsWindow(Ui().quickRollCallWindow)
             && (msg.hwnd == Ui().quickRollCallWindow || IsChild(Ui().quickRollCallWindow, msg.hwnd))) {

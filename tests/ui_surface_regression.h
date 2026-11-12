@@ -9,6 +9,9 @@
 #include "ui/statistics.h"
 #include "ui/table.h"
 
+void TestInputMaintenance(HWND, InputDialogState&);
+void TestPopupMaintenance(HWND);
+
 namespace attendance {
 LRESULT CALLBACK InputDialogProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK MessageDialogProc(HWND, UINT, WPARAM, LPARAM);
@@ -410,7 +413,7 @@ void TestUiSurfaces() {
   ok = SurfaceChildBox(dialog, IDC_INPUT_OK);
   Check(prompt.bottom + 8 <= field.top && field.bottom + 12 <= ok.top,
         "input prompt wraps without covering input or actions");
-  DestroyWindow(dialog);
+  TestInputMaintenance(dialog, input);
 
   HDC digitsScreen = GetDC(root);
   dc = CreateCompatibleDC(digitsScreen);
@@ -440,6 +443,7 @@ void TestUiSurfaces() {
 
   Settings().animationLevel = AnimationLevel::Advanced;
   TestSharedComboPopup(Ui().courseCombo, false);
+  TestPopupMaintenance(Ui().courseCombo);
   StopOperationFeedback();
   StopAnimationThread();
   KillTimer(root, 1);

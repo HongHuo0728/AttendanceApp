@@ -44,6 +44,7 @@ void Check(bool condition, const char *message) {
 
 #include "ui_regression.h"
 #include "ui_surface_regression.h"
+#include "maintenance_212.h"
 
 LRESULT CALLBACK TestReportProc(HWND hwnd, UINT msg, WPARAM wParam,
                                 LPARAM lParam) {
@@ -601,6 +602,7 @@ int wmain(int argc, wchar_t **argv) {
     SetEnvironmentVariableW(L"ATTENDANCEAPP_DATA_DIR", dir.c_str());
     Test210(dir);
     Test211(dir);
+    Test212();
     TestUiRedraw();
     TestUiSurfaces();
     Check(RunParserRegressionChecks(), "existing parser regression");
